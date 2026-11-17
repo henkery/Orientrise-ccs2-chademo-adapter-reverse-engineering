@@ -14,22 +14,24 @@ for a in range(0x400,n-4,2):
             pa,lo=last[rd]
             if a-pa<=12: const[(imm16(h1,h2)<<16)|lo].append(('mov',pa))
             del last[rd]
-    # LDR literal T2: 11111 U 001101 1111 -> hw1 & 0xFB7F == 0xF85F (clear U=bit10, bit7)
-    if (h1&0xFB7F)==0xF85F:
-        u=(h1>>10)&1
+    # LDR literal T2: hw1 = 0xF85F | U<<7 -> hw1 & 0xFF7F == 0xF85F (U=bit7)
+    if (h1&0xFF7F)==0xF85F:
+        u=(h1>>7)&1
         t=((a+4)&~3)+((h2&0xFFF) if u else -(h2&0xFFF))
         if 0<=t<n-3: const[struct.unpack_from('<I',dec,t)[0]].append(('ldr',a))
     # ADR T1: 10100 Rd imm8 -> target = Align(PC,4)+imm8*4
     if (h1&0xF800)==0xA000:
         t=((a+4)&~3)+(h1&0xFF)*4
-        const[t].append(('adr1',a))
+        if t<n: const[BASE+t].append(('adr1',a))
     # ADR T2 add/sub
     if (h1&0xFBFF)==0xF20F:
         imm=(((h1>>10)&1)<<11)|(((h2>>12)&7)<<8)|(h2&0xFF)
-        const[((a+4)&~3)+imm].append(('adr2+',a))
+        t=((a+4)&~3)+imm
+        if t<n: const[BASE+t].append(('adr2+',a))
     elif (h1&0xFBFF)==0xF2AF:
         imm=(((h1>>10)&1)<<11)|(((h2>>12)&7)<<8)|(h2&0xFF)
-        const[((a+4)&~3)-imm].append(('adr2-',a))
+        t=((a+4)&~3)-imm
+        if 0<=t<n: const[BASE+t].append(('adr2-',a))
 def sites(v):
     return ", ".join(f"{k}@f+0x{o:06x}" for k,o in const.get(v,[])[:12]) or "(none)"
 

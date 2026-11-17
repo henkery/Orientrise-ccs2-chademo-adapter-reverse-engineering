@@ -16,8 +16,8 @@ for a in range(0x400,n-4,2):
             pa,lo=last[rd]
             if a-pa<=12: const[(imm16(h1,h2)<<16)|lo].append(('mov',pa))
             del last[rd]
-    if (h1&0xFB7F)==0xF85F:
-        u=(h1>>10)&1
+    if (h1&0xFF7F)==0xF85F:
+        u=(h1>>7)&1
         t=((a+4)&~3)+((h2&0xFFF) if u else -(h2&0xFFF))
         if 0<=t<n-3: const[struct.unpack_from('<I',dec,t)[0]].append(('ldr',a))
     if (h1&0xF800)==0xA000:
