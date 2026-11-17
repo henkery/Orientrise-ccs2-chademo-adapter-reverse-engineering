@@ -257,6 +257,119 @@ reuses PA13/14 or sleeps); physical pin numbers are package-dependent (read the 
 ⚠️ **Bench only:** HV side disconnected & capacitors discharged; SWD is in the 3.3 V MCU domain — keep clear
 of the up-to-1000 V power section.
 
+### 5.8 CAN bus deep-dive — identifiers, baud rates, timing  [C/H]
+
+The adapter drives **two independent vehicle-side CAN buses** (STM32 bxCAN **CAN1** `0x40006400`,
+**CAN2** `0x40006800`): **CHAdeMO** (11-bit IDs, 500 kbit/s) and **GB/T 27930** (29-bit SAE J1939 IDs,
+250 kbit/s). The driver reaches the peripherals through a **base-pointer + register-offset** handle
+table — there are no absolute `0x40006400` loads in code; the bases live in a 12-byte-stride peripheral
+handle table at `0x67B74` (this is why a naive literal-xref scan finds only misaligned "data" hits).
+
+#### 5.8.1 Baud rates & bit timing  [C values · H clock]
+
+A **3-entry BTR (bit-timing) lookup table** sits in the boot config block at file `0x08F062`
+(2-byte-aligned, immediately before the default-IP word `192.168.1.1` = `0x0101A8C0` @ `0x08F06E`).
+Decoding each word as an STM32 `CAN_BTR` (`BRP[9:0]=psc−1`, `TS1[19:16]=BS1−1`, `TS2[22:20]=BS2−1`,
+`SJW[25:24]=SJW−1`) yields **exactly {125, 250, 500} kbit/s only when APB1 = 42 MHz**:
+
+| BTR word | psc | BS1 | BS2 | tq/bit | baud @ 42 MHz | sample point |
+|---|---|---|---|---|---|---|
+| `0x002B0014` | 21 | 12 | 3 | 16 | **125 kbit/s** | 81.25 % |
+| `0x00050014` | 21 | 6 | 1 | 8 | **250 kbit/s** | 87.5 % |
+| `0x00270006` | 7 | 8 | 3 | 12 | **500 kbit/s** | 75 % |
+
+- ⇒ **APB1 = 42 MHz ⇒ SYSCLK = 168 MHz** (APB1 = SYSCLK/4). **[H, strong]** — corroborated by
+  `FLASH_ACR = 0x705` (5 wait-states + I/D-cache + prefetch) @ `0x67712`, the correct setting for
+  168 MHz @ 3.3 V. RCC PLL registers not yet read directly.
+- CAN init **indexes this table by a baud selector** (range 1–4, **default 3 → 500 kbit/s**). Menu
+  strings **`CANBAUD1`** / **`CANBAUD2`** (`0x02EC2E` / `0x02EC3E`) make each bus's rate
+  user-configurable. **CHAdeMO = 500 k, GB/T = 250 k** (standard). The config block is copied to RAM at
+  boot (no live flash pointer found).
+- **CAN1/CAN2 → CHAdeMO/GB/T assignment still open** (needs the GPIO/pin map, §8.4).
+
+#### 5.8.2 CAN controller init  [C]
+
+Init routine @ `0x67854` (both controllers, HAL-style):
+- `MCR = 0x4D` — INRQ (enter init), TXFP, RFLM (RX-FIFO locked), NART (no auto-retransmit), ABOM (auto bus-off recovery).
+- `IER = 0x8003` — TX-mailbox-empty + FIFO0-message-pending + sleep interrupts.
+- Filters: `FMR` `0xE01→0xE00` (**CAN2SB = 14**, CAN2 filters start at bank 14); `FM1R = 0` (mask mode),
+  `FS1R = 0x0FFFFFFF` (32-bit scale), `FFA1R = 0` (all → FIFO0), `FA1R = 0x4001` (**banks 0 & 14 active**).
+  Bank 0 regs @ `+0x240` (CAN1), bank 14 @ `+0x2B0` (CAN2). Init leaves a **placeholder filter (ID=0)**
+  that the protocol layer reconfigures with the real acceptance IDs/masks.
+
+#### 5.8.3 GB/T 27930 — J1939 identifiers  [C]
+
+29-bit J1939: `priority[28:26] | PGN[25:8] | SA[7:0]`. All GB/T PGNs are PDU1 (PF < 0xF0) ⇒
+`PGN = PF<<8`, PS = destination. **Charger (this adapter) SA = `0x56`; vehicle BMS SA = `0xF4`.**
+IDs are stored **2-byte-aligned** in flash. The **RX dispatch table** (BMS→charger) starts @ `0x01BF96`
+(the preceding instruction `b #0x803BFBA` @ `0x01BF94` branches *over* it, confirming it is data).
+
+**BMS → charger (RX), PS=`0x56`, SA=`0xF4`:**
+
+| msg | 29-bit ID | PGN | file off |
+|---|---|---|---|
+| BRO (BMS ready) | `0x100956F4` | `0x0900` | `0x01BF96` |
+| BCL (demand V/I) | `0x181056F4` | `0x1000` | `0x01BF9A` |
+| BSM (status) | `0x181356F4` | `0x1300` | `0x01BF9E` |
+| BST (stop) | `0x101956F4` | `0x1900` | `0x01BFA2` |
+| BSD (statistics) | `0x181C56F4` | `0x1C00` | `0x01BFA6` |
+| BEM (error) | `0x081E56F4` | `0x1E00` (prio 2) | `0x01BFAA` |
+| BHM (handshake) | `0x182756F4` | `0x2700` | `0x01BFAE` |
+| TP.CM (BMS→chg) | `0x1CEC56F4` | `0xEC00` | `0x01BB92` |
+| TP.DT (BMS→chg) | `0x1CEB56F4` | `0xEB00` | `0x01BB96` |
+
+**charger → BMS (TX), PS=`0xF4`, SA=`0x56`:**
+
+| msg | 29-bit ID | PGN | file off |
+|---|---|---|---|
+| CRM (recognition) | `0x1801F456` | `0x0100` | `0x01C4DA` |
+| CML (max limits) | `0x1808F456` | `0x0800` | `0x01C4E2` |
+| CCS (charging status) | `0x1812F456` | `0x1200` | `0x01C4EE` |
+| CSD (statistics) | `0x181DF456` | `0x1D00` | `0x01C8FA` |
+| TP.CM (chg→BMS) | `0x1CECF456` | `0xEC00` | `0x01A4E6`, `0x02E55E` |
+
+**Multi-packet:** BRM/BCP (>8 B) use J1939 **TP.CM (`0xEC00`) / TP.DT (`0xEB00`)** — both directions'
+TP.CM/TP.DT IDs are present.
+
+**Built at runtime from PGNs (not literal constants) [H/spec]:** CHM `0x1826F456` (`0x2600`), CTS
+`0x1807F456` (`0x0700`), CRO `0x1809F456` (`0x0900`), CST `0x181AF456` (`0x1A00`), CEM `0x181EF456`
+(`0x1E00`), BRM `0x1C0256F4` (`0x0200`), BCP `0x1C0656F4` (`0x0600`), BCS `0x181156F4` (`0x1100`),
+TP.DT_chg `0x1CEBF456`. All are named in the debug strings (§5.2); their IDs follow the standard GB/T
+PGN map + the confirmed SA/PS scheme.
+
+#### 5.8.4 CHAdeMO identifiers  [C from strings · fixed by spec]
+
+CHAdeMO uses **fixed 11-bit IDs** (no addressing). Confirmed used via debug strings / field names:
+
+| dir | ID | msg | notes |
+|---|---|---|---|
+| RX (veh→chg) | `0x100` | H100 | vehicle status / fault |
+| RX | `0x101` | H101 | vehicle charging-enable / contactor |
+| RX | `0x102` | H102 | **ChargingCurrentRequest**, VehicleChargingEnabled, VehicleStatus, fault bits; "102.4/102.5" = byte 4/5 |
+| TX (chg→veh) | `0x108` | H108 | charger status / available V/I |
+| TX | `0x109` | H109 | charger output / contactor state |
+| v2.0 | `0x110/0x111/0x112` | H110/H111/H112 | dynamic-control / high-power |
+| CBMS | `[103]/[104]/[105]/[301]` | — | vendor "CBMS" (CHAdeMO-BMS) message-set indices |
+
+#### 5.8.5 Protocol timeouts & timebase  [C values · H tick period]
+
+**Timeout durations (from debug strings — actionable, in seconds):**
+- **CHAdeMO:** per-message RX watchdog **1 s** (H100/H101/H102 each); whole-CAN-bus loss **6 s**;
+  wait for vehicle-charging-enable **8 s** ("From (d1)=ON"); wait for EV contactor / current-request
+  **4 s** ("after Switch(d2)=ON").
+- **GB/T:** BRM recognition **5 s**; BEM/CEM per-message `Over_Time_Rx`.
+- **CBMS:** per-message `[101]…[105]/[301]` timeouts + heartbeat + `EVCC_CATL_BMS_Msg_MaxErrTime`.
+
+**Delay / timebase machinery [C structure]:**
+- Busy-delay @ `0x67D32` reads **TIM2_CNT** (`0x40000000+0x24`), extends the 16-bit counter across
+  overflow (+`0x10000`), and waits `(arg+5)/10` ticks.
+- Core delay @ `0x67D82` = `arg × 1000` busy-units, chunked at 256 000 (`0x3E800`), feeding **IWDG**
+  (`0xAAAA`) each chunk; wrappers scale ×100 (`0x67DB0`, `0x6951A`) or ×10 (`0x695F6`, chunk 50 000).
+- **Inference [H]:** busy-unit ≈ 1 µs ⇒ TIM2 tick ≈ 10 µs (100 kHz). Exact **TIM2 prescaler / RTOS tick
+  period not yet confirmed** (the timer @ `0x6847A` with PSC=83/ARR=1110 is a ~1.111 ms PWM, *not* the
+  free-running TIM2 timebase). The numeric tick-constants behind the second-valued timeouts remain to be
+  extracted from the state machines.
+
 ---
 
 ## 6. What this means for an open-source firmware
@@ -296,10 +409,15 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 - `firmware.bin` — fully decoded image (595 140 B).
 - `strings.txt` — 2 724 unique strings ≥6 chars, with offsets.
 - `decoded23.bin` — same decoded image (analysis copy).
-- `analyze1.py … analyze26.py` — the analysis trail (entropy, autocorr, key recovery, vector/peripheral
+- `analyze1.py … analyze35.py` — the analysis trail (entropy, autocorr, key recovery, vector/peripheral
   scans; **15–18** = prefix cipher / QCA-blob / link-base; **19–24** = `usbdisk` update module, flash
   writer, sector tables, XOR-key absence, flash-writer call graph; **25–26** = bootloader search /
-  vector-table scan — **negative**, no embedded bootloader).
+  vector-table scan — **negative**, no embedded bootloader; **27–35** = CAN deep-dive (§5.8): register
+  xrefs, MOVW/MOVT + MOV-imm + LDR-literal immediate decode, GB/T J1939 ID tables, BTR baud decode,
+  SysTick/TIM2 timebase scan).
+- `analyze28.py` — reusable **capstone Thumb-2 disassembler** for any decoded region
+  (`python3 analyze28.py firmware.bin <start_hex> <len_hex> [base_hex]`; needs
+  `nix-shell -p python3 python3Packages.capstone`).
 - `REPORT.md` — this document.
 
 ## 8. Open questions / next steps
@@ -309,6 +427,6 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 2b. **Bootloader / update orchestration (bricking-critical)** — **SEARCHED, NOT FOUND (2026-11-17).** The bootloader is a separate factory component at `0x08000000–0x08020000` (128 KB, sectors 0–4). It is **not in the RAR** (only `MAIN_…UPG`), **not elsewhere in the project**, and **not embedded in the app** — no real vector table; the lone `0x8F652` candidate is a misaligned `.rodata` pointer-table false positive (`analyze25/26`). **Not publicly downloadable:** vendor **Orientrise** (No. 355 Longjin Rd, Changzhou, Jiangsu) ships firmware **contact-only** — `support@orientrise.net` / `sales@orientrise.net`, phone/WhatsApp/WeChat `+86 181 0150 7071`; free firmware on request matched to vehicle/region, **no self-service portal and no `BOOT_…UPG` published**. The nearest open project **`uhi22/ccs32clara` / `osexpert/ccs32clara-chademo`** (Dongguan **Longood** OEM + rebrands EV-Boy / Akyga AK-SC-E18 / EVniculus / Autonlaturit) **explicitly lists Orientrise as NOT compatible** (Longood = STM32F407 + plain `My407ccs2chademo.bin`; Orientrise = F427/F429 + `.UPG`/XOR/encrypted prefix) and does **not** include its own OEM bootloader either — but its README independently corroborates §5.6: *"Firmware update logic is inside the bootloader, so this is not affected by the firmware."* **Acquisition paths:** (a) **email the vendor** for `BOOT_CCS2CHADEMO_1.UPG`; (b) **SWD dump** of `0x08000000` len `0x20000` — **bricking-safe procedure in §5.7** (ESP32-S3 CMSIS-DAP or ST-Link): reading is non-destructive at any RDP level, only an RDP 1→0 *unlock* erases — **never unlock**; probe the first 8 bytes to learn the level first. Once obtained, confirm: who reads USB first, the XOR/prefix decode + any whole-image verify, and any USB/SWD recovery mode.
 3. **The prefix block** (`0x58–0x400`) — **characterized** (§4.1): stream-cipher ciphertext (914 B) + plaintext footer `XIE22.00` / `0x10C0` / `9` / `0x2DBE`. Key/routine lives in the bootloader, not this image. *(The `0x8C400–0x8E600` block is mbedTLS AES/SHA-256 tables, not encrypted data.)*
 4. **Pin map** — disassemble the GPIO init table (`0x67756…`) to map relays, e-lock, CP/PP ADC, QCA7005 SPI pins, CAN pins.
-5. **CAN IDs & timing** — extract CHAdeMO/GB/T CAN identifiers, baud rates, and protocol timeouts from the state machines.
+5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[H]**), CAN init/filter config, and protocol timeouts (1/4/5/6/8 s). **Remaining:** exact TIM2 prescaler / RTOS tick period + the numeric tick-constants behind the second-valued timeouts; CAN1/CAN2→CHAdeMO/GB/T assignment (needs pin map, item 4); confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
 6. **QCA7005 firmware** — **RESOLVED: not in this update.** Modem boots from external SPI flash; the MCU is only a SLAC/PLC host (§5.3). For open firmware, use the redistributable Qualcomm blob (open-plc-utils / `qca_spi` ecosystem).
 7. **RTOS identity** — locate the scheduler/task code to name the RTOS.
