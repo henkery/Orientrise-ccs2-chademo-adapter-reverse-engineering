@@ -1,0 +1,2724 @@
+0x000001  +$$DATA
+0x00000a  $$MAINARM
+0x000015  $$2025-03-03 09:39:39
+0x00002c  $$2.01.C009
+0x000039  $$KM-CCS2CHAdeMO-1
+0x00004d  $$CCS2GBT
+0x0003ea  XIE22.00
+0x000523  `pGx)=
+0x0005c8  |%*F0F
+0x0005db  pHppGp
+0x0005fd  !A` F1
+0x00076e  P:1F(F
+0x0007c2  %FcI*F
+0x00081c  *F9FXFg
+0x00082a  d ACDH
+0x000849  F hah(
+0x00086d  O7L4M$<
+0x000955   [%t]#<EXI:[]
+0x000966  [%t]#<
+0x00097a  [%t]#>EXI:[]
+0x00098a  [%t]#>
+0x0009cc  " 9F0F
+0x0009df  h a0i`api
+0x000d4a  [%t]#SDP : START SDP %u
+0x000d66  NO TLS
+0x000d6e  [%t]#SDP : <-- SDP_response[%s]
+0x000d92  #SDP : <-- SDP_response[%s]
+0x000dc6  #SDP send request to:
+0x000dde  [%t]#SDP : --> SDP_request[%s]
+0x000e02  #SDP : --> SDP_request[%s]
+0x000e22  [%t]#SDP : SDP request failed!!!
+0x000e46  #SDP : SDP request failed!!!
+0x000e66  [%t]#SDP : <-- SDP_response[ERROR]
+0x000e8e  #SDP : <-- SDP_response[ERROR]
+0x000eae  [%t]#TCP : Connecting ...
+0x000eca  [%t]#TCP : Connect error!!!
+0x000eea  #TCP : Connect error!!!
+0x000f02  succeed
+0x000f0a  failed
+0x000f12  [%t]#TCP : Connecting %s
+0x000f2e  #TCP : Connecting %s
+0x000f4d   [%t]#TLS : Connecting ...
+0x000f6a  [%t]#TCP : Closed[BUFFER FULL]
+0x000f8e  #TCP : Closed[BUFFER FULL]
+0x000faa  [%t]#TCP : Link closed[By APP]
+0x000fce  #TCP : Link closed[By APP]
+0x000fea  [%t]#TCP : Link closed
+0x001006  #TCP : Link closed
+0x00101a  [%t]#TCP : Link paused[By APP]
+0x00103e  #TCP : Link paused[By APP]
+0x00105a  [%t]#TCP : Link closed[D_LINK_DOWN]
+0x001082  #TCP : Link closed[D_LINK_DOWN]
+0x0010a2  [%t]#TLS : Init failed[%d]
+0x0010c2  #TLS : Init failed[%d]
+0x0010da  [%t]#TLS : Connecting failed[%d]
+0x0010fe  #TLS : Connecting failed[%d]
+0x00117f  S9F0F>
+0x0012f3  yhx|!0D
+0x00148f   ``BF1F8F
+0x0014de  [%t]#TLS : Connecting succeed
+0x0014fe  #TLS : Connecting succeed
+0x001526  [%t]#TLS : Link closed[%d]
+0x001546  #TLS : Link closed[%d]
+0x00155e  [%t]#TLS : Closed[BUFFER FULL]
+0x001582  #TLS : Closed[BUFFER FULL]
+0x00159e  [%t]#TLS : Link closed[By APP]
+0x0015c2  #TLS : Link closed[By APP]
+0x0015de  [%t]#TLS : Link paused[By APP]
+0x001602  #TLS : Link paused[By APP]
+0x00161e  [%t]#TLS : Link closed[D_LINK_DOWN]
+0x001646  #TLS : Link closed[D_LINK_DOWN]
+0x001669   #SDP received udp from:
+0x001692  [%t]#SDP : DIAG %s
+0x00176d   pG,0pG
+0x001799   [%t]#TLS : Client exit
+0x00199f  AsLtN!<
+0x0019d4  :4``8F
+0x001b79   [%t]#SLAC: <-- VS_HST_ACTION_IND=%u
+0x001ba2  [%t]#SLAC: RESET PLC 
+0x001bc2  [%t]#SLAC: --> SET_KEY_REQ
+0x001be2  [%t]#SLAC: <-- SET_KEY_CNF
+0x001c02  [%t]#SLAC: SET_KEY_REQ Failed
+0x001c22  #SLAC: SET_KEY_REQ Failed %08x
+0x001c42  [%t]#SLAC: Matching failed
+0x001c62  #SLAC: Matching failed
+0x001e75  yIFD0/
+0x002076  [%t]#SLAC: --> CM_SLAC_PARA_REQ
+0x0020a1   [%t]#SLAC: --> CM_START_ATTEN_CHAR_IND
+0x0020ce  [%t]#SLAC: --> CM_ATTEN_CHAR_RSP
+0x0020f2  [%t]#SLAC: EVSE[%02x:%02x:%02x:%02x:%02x:%02x]: ATTEN CHAR %u
+0x002132  [%t]#SLAC: <-- CM_SLAC_MATCH_CNF
+0x002156  #SLAC: <-- CM_SLAC_PARA_CNF [%02x:%02x:%02x:%02x:%02x:%02x]
+0x002236  kx*x1F
+0x002536  [%t]#SLAC: D_LINK CONNECTED %u
+0x00255a  [%t]#SLAC: D_LINK TIMEOUT %u
+0x00257a  #SLAC: D_LINK TIMEOUT %u
+0x002596  MAC-QCA7005-1.1.0.727-02-20130826-FINAL
+0x0025c2  #SLAC: LINKED_EVSE[%02x:%02x:%02x:%02x:%02x:%02x] %udB,T:%u
+0x002604  EVCC%u.%u[%c%c%c%c%c.%c%c%c%c]
+0x002646  MAC:%02x-%02x-%02x-%02x-%02x-%02x
+0x00269d   Power: Battery
+0x0026b2  Power: External
+0x0026c4  [%t]#SLAC: INIT
+0x002a52  [%t]#SLAC: CP DUTY is '%c'[%.1u][%u],PP=%u,KEY_LOCK=%u
+0x002a8e  #SLAC: CP DUTY is '%c'[%.1u][%u],PP=%u,KEY_LOCK=%u
+0x002ac2  [%t]#SLAC: Init matching process
+0x002ae6  #SLAC: Init matching process
+0x002b06  [%t]#SLAC: MATCHING CP_STATUS is E/F
+0x002b2e  #SLAC: MATCHING CP_STATUS is E/F
+0x002b52  [%t]#SLAC: MATCHED CP_STATUS is E/F
+0x002b7a  #SLAC: MATCHED CP_STATUS is E/F
+0x002b9a  [%t]#SLAC: MATCHED D_LINK PASSIVE DISCONNECTED
+0x002bce  #SLAC: MATCHED D_LINK PASSIVE DISCONNECTED
+0x002bfa  [%t]#SLAC: D_LINK_DISCONNECTED
+0x002c1e  #SLAC: D_LINK_DISCONNECTED
+0x002c3d   [%t]#SLAC: Waiting for AVLN disconnect timeout
+0x002c72  #SLAC: Waiting for AVLN disconnect timeout
+0x002c9e  [%t]#SLAC: AVLN disconnected
+0x002cbe  #SLAC: AVLN disconnected
+0x002cda  [%t]#SLAC: Delay 
+0x0030ba  [%t]#SLAC: Wait for BMS process end timeout
+0x0030ea  #SLAC: Wait for BMS process end timeout
+0x003112  [%t]#SLAC: D_LINK PAUSED
+0x00312e  #SLAC: D_LINK PAUSED
+0x003146  [%t]#SLAC: SEND BCB TOGGLE
+0x003166  #SLAC: SEND BCB TOGGLE
+0x00317e  [%t]#SLAC: D_LINK RESTORING...
+0x0031a2  [%t]#SLAC: D_LINK RESTORED
+0x0031c2  #SLAC: D_LINK RESTORED
+0x0031da  [%t]#SLAC: D_LINK RESTORE TIMEOUT %u
+0x003202  #SLAC: D_LINK RESTORE TIMEOUT %u
+0x003229   [%t]#SLAC: BMS process start
+0x00324d   [%t]#SLAC: BMS process end
+0x003272  %02x:%02x:%02x:%02x:%02x:%02x-%2u-%u
+0x0032a2  [%t]#SLAC: DIAG %s
+0x003319  h`a(i `
+0x003525  pX$TpI$
+0x0035ba  pGpGpG
+0x00365f  &"`Aha`
+0x0036d4  `P(D!y
+0x0037fb  aIhAazI
+0x003846  <pWI}p
+0x0038cd  Dq`ps<pxp)
+0x0039b2  [%t]#BMSAC: DIAG %s
+0x0039ca  [%t]#BMS: DIAG %s
+0x003af7  L(x phx`p.
+0x003e93  F4! Fz
+0x003edf  uAupG-
+0x0041fd   #CBMS: TCP LINK DOWN! [%u]
+0x00421a  [%t]#BMS state[%lu]>=100 the session finished!
+0x00424e  [%t]#BMS state[%lu]>=100  the session finished!
+0x004282  #CBMS: Charging is forbade by BMS Heartbeat [%u]
+0x0042b6  [%t]#BMS heartbeat content :EVCC_CATL_CHARGE_FORBID [%lu]
+0x0042f2  #CBMS: Heartbeat timeout shutdown [%u]
+0x00431a  [%t]#heartbeat timeout, shutdown,in BMS state [%lu]
+0x004352  [%t]#notify_bmevcc_emergency_shutdowns_shutdown [%lu]
+0x00438a  #CBMS: EVCC_emergency_shutdown [%u]
+0x0043ae  [%t]#evcc_emergency_shutdown state[%lu]>3
+0x0043da  #CBMS: SOC:%u%%, CP_DUTY:%.1u
+0x0043fd   [%t]#$bms evcc_ask_bms emergency shutdown&
+0x004850  cQ(\i\
+0x004b3d   #CBMS: Start [DIN]
+0x004b52  [%t]#evccbms->state [%lu]err[%d]
+0x004b76  #CBMS: Lock failed
+0x004b8a  #CBMS: Receive BMS message [101] timeout[%u]
+0x004bba  [%t]#state[%d]evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime
+0x004bfa  [%t]#bms state[%d],timeout !BMS lock failed!
+0x004c2a  [%t]# lock ok !BMS locking process done.evccbms->state [%lu]
+0x004c6a  #CBMS: Successfully locked
+0x004c86  #CBMS: SOC:%u%% EVMaximumEnergyRequest: %d[%d]
+0x004cb6  #CBMS: Start to lock...
+0x004cd2  #CBMS: Charging is forbade by BMS [%u]
+0x004cfa  [%t]#BMS forbid charging!EV_REACH_CHARGE_STATUS_FORBID [%lu]
+0x004d3a  #CBMS: Receive BMS message [102] timeout[%u]
+0x004d6a  [%t]#4 [%d]!evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime
+0x004da6  #CBMS: Receive BMS message [103] timeout[%u]
+0x004dd6  [%t]# 5!evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime
+0x005262  #CBMS: Receive BMS message [301] timeout[%u]
+0x005292  #CBMS: Start cable check...
+0x0052ae  #CBMS: Receive message [101] timeout [%u]
+0x0052da  #CBMS: Charging is forbade by BMS[%u]
+0x005302  #CBMS: Cable check finished, Result[%u]
+0x005712  #CBMS: Receive message [301] timeout [%u]
+0x005742  #CBMS: Receive BMS message [101] timeout [%u]
+0x005772  [%t]#105!evcc bms [%d] EV_REACH_CHARGE_STATUS_FORBID
+0x0057aa  #CBMS: Start precharging...
+0x0057c6  #CBMS: Receive BMS message [301] timeout [%u]
+0x0057fa  #CBMS: PRECHARGE_STATUS_FAIL [%u]
+0x00581e  [%t]#203 EV_REACH_CHARGE_STATUS_FORBID not ready shutdown
+0x00585a  #CBMS: Receive BMS message [104] timeout [%u]
+0x005c8a  #CBMS: Precharge successful, EVSEPresentVoltage: %d[%d]
+0x005cc2  #CBMS: Start charging...
+0x005cde  [%t]#251  EV_REACH_CHARGE_STATUS_FORBID[%d]
+0x005d0e  #CBMS: Receive BMS message [105] timeout [%u]
+0x005d42  #CBMS: Receive currentdemand message timeout [%u]
+0x005d7d   [%t]#$bms notready shutdown&
+0x0061a6  #CBMS: Charging...
+0x0061c2  [%t]#301  EV_REACH_CHARGE_STATUS_FORBID!!EVChargerStatus[%d]
+0x006209   [%t]#$bms emergency shutdown&&
+0x00622e  #CBMS: Receive BMS message [102] timeout [%u]
+0x006262  #CBMS: Receive BMS message [103] timeout [%u]
+0x00673a  [%t]#316!evcc bms [%d] evccbms->currentdemand_finish==1
+0x006776  #CBMS: BMS normal shutdown [%u]
+0x006796  [%t]#316!evcc bms [%d] evccbms->notify_normal_shutdown==1
+0x0067d6  [%t]# 401 I!EV_REACH_CHARGE_STATUS_FORBID[%d]
+0x006b73  FwH2xD0*
+0x006b87  FrH2xD06
+0x006cc2  #CBMS: Start welding detection [%u]
+0x006ce6  #CBMS: EVSE normal shutdown [%u]
+0x006d0d   #CBMS: TCP_LINK_DOWN [%u]
+0x006d31   [%t]#$bms tmout shutdown&
+0x0070ac  :fedcba
+0x007182  #CBMS: Welding detection finished [%u]
+0x0071aa  #CBMS: Charging end
+0x0071c5   [%t]#$ac_charge_connected, status[%d]:1-start,0-stop
+0x0071fe  [%t]#$ac_charge_connected,status[%d]:1-start,0-stop
+0x00723d   [%t]#ac evccac->stop == 1 [%lu]!
+0x007262  [%t]#ac evccac->stop == 1 [%lu]
+0x007286  ac evccac->stop == 1 [%lu]
+0x0072a2  [%t]#ac cpduty_err! not nominal(8%-97%)! [%lu]
+0x0072d6  ac cpduty_err! not nominal(8%-97%)! [%lu]
+0x007302  ac heartbeat EVCC_CATL_CHARGE_FORBID [%lu]
+0x00732e  ac heartbeat shut [%lu]
+0x007346  [%t]#ac_heartbeat_shutdown !   EVCC_AC_StopReason[%d]
+0x00737e  [%t]#default:  wakeup_bms(0) 
+0x0073a1   [%t]#ac start  [%lu]
+0x0077a6  adapt_inquiry_charger_enter_ac_cmd,evccac->state [%lu]
+0x0077e2  evccac->state [%lu]err[%d]
+0x0077fe  [%t]#evccac->state [%lu]err[%d]
+0x007822   IsAllowedAC forbid!evccac->state [%lu]
+0x00784e  [%t]#ac IsAllowedAC permit!evccac->state [%lu]
+0x007882    notify_charger_ac_capability_cmd!evccac->state [%lu]
+0x0078be  [%t]#state[%d]evccac->errtime>EVCC_CATL_BMS_Msg_MaxErrTime
+0x0078fe   NotifyACCapbilityCfm.Rcvstatusflag==1!evccac->state [%lu]
+0x00793e  inquiry_charger_switch_ac_cmd,evccac->state [%lu]
+0x007972  state[%d]evccac->errtime>EVCC_CATL_BMS_Msg_MaxErrTime
+0x0079aa  [%t]#evccac->errtime>EVCC_CATL_BMS_Msg_MaxErrTime
+0x0079de  [%t]#msg_timeout_shutdown !EVCC_AC_StopReason [%d]
+0x007a16  in InquirySwitchACCfm!evccac->state [%lu]
+0x007a42  [%t]#[%d]EV_CAMA_ALLOW_AC_STOP  evccac->errtime++
+0x007a76  [%t]#[%d]EV_CAMA_ALLOW_AC_PERMIT  CP_ST_C
+0x007aa3  MaxCurrentLimitHigh[%lu]
+0x007abf  MaxCurrentLimitLow[%lu]
+0x007adb  S2Status [%lu]
+0x007d4f    a3 7
+0x007ee7  CPDuty [%lu]
+0x007ef6  notify_charger_ac_capability_cmd!evccac->state [%lu]
+0x007f2e  NotifyACCapbilityCfm.Rcvstatusflag=1!evccac->state [%lu]
+0x007f6e  ELSE evccac->errtime++ !evccac->state [%lu]
+0x007f9e  not allow stop !evccac->state [%lu]
+0x007fc6  [%t]#stop permit !will go to evccac->state [%lu]
+0x007ffa  [%t]#wakeup_bms 
+0x00800e  [%t]#evccac->state [%lu] 
+0x00802a  [%t]#EVCC_AC_STM_CASE_ERROR_HANDLE2  wakeup_bms(0) 
+0x008062  [%t]#EVCC_AC_STM_CASE_ERROR_HANDLE3  wakeup_bms(0) 
+0x0084c0  `  b(x8
+0x008549   evccac->state [%lu],error !acmode_tout! [%lu]
+0x00857a  [%t]#evccac->state [%lu],error !acmode_tout! [%lu]
+0x008a5e  evccac->state [%lu],error !acallow_tout! [%lu]
+0x008a8e  [%t]#evccac->state [%lu],error !acallow_tout! [%lu]
+0x008ac6  [%t]#ac_enterorallow_shutdown !   EVCC_AC_StopReason[%d]
+0x008b02  [%t]#[%d]SwitchType==other err++
+0x008b26  [%t]#[%d]SwitchType==EV_CAMA_ALLOW_AC_STOP err++
+0x008dfd    a3 $
+0x008f7a  [%t]#evccac->state [%lu] EVCC_AC_StopReason[%d]
+0x0093da  [%t]#heartbeat EVCC_CATL_CHARGE_FORBID [%lu]
+0x00940a  [%t]#heartbeat shut [%lu]
+0x009426  [%t]#notify_bms evcc_emergency_shutdown [%lu]
+0x00945a  [%t]#evcc_emergency_shutdown, state[%lu]>3
+0x009a7d   #CBMS: Start [ISO]
+0x009a96  [%t]#state[%d]t_lock >= evccbms->tout_lockok,BMS lock failed!
+0x009ade  [%t]#EV_REACH_CHARGE_STATUS_FORBID [%lu]
+0x009f76  #CBMS: AC charging powerdelivery...
+0x00a3ae  CBMS: PRECHARGE_STATUS_FAIL [%u]
+0x00a826  [%t]#$bms not ready shutdown&
+0x00ae08  Aq>p(F
+0x00b0da  [%t]#316!evcc bms [%d] evccbms->notify_renegotiate_bysecc==1
+0x00b11a  [%t]#316!evcc bms [%d] evccbms->notify_renegotiate_bybms==1
+0x00b15a  [%t]#316!evcc bms [%d] evccbms->notify_pause_bysecc==1
+0x00b196  [%t]#316!evcc bms next state[%d], notify_pause_bybms==1
+0x00b5fe  #CBMS: wait PowerDeliveryRes message timeout [%u]
+0x00b632  [%t]#409!timout ,stop .evcc bms [%d] Wait PowerDeliveryRes  
+0x00b67a  [%t]#405!evcc bms [%d] not ac nor dc ,shutdown 
+0x00b997  F:xbH%
+0x00b9a5  F:x_Hi
+0x00ba6f  F-H:xL0%
+0x00ba7f  F)H:xL0
+0x00bde2  &F#F%F?
+0x00be50  $QQ^FF
+0x00bf83  DateTimeNow 0x[%x]
+0x00bfa2  Cr)F Dr
+0x00c0fb  &ft iC
+0x00c177  0`bi\C
+0x00c258  Q^cFHCO
+0x00c57b  A |hTC
+0x00c583  A yhTI
+0x00c6b3  "!FuHq
+0x00c6bf  "!FrHq
+0x00c7f7  1aabuanA
+0x00c905  @(\ `C
+0x00c91f  @(\``C
+0x00ce85   [%t]#call set_evcc_fault :errcode[%lu],0x[%x]
+0x00ced9  p!yApa
+0x00d3d1  R "!F{Hp
+0x00d3de   "!FxHp
+0x00d457  "!FZHp
+0x00d463  "!FWHp
+0x00d4f9   [%t]# --> SessionSetupReq.
+0x00d51a  [%t]# --> ServiceDiscoveryReq.
+0x00d53e  [%t]# --> ServiceDetailReq.
+0x00d55e  [%t]# --> PaymentServiceSelectionReq.
+0x00d586  [%t]# --> PaymentDetailsReq.
+0x00d5a6  [%t]# --> MeteringReceiptReq.
+0x00d5c9   [%t]# --> ChargingStatusReq.
+0x00d5ea  [%t]# --> CertificateInstallationReq.
+0x00d8ed  QhR`"!FSHp
+0x00d8fc  `"!FPHp
+0x00da1d   [%t]# --> CertificateUpdateReq.
+0x00da45   [%t]# --> AuthorizationReq.
+0x00da6d   [%t]# --> ChargeParameterDiscoveryReq.
+0x00dc8f  \"qasC
+0x00dd5f  "!FfHp
+0x00deb5  @(\ bC
+0x00df09   [%t]# --> CableCheckReq.
+0x00df26  [%t]# --> PreChargeReq.
+0x00df99  @(\`q`k 
+0x00dfd1  QhR<"!F
+0x00e29f  "!FDHo
+0x00e337  "!F(Ho
+0x00e3bd   [%t]# --> CurrentDemandReq.
+0x00e3e1   [%t]# --> WeldingDetectionReq.
+0x00e406  [%t]# --> SessionStopReq.
+0x00e595  FCFJFj
+0x00e5cd  F3F:FlH
+0x00e609  F^H3F:F`0"
+0x00e64d  FMHCFJF
+0x00e745   [%t]#last time Pause,msg_pfm_init: payment[%d],mode[%d]
+0x00e78e  [%t]#error!physicalvalueType multiplier[%d] is out of scale
+0x00eb0d  F/H"FAF(0o
+0x00ebdd   iso1MessageHeaderType_SessionID_BYTES_SIZE len[%d]
+0x00ec16  check == 0[%d]
+0x00ec2a  SessionID.bytes[i] != p_msgPfm SessionID[%d]
+0x00ecc7  `1F(FJ
+0x00eeb7   `p!F0F
+0x00efb4  0x ppx`p
+0x00efc3  p0y qpy`q9F@F
+0x00f035   iso1 decode error %d!
+0x00f051   [%t]# <-- SessionSetupRes:
+0x00f072  [%t]# <-- ServiceDiscoveryRes:
+0x00f096  [%t]# <-- ServiceDetailRes:
+0x00f0b6  [%t]# <-- PaymentServiceSelectionRes:
+0x00f0de  [%t]# <-- PaymentDetailsRes:
+0x00f0fe  [%t]# <-- CertificateUpdateRes:
+0x00f122  [%t]# <-- CertificateInstallationRes:
+0x00f14a  [%t]# <-- AuthorizationRes:
+0x00f16a  [%t]# <-- ChargeParameterDiscoveryRes:
+0x00f196  [%t]# <-- PowerDeliveryRes:
+0x00f1b6  [%t]# <-- MeteringReceiptRes:
+0x00f1d6  [%t]# <-- ChargingStatusRes:
+0x00f1f6  [%t]# <-- SessionStopRes:
+0x00f212  [%t]# <-- CableCheckRes:
+0x00f22e  [%t]# <-- PreChargeRes:
+0x00f24a  [%t]# <-- CurrentDemandRes:
+0x00f26a  [%t]# <-- WeldingDetectionRes:
+0x00f28e  [%t]# <-- UnknownReq:
+0x00f2bd  FH! Fo
+0x00f52b  FL!0Fn
+0x00f5b3  `I!1pD!
+0x00f5ff  F`! Fn
+0x00f83d   [%t]# error! req_paymentdetails is failure.
+0x00f952  'qi\aqC
+0x00fb43  0`cI  pD `p1 
+0x00fc35  F<!(Fn
+0x00fccd  @&q8\`q
+0x00fec3  F*FGH 
+0x00fed6  [%t]#Before sending PowerDeliveryReq: ChargeProgress stop!
+0x00ff19   [%t]#MeteringReceiptReq msg signature fail!
+0x00ff4a  [%t]# error!EVSEID.charactersLen[%u] is out of scale
+0x00ff86  [%t]# error!check_sessionsetup error !EVSEID=%s
+0x00ffba  [%t]# error! ResponseCode [%d] is not OK!
+0x010275  H2FD8 
+0x0102ac  JFQF0F
+0x0102eb  HRFL0 
+0x01048d   `t0x8
+0x0104b6  [%t]#EVSE only supports PnC, but EV user not PnC!
+0x0104ea  [%t]#EVSE only supports PnC, but no TLS  !
+0x01051a  [%t]#EVSE only supports EIM,set ExternalPayment !
+0x01054e  [%t]#EVSE Response PaymentOption wrong !
+0x01057a  [%t]#No charge service available !
+0x0105a6  [%t]#No energy transfer mode available !
+0x0105d2  [%t]# VAS exist, but type is not OK !
+0x0105fa  [%t]# No Payment Option available!
+0x010622  [%t]# error! check_servicedetail failure!
+0x01064e  [%t]# error! servicedetail EVSE_ServiceID[%lu] is wrong!
+0x010a7a  [%t]# attention! CertificateExpiresSoon,need update!
+0x010ab9   [%t]# error! pki v2gmessage[%d] verify fail!
+0x010aee  [%t]# EVCC never get the new certificate!
+0x010b1e  [%t]# error!EVSEMaxCurrent Unit is incorrect!
+0x010b4e  [%t]# error!EVSEMaxCurrent [%d]> EVSEMaxCurrent_MAX_VALUE
+0x010b8a  [%t]# error!EVSENominalVoltage Unit is incorrect!
+0x010bbe  [%t]#error! ResponseCode is not OK!
+0x010bf3  F#u!F(F
+0x010cd9  HBFH0 
+0x010d1d  B9F(Fm
+0x011022  [%t]#EVSEStatusCode [%d] is EmergncyShutdown!
+0x011052  [%t]#EVSEStatusCode [%d] is EVSE_Shutdown!
+0x011085   [%t]#error !CP status is not equal to neither B nor C!
+0x0110c5   [%t]#check cablecheck  return error
+0x0110ee  [%t]#DC_EVSEStatus.EVSEIsolationStatus Fault!
+0x011126  [%t]# error! check prechargeRes return error!
+0x01118d   `t8x`
+0x011539   [%t]# error!EVSEIsolationStatus=iso1isolationLevelType_Fault
+0x01157a  [%t]# error!EVSEStatusCode[%d]= EmergencyShutdown
+0x0115b2  [%t]# error! check_powerdelivery is failure.
+0x0115ee  [%t]#powerdelivery_pro no WeldingDetection
+0x01161e  [%t]# info! powerdelivery pro ,be going to do renegotiation.
+0x01193c  vret!F
+0x011a12  [%t]# error!EVSEMaxCurrent.Unit[%d] is not 'A'
+0x011a4a  [%t]# error!ReceiptReq[%d] is not required in EIM mode
+0x011a89   [%t]#error!check_chargingstatus failure!
+0x011ab6  [%t]#error! is_charging_completed = PLC_EVCC_Fail!
+0x011d0f   `teu:
+0x011ed2  [%t]# error!DC_EVSEStatus.EVSEStatusCode[%d] is out of range
+0x011f15   [%t]#error!check_currentdemand failure!
+0x011f4e  [%t]#error!meteringreceipt_pro check_meteringreceipt failure!
+0x012066  vbet!F
+0x01241d   [%t]# error!EVSEPresentVoltage.Unit[%d] incorrect
+0x012452  [%t]# error!EVSEStatusCode[%d]=EVSE_Shutdown !
+0x01248a  [%t]#error! EVSEStatusCodeType_EVSE_EmergencyShutdown!
+0x0124c9   [%t]#iso1_msg_emergency_shutdown
+0x01292a  [%t]#(cpstate[%c] CP_StateE OR CP_StateF)!ISO1StmType[%d]
+0x012966  [%t]#DC ,CP_ST_DUTY_5 != cpduty[%d]!ISO1StmType[%d]
+0x0129a1   [%t]#SchemaID == 1,SECC has selected DIN70121!
+0x0129d9   supportedAppProtocolRes err ,goto shutdown!
+0x012a06  supportedAppProtocolRes err ,goto shutdown!
+0x012a36  [%t]#SchemaID == 2,SECC has selected ISO15118!
+0x012d3f  pyJYFPF
+0x012f35   [%t]#result == PLC_EVCC_Error 3 ISO1StmType[%d]!
+0x012f6e  [%t]#result == PLC_EVCC_Error 1 ISO1StmType[%d]!
+0x012fa2  [%t]#result == PLC_EVCC_Error 2 ISO1StmType[%d]!
+0x012fd6  [%t]#sequence error ! ISO1StmType[%d]!
+0x013002  [%t]# error !ISO1MsgType =none , ISO1StmType[%d]!
+0x01306b   `p)F@F
+0x013306  \r9F*F
+0x013382  #FJFQF@F
+0x013451   [%t]#req_prepare :EXI2Stream[%d]error!
+0x013485   [%t]#v2g data send, return an error!status[%d]!
+0x0134c2  [%t]#req_prepare, ptimer_hanlder == NULL!
+0x0134f1   [%t]#v2g_data_read_timeout exi_len[%d] error
+0x013529   [%t]#appHandshake_decode error
+0x013551   [%t]#iso1_message_decode or SessionID error
+0x013582  [%t]#req_sessionsetup error
+0x0135a2  [%t]#iso1_function_res_process returns error
+0x0135d2  [%t]#req_prepare returns an error.
+0x0139f6  [%t]#handler_req_res_tmout.
+0x013a19   [%t]#handler_comm_setup_tmout.
+0x013a3e  [%t]#handler_precharge_tmout.
+0x013a5e  [%t]#handler_cablecheck_tmout.
+0x013a82  [%t]#handler_ongoing_tmout.
+0x013aa2  [%t]#handler_msg_req_tmout.
+0x013acd   [%t]#handler_d_link_down.
+0x013b0e  [%t]#handler_v2g_link_down. 
+0x013b4e  #F*F1F8F
+0x013ce4  :FQFXF
+0x013d85   [%t]#CP Monitor, it returns an error.
+0x013dbd   [%t]#shutdown_by_bms.
+0x013dd6  [%t]#bms notify shutdown.evse_normal_stop!
+0x013e0d   [%t]#call handler for event type (%d) done result %d.
+0x013e49   EVCC_ISO1
+0x013f28  *FIF`hj
+0x013f94  Db!F8F
+0x014242  [%t]#MSG: DIAG %s
+0x014256  [%t]#MSG_NAME: DIAG %s
+0x014275   urn:iso:15118:2:2013:MsgDef
+0x014292  urn:din:70121:2012:MsgDef
+0x0142ae  [%t]# --> supportedAppProtocolReq
+0x0142d2  [%t]#DIN decode error %d! 
+0x0142f2  [%t]#DIN warning. not all bytes read![%d]-[%d]
+0x014326  [%t]# <-- SessionSetupRes:
+0x01436a  [%t]# <-- ServicePaymentSelectionRes:
+0x014392  [%t]# <-- ContractAuthenticationRes:
+0x0143da  [%t]# <--  PaymentDetailsRes:
+0x0145de  @y`T!F0F
+0x014682  AF(x phx`p
+0x014693  p(y qhy`q
+0x0146dd   `T!F(F
+0x014776  (x phx`p
+0x0147d0  `P!F(F
+0x0148ad  `8`@F,
+0x0148e0  p"AF)Hi
+0x0148ec  p")F&Hi
+0x01490a  [%t]#UnknownReq:
+0x014925   [%t]# --> SessionSetupReq
+0x014942  [%t]# --> ServiceDiscoveryReq
+0x014962  [%t]# --> ServicePaymentSelectionReq
+0x014a5d  P8`@F,
+0x014b04  P `T!F(F
+0x014c1f  AF `T!F(F
+0x014c33  "AFeHi
+0x014c3f  ")FbHi
+0x014da1   [%t]# --> ContractAuthenticationReq
+0x014dd5   [%t]# --> ChargeParameterDiscoveryReq
+0x014dfe  [%t]# --> CableCheckReq
+0x014f0b  @8`PF,
+0x0150c5  @8`@F,
+0x015209   [%t]# --> PreChargeReq
+0x015229   [%t]# --> PowerDeliveryReq
+0x01531a  d `T!F(F
+0x01546e   $(,0,48
+0x01550b  t!FkHh
+0x0155e0  ha,vlv
+0x0155f4   O1HlpO
+0x015655   [%t]# --> CurrentDemandReq
+0x01567d   [%t]# --> WeldingDetectionReq
+0x01569e  [%t]# --> SessionStopReq
+0x015b09   appHandshake_decode err ,goto shutdown
+0x015b32  [%t]#appHandshake_decode err ,goto shutdown
+0x015b62  supportedAppProtocolRes err ,goto eshutdown
+0x015b8e  [%t]#supportedAppProtocolRes err ,goto eshutdown
+0x015bc2  SessionSetupRes ResponseCode FAILED, cp_duty!=CP_ST_DUTY_5
+0x015c02  SessionSetupRes  dinresponseCodeType_FAILED_SequenceError
+0x015c7a  SessionSetupRes ResponseCode FAILED, goto Sessionstop 
+0x015cb2  [%t]#SessionSetupRes ResponseCode FAILED, goto Sessionstop
+0x015cf2   SessionSetupRes  FAILED_SequenceError
+0x015d1a  [%t]#SessionSetupRes  FAILED_SequenceError
+0x015f56  #F{J{I|H
+0x016052  #F<J<I=H
+0x0160a6  #F'J'I(H
+0x016123  ok[%d] find PaymentOption [0x%x]
+0x016156   ServiceDiscoveryRes  ResponseCode FAILED, goto Sessionstop
+0x016196   ServiceDiscoveryRes  FAILED_SequenceError
+0x0161c2  [%t]#ServiceDiscoveryRes  FAILED_SequenceError
+0x0161f6  ServicePaymentSelectionRes.ResponseCode FAILED!cp_duty!=5
+0x016232  ServicePaymentSelectionRes.ResponseCode FAILED!SequenceError 
+0x016272  ServicePaymentSelectionRes.ResponseCode FAILED!goto Sessionstop
+0x0162b2  ServicePaymentSelectionRes. other FAILED_SequenceError 
+0x0162ea  [%t]#ServicePaymentSelectionRes. other FAILED_SequenceError
+0x01632a   ContractAuthenticationRes cp_duty!=5, emergency_shutdown[%d]
+0x01636e   ContractAuthenticationRes , responscode[%d],goto Sessionstop
+0x0163ae  ContractAuthenticationRes!!FAILED_SequenceError [%d]
+0x01669c  #FsJtITH
+0x0167b6  [%t]# ContractAuthenticationRes!!FAILED_SequenceError [%d]
+0x0167f9   ChargeParameterDiscoveryRes error EVSEProcessing[%d]
+0x016832  [%t]#ChargeParameterDiscoveryRes error EVSEProcessing[%d]
+0x016881   ChargeParameterDiscoveryRes.  EVSEStatusCode =EVSE_Shutdown!
+0x0168c9   ChargeParameterDiscoveryRes.contains response code failed 
+0x01690a  ChargeParameterDiscoveryRes. FAILED_SequenceError 
+0x01693e  [%t]#ChargeParameterDiscoveryRes. FAILED_SequenceError!
+0x016c58  #FaJbIbH
+0x016c8c  #FTJUIUH
+0x016ce8  #F=J>I>H
+0x016d16  CableCheckRes contains response code failed [%d]
+0x016d4a  [%t]#CableCheckRes contains response code failed [%d]
+0x016d89   CableCheckRes ELSE EVSEProcessing[%d]
+0x016db2  [%t]#CableCheckRes ELSE EVSEProcessing[%d]
+0x016ded   CableCheckRes EVSEStatusCode[%d] :goto SessionStopReq
+0x016e26  [%t]#CableCheckRes EVSEStatusCode[%d] :goto SessionStopReq
+0x016e76  CableCheckRes ResponseCode[%d] :goto SessionStopReq
+0x016eaa  [%t]#CableCheckRes ResponseCode[%d] :goto SessionStopReq
+0x0171c2  #FsJqIVH
+0x017220  #F[JZI>H
+0x01727e  CableCheckRes _FAILED_SequenceE
+0x01729e  [%t]#CableCheckRes _FAILED_SequenceE[%d]
+0x0172ca  CableCheckRes FAILED_SequenceError[%d]
+0x0172f2  [%t]#CableCheckRes FAILED_SequenceError[%d]
+0x017325   PreChargeRes t_contains response code failed
+0x017356  [%t]#PreChargeRes t_contains response code failed
+0x01739e  after charge parameter discovery CP_Duty_Error_cnt[%d]>20
+0x0173da  PreChargeRes  EVSEStatusCode EVSE_Shutdown,goto Sessionstop
+0x017745  `#FoJoICH
+0x017792  PreChargeRes ResponseCode FAILED_SequenceError
+0x0177c2  [%t]#PreChargeRes ResponseCode FAILED_SequenceError
+0x0177fa  PreChargeRes message FAILED_SequenceErrorr
+0x017826  [%t]#PreChargeRes message FAILED_SequenceErrorr
+0x01785d   PowerDeliveryRes contains response code failed 
+0x01788e  [%t]#PowerDeliveryRes contains response code failed  
+0x0178ca  PowerDeliveryRes dinresponseCodeType_FAILED_SequenceError 
+0x01790d   PowerDeliveryRes  FAILED_SequenceError
+0x017936  [%t]#PowerDeliveryRes  FAILED_SequenceError
+0x017966  CurrentDemandRes ResponseCode[%d],goto shutdown 
+0x01799a  [%t]#CurrentDemandRes  ResponseCode[%d],goto shutdown
+0x0179da  CurrentDemandRes other state,goto emergency_shutdown
+0x017a12  [%t]#CurrentDemandRes other state,goto emergency_shutdown
+0x017c98  #FtJuIuH
+0x017cf0  #F^J_I_H
+0x017d62  #FBJBICH
+0x017e86  CurrentDemandRes dinresponseCodeType_FAILED_SequenceError
+0x017ec2  CurrentDemandRes  FAILED_SequenceError
+0x017eea  [%t]#CurrentDemandRes  FAILED_SequenceError
+0x018121  `#FYJYIZH
+0x018164  #FHJIIIH
+0x0181c3  `#F0J1I1H
+0x018295   [%t]#PowerDeliveryRes if ev wish to perform the session stop
+0x0182d6  PowerDeliveryRes.stop ResponseCode SEQUENCE ERR
+0x018306  [%t]#PowerDeliveryRes.stop ResponseCode SEQUENCE ERR
+0x018342  PowerDeliveryRes.stop contains response code failed
+0x018376  [%t]#PowerDeliveryRes.stop contains response code failed
+0x0183b2  PowerDeliveryRes.stop FAILED_SequenceError
+0x0183de  [%t]#PowerDeliveryRes.stop FAILED_SequenceError
+0x018415   WeldingDetectionRes contains response code failed
+0x01844a  [%t]#WeldingDetectionRes contains response code failed
+0x018486  [%t]#emergency_shutdown !cp[%c][%.1u]get_lock[%x]
+0x0184ba  [%t]#WeldingDetectionRes EVSEStatusCode EVSE_Shutdown 
+0x018866  WeldingDetectionRes FAILED_SequenceError
+0x018892  [%t]#WeldingDetectionRes FAILED_SequenceError
+0x0188c2  [%t]# IN THE END SessionStopRes
+0x0188e9   SessionStopRes!FAILED_SequenceError@stopsession
+0x01891a  [%t]#SessionStopRes!FAILED_SequenceError@stopsession
+0x018966  EVController4.EVEmergencyShutDown==1,should goto bms_shutdown
+0x0189a6  [%t]#bms ask evcc shutdown! cp[%c][%.1u]get_lock[%x]
+0x0189de  but it is evse_normal_stop !
+0x0189fe  [%t]#but it is evse_normal_stop !
+0x018a22  [%t]#plugin .evcc_sta->plug_in = PLC_EVCC_False
+0x018cde  SupportedApp evcc_sta->tout_commsetup [0x%x],timeout shutdown
+0x018d22  SupportedApp evcc_sta->tout [0x%x],timeout shutdown
+0x018d56  [%t]#SupportedApp evcc_sta->tout [0x%x],timeout shutdown
+0x018d92  SupportedApp (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x018dca  [%t]#SupportedApp (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x018e15   SessionSetupRes t>=evcc_sta->tout ,timeout shutdown
+0x018e4a  [%t]#SessionSetupRes t>=evcc_sta->tout ,timeout shutdown
+0x018e86  SessionSetupRes t_comm>=evcc_sta->tout_commsetup
+0x018eba  [%t]#SessionSetupRes t_comm>=evcc_sta->tout_commsetup
+0x018ef2  SessionSetupRes  (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x018f2e  ServiceDiscoveryRes  t>=evcc_sta->tout
+0x018f56  [%t]#ServiceDiscoveryRes  t>=evcc_sta->tout
+0x018f86  ServiceDiscoveryRes  (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x018fc6  ServicePaymentSelectionRes.  t>=evcc_sta->tout !
+0x018ffa  [%t]#ServicePaymentSelectionRes.  t>=evcc_sta->tout !
+0x019032  [%t]#(cpstate==CP_StateE)||(cpstate==CP_StateF)!
+0x019066  ContractAuthenticationRes.t>=evcc_sta->tout !
+0x019096  [%t]#ContractAuthenticationRes.t>=evcc_sta->tout !
+0x01938a  +F^J^I_H
+0x0194d2  [%t]#(cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x019511   ContractAuthenticationRes. bms_lock_tmerror !
+0x019542  [%t]#ContractAuthenticationRes. bms_lock_tmerror !
+0x01957a  ContractAuthenticationRes. bms_can_nodata !
+0x0195a6  [%t]#ContractAuthenticationRes. bms_can_nodata !
+0x0195da  ChargeParameterDiscoveryRes. t>=evcc_sta->tout !
+0x01960e  [%t]#ChargeParameterDiscoveryRes. t>=evcc_sta->tout !
+0x019652  CableCheckRes  t>=evcc_sta->tout 
+0x019676  [%t]#CableCheckRes  t>=evcc_sta->tout
+0x01969e  CableCheckRes (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x0196da  [%t]#CableCheckRes (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x0197d9  HJFH0ci
+0x0199d4  hT+FOJOIPH
+0x019b26  PreChargeRes  t_precharge[%lu]>=tout_precharge[%lu],stime[%lu]
+0x019b66  [%t]#timeout_shutdown cp[%c][%.1u]get_lock[%x]
+0x019b9a  PreChargeRes (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x019bd2  [%t]#PreChargeRes (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x019c15   PowerDeliveryRes  t>=evcc_sta->tout
+0x019c3a  [%t]#PowerDeliveryRes  t>=evcc_sta->tout 
+0x019c66  PowerDeliveryRes  (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x019caa  CurrentDemandRes msg timeout!@ t>=evcc_sta->tout,stime[%lu]
+0x019ce6  CurrentDemandRes-cp state err[%d]
+0x019d0a  [%t]#CurrentDemandRes-cp state err[%d]
+0x019f80  pGPowerDeliveryRes STOP t>=evcc_sta->tout
+0x019faa  [%t]#PowerDeliveryRes STOP t>=evcc_sta->tout
+0x019fe9   WeldingDetectionRes t>=evcc_sta->tout
+0x01a012  [%t]#WeldingDetectionRes t>=evcc_sta->tout
+0x01a042  SessionStopRes response msg timeout!@stopsession
+0x01a076  [%t]# SessionStopRes response msg timeout!@stopsession
+0x01a0b2  SessionStopRes   (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x01a4ea  BSM.BSM_AlarmCellVoltage[%d]= GBT_STATE_OCCURRENCE
+0x01a51e  [%t]#BSM.BSM_AlarmCellVoltage[%d]= GBT_STATE_OCCURRENCE
+0x01a55a  BSM.BSM_AlarmBatterySOC[%d]= GBT_STATE_OCCURRENCE
+0x01a58e  [%t]#BSM.BSM_AlarmBatterySOC[%d]= GBT_STATE_OCCURRENCE
+0x01a5ca  BSM.BSM_ChargeOverCurrent[%d]= GBT_STATE_OCCURRENCE
+0x01a5fe  [%t]#BSM.BSM_ChargeOverCurrent[%d]= GBT_STATE_OCCURRENCE
+0x01a63a  BSM.BSM_BatteryOverTemperature[%d]= GBT_STATE_OCCURRENCE
+0x01a676  [%t]#BSM.BSM_BatteryOverTemperature[%d]= GBT_STATE_OCCURRENCE
+0x01a6b6  BSM.BSM_IsolationState[%d]= GBT_STATE_ABNORMAL
+0x01a6e6  [%t]#BSM.BSM_IsolationState[%d]= GBT_STATE_ABNORMAL
+0x01a71e  BSM.BSM_ConnectorState[%d]= GBT_STATE_ABNORMAL
+0x01a74e  [%t]#BSM.BSM_ConnectorState[%d]= GBT_STATE_ABNORMAL
+0x01a786  BEM.BEM_Over_Time_Rx_CRM00[%d]= GBT_STATE_OCCURRENCE
+0x01a7be  [%t]#BEM.BEM_Over_Time_Rx_CRM00[%d]= GBT_STATE_OCCURRENCE
+0x01a7fa  BEM.BEM_Over_Time_Rx_CRMAA[%d]= GBT_STATE_OCCURRENCE
+0x01a832  [%t]#BEM.BEM_Over_Time_Rx_CRMAA[%d]= GBT_STATE_OCCURRENCE
+0x01a9d6  BEM.BEM_Over_Time_Rx_CTS_CML[%d]= GBT_STATE_OCCURRENCE
+0x01aa0e  [%t]#BEM.BEM_Over_Time_Rx_CTS_CML[%d]= GBT_STATE_OCCURRENCE
+0x01aa4e  BEM.BEM_Over_Time_Rx_CRO[%d]= GBT_STATE_ABNORMAL
+0x01aa82  [%t]#BEM.BEM_Over_Time_Rx_CRO[%d]= GBT_STATE_ABNORMAL
+0x01aaba  BEM.BEM_Over_Time_Rx_CCS[%d]= GBT_STATE_ABNORMAL
+0x01aaee  [%t]#BEM.BEM_Over_Time_Rx_CCS[%d]= GBT_STATE_ABNORMAL
+0x01ab26  BEM.BEM_Over_Time_Rx_CST[%d]= GBT_STATE_ABNORMAL
+0x01ab5a  [%t]#BEM.BEM_Over_Time_Rx_CST[%d]= GBT_STATE_ABNORMAL
+0x01ab92  BEM.BEM_Over_Time_Rx_CSD[%d]= GBT_STATE_ABNORMAL
+0x01abc6  [%t]#BEM.BEM_Over_Time_Rx_CSD[%d]= GBT_STATE_ABNORMAL
+0x01abfe  BEM.BEM_Other=[%d]
+0x01ac12  [%t]#BEM.BEM_Other=[%d]
+0x01ac2e  BST.BST_EndEVCC_AchieveTargetSOC[%d]= GBT_STATE_OCCURRENCE
+0x01ac6e  BST.BST_EndEVCC_AchieveSetTotalVol[%d]= GBT_STATE_OCCURRENCE
+0x01acae  BST.BST_EndEVCC_AchieveSetCellVol[%d]= GBT_STATE_OCCURRENCE
+0x01acea  BST.BST_EndEVCC_ChargerSuspend[%d]= GBT_STATE_OCCURRENCE
+0x01ad26  [%t]#BST.BST_EndEVCC_ChargerSuspend[%d]= GBT_STATE_OCCURRENCE
+0x01ad66  BST.BST_EndEVCC_Flt_Isolation[%d]= GBT_STATE_OCCURRENCE
+0x01afc5  QiZHCd!
+0x01affb  QiZHCO
+0x01b033  x pHx]
+0x01b03e  [%t]#BST.BST_EndEVCC_Flt_Isolation[%d]= GBT_STATE_OCCURRENCE
+0x01b07e  BST.BST_EndEVCC_Flt_ConnectorOverTemp[%d]= GBT_STATE_OCCURRENCE
+0x01b0c2  BST.BST_EndEVCC_Flt_BMUOverTemp[%d]= GBT_STATE_OCCURRENCE
+0x01b0fe  BST.BST_EndEVCC_Flt_ConnectorFault[%d]= GBT_STATE_OCCURRENCE
+0x01b13e  BST.BST_EndEVCC_Flt_OverTempFault[%d]= GBT_STATE_OCCURRENCE
+0x01b17a  BST.BST_EndEVCC_Flt_HVContactorFlt[%d]= GBT_STATE_OCCURRENCE
+0x01b1be  BST.BST_EndEVCC_Flt_Point2VltMonitor[%d]= GBT_STATE_OCCURRENCE
+0x01b1fe  BST.BST_EndEVCC_Flt_OtherFault[%d]= GBT_STATE_OCCURRENCE
+0x01b23a  [%t]#BST.BST_EndEVCC_Flt_OtherFault[%d]= GBT_STATE_OCCURRENCE
+0x01b27a  BST.BST_EndEVCC_Err_OverCurrent[%d]= GBT_STATE_OCCURRENCE
+0x01b2b6  BST.BST_EndEVCC_Err_VoltageAbnormal[%d]= GBT_STATE_OCCURRENCE
+0x01b323  x!pAxap
+0x01b333  y!q@y`q
+0x01b3ae   QaZd&HC
+0x01b447  QiZd'HC
+0x01b8c2  [%t]#CST OTHER Reason.[%d]
+0x01b8e2  [%t]#CHARGE_STOPREASON_AUTO .CST_EndEVCC_BMSAbortEVCC[%d]
+0x01b91e  [%t]#CHARGE_STOPREASON_MANUAL .CST_EndEVCC_ManualStop[%d]
+0x01b95e  [%t]#CHARGE_STOPREASON_BMS_OK .CST_EndEVCC_BMSAbortEVCC[%d]
+0x01b9a2  [%t]#CST_EndEVCC_Fault .Flt_OtherFault[%d]
+0x01b9d6  [%t]#gbt_set_cem.CEM_Over_Time_Rx_BRM[%d]= GBT_STATE_ABNORMAL
+0x01ba16  [%t]#gbt_set_cem.CEM_Over_Time_Rx_BCP[%d]= GBT_STATE_ABNORMAL
+0x01ba56  [%t]#gbt_set_cem.CEM_Over_Time_Rx_BRO[%d]= GBT_STATE_ABNORMAL
+0x01ba96  [%t]#gbt_set_cem.CEM_Over_Time_Rx_BCS[%d]= GBT_STATE_ABNORMAL
+0x01bad6  [%t]#gbt_set_cem.CEM_Over_Time_Rx_BCL[%d]= GBT_STATE_ABNORMAL
+0x01bb16  [%t]#gbt_set_cem.CEM_Reserved3 BSM[%d]= GBT_STATE_ABNORMAL
+0x01bb59   [%t]#gshutdown_info.RootCause[0x%x]ErrorCode[%d]!
+0x01bc07  y!rAyar
+0x01bd43  y!qAyaq
+0x01c35b  p]HbI88
+0x01c729  GrH80M
+0x01c90a  H102.BatteryOverVoltage[%d]= GBT_STATE_OCCURRENCE
+0x01c93e  [%t]#H102.BatteryOverVoltage[%d]= GBT_STATE_OCCURRENCE
+0x01c97a  H102.BatteryUnderVoltage[%d]= GBT_STATE_OCCURRENCE
+0x01c9ae  [%t]#H102.BatteryUnderVoltage[%d]= GBT_STATE_OCCURRENCE
+0x01c9ea  H102.BatteryCurrentDeviationError [%d]= GBT_STATE_OCCURRENCE
+0x01ca2e  H102.HighBatteryTemperature[%d]= GBT_STATE_OCCURRENCE
+0x01ca66  [%t]#H102.HighBatteryTemperature[%d]= GBT_STATE_OCCURRENCE
+0x01caa6  H102.BatteryVoltageDeviationError[%d]= GBT_STATE_OCCURRENCE
+0x01cae2  H102.VehicleShiftPosition[%d]= GBT_STATE_OCCURRENCE
+0x01cb16  [%t]#H102.VehicleShiftPosition[%d]= GBT_STATE_OCCURRENCE
+0x01cb52  H102.ChargingSystemError[%d]= GBT_STATE_OCCURRENCE
+0x01cb86  [%t]#H102.ChargingSystemError[%d]= GBT_STATE_OCCURRENCE
+0x01cbc2  H102.NormalStopRequestBeforeCharging[%d]= GBT_STATE_OCCURRENCE
+0x01cc77  QqZA4HC
+0x01d0e9  "9F0Fv
+0x01d109   [%t]#GBT clr_bms .
+0x01d126  GBT AC stm :plugout 3,ac evccac->stop == 1 ,evccac->state[%lu]!
+0x01d169   GBT AC stm :get_evcc_hw_fault !evccac->state[%lu]
+0x01d19e  [%t]#GBT AC stm :get_evcc_hw_fault !evccac->state[%lu]
+0x01d619   [%t]#GBT AC stm :plug_in, AC start!evccac->state[%lu]
+0x01d652  [%t]#GBT AC stm :set lock!evccac->state[%lu]
+0x01d686  GBT AC stm :E-lock locking process Failed!evccac->state[%lu].
+0x01d6c6  GBT AC stm :E-lock Failed 3 times!evccac->state[%lu].
+0x01d6fe  [%t]#GBT AC stm :E-lock Failed 3 times!evccac->state[%lu].
+0x01d73e  GBT AC stm :E-lock Failed!evccac->state[%lu].
+0x01d76e  [%t]#GBT AC stm :E-lock Failed!evccac->state[%lu].
+0x01d7aa  [%t]#GBT AC stm :send SIF.evccac->state[%lu].
+0x01d7da  [%t]#GBT AC stm :BLM received.evccac->state[%lu].
+0x01d80e  [%t]#GBT AC stm :send SIF.evccac->state[%lu]
+0x01d842  [%t]#GBT AC stm :send SIF .evccac->cnt=%d.evccac->state[%lu]
+0x01e0b6  GBT stm :get_evcc_hw_fault .p->state[%lu].
+0x01e0e2  [%t]#GBT stm :get_evcc_hw_fault .p->state[%lu].
+0x01e116  GBT stm :BST received.p->state[%lu].
+0x01e13e  [%t]#GBT stm :BST received.p->state[%lu].
+0x01e16a  GBT stm :BEM received.p->state[%lu].
+0x01e192  [%t]#GBT stm :BEM received.p->state[%lu].
+0x01e1c1   GBT stm :notify_bms_shutdown == PLC_EVCC_True.p->state[%lu].
+0x01e206  GBT stm :notify_normal_shutdown == PLC_EVCC_True.p->state[%lu].
+0x01e249   GBT stm :gevcc_sta.plug_in == PLC_EVCC_False.p->state[%lu].
+0x01e289   GBT machine :g_v2g_data_link == PLC_EVCC_False.p->state[%lu].
+0x01e5ee  LP1F F
+0x01e78e  t<HCd!
+0x01e7a2  [%t]#GBT stm :default, p->state[%lu]
+0x01e7dd   [%t]#GBT stm :set lock!p->state[%lu].
+0x01e806  [%t]#GBT stm :waiting ,e-lock being locked!p->state[%lu].
+0x01e842  [%t]#GBT stm :ongoing ,e-lock being locked!p->state[%lu].
+0x01e87e  GBT stm :E-lock Failed 3 times!p->state[%lu].
+0x01e8ae  [%t]#GBT stm :E-lock Failed 3 times!p->state[%lu].
+0x01e8e6  GBT stm :E-lock Failed!p->state[%lu].
+0x01e90e  [%t]#GBT stm :E-lock Failed!p->state[%lu].
+0x01e93e  GBT stm :E-lock Failed!go to shutdown.p->state[%lu].
+0x01e976  [%t]#GBT stm :E-lock Failed!go to shutdown.p->state[%lu].
+0x01e9b2  [%t]#GBT stm :connector locked!open A+ signal!p->state[%lu].
+0x01e9f2  [%t]#GBT stm :E-lock OK!send CHM!p->state[%lu].
+0x01ea26  [%t]#GBT stm :send CHM.p->state[%lu].
+0x01ea4e  [%t]#GBT stm :BHM received.send CRM 00.p->state[%lu].
+0x01ea8a  [%t]#GBT stm :send CRM 0X00!p->state[%lu].
+0x01eaba  [%t]#GBT stm :12 case ,BRM 5s timeout!p->BRM.FLAG[%lu].
+0x01eaf6  #GBT stm :12 case ,BRM 5s timeout!p->BRM.FLAG[%lu].
+0x01eeee  [%t]#GBT stm :12 case OK!EVMaximumEnergyCapacity[%lu].
+0x01ef2a  [%t]#GBT stm :BRM received!send CRM AA.will go to state[%lu].
+0x01ef6a  [%t]#GBT stm :CRM 0xAA !p->state[%lu].
+0x01ef9a  [%t]#GBT stm :BCP *EVRESSSOC[%lu]%%.
+0x01efc6  [%t]#GBT stm :35case ,BRM 5s timeout!p->BRM.FLAG[%lu].
+0x01f002  #GBT stm :35 case ,BRM 5s timeout!p->BRM.FLAG[%lu].
+0x01f036  [%t]#GBT stm :35 case OK!EVMaximumEnergyCapacity[%lu].
+0x01f721  x{HP8P
+0x01f7b8  gH;FD0
+0x01f8d2  [%t]#GBT stm :CableCheck ongoing!send CML, CTS!p->state[%lu].
+0x01f91a  [%t]#GBT stm :CableCheck ongoing!send CRO!p->state[%lu].
+0x01f95e  [%t]#GBT stm :CRO-0x0
+0x01fc5d  FMHbxd8
+0x01fc83  FDHbx\0
+0x01fd4a  GBT stm : 5s timeout, p->state[%lu], err_flag = PLC_EVCC_True 
+0x020007  4U `pI
+0x020033  4U `sI
+0x02003d  FwH"xP0
+0x020646  [%t]#GBT stm :24 case ,send CRO AA.
+0x020676  GBT stm :CurrentDemand phase,BCL 1s timeout, p->state[%lu] .
+0x0206b6  [%t]GBT stm :CurrentDemand BCL 1s timeout !
+0x0206ea  GBT stm :CurrentDemand phase,BCS 5s timeout, p->state[%lu] 
+0x020726  [%t]GBT stm :CurrentDemand BCS 5s timeout !
+0x020756  GBT stm :CurrentDemand phase,BSM 5s timeout, p->state[%lu] 
+0x020792  [%t]GBT stm :CurrentDemand BSM 5s timeout !
+0x020c41   [%t]#GBT stm :30 case ,end because BST sth.wrong  
+0x020c7a  [%t]#GBT stm :30 case ,end because BST ok
+0x020ca6  [%t]#GBT stm :30 case ,end because BEM sth.wrong  
+0x020cde  [%t]#GBT stm :30 case ,end because BEM received.
+0x020d15   [%t]#GBT stm :30 case ,end  because normal_shutdown!
+0x020d4e  [%t]#GBT stm :30 case ,BSM.bsm_error ,state[%d]. 
+0x020d82  GBT stm :30 case ,BSM.bsm_error ,state[%d]. 
+0x0211d2  [%t]#GBT stm : 31 case,send CST.
+0x0211fa  [%t]#GBT stm : 40 case ,send CSD.
+0x02121e  [%t]#GBT stm :100 case ,send CST.
+0x021242  [%t]#GBT stm :101 case ,send CSD.
+0x021266  [%t]#GBT stm :210 case ,send CST.
+0x02128a  [%t]#GBT stm :211 case ,send CSD.
+0x0216d6  [%t]#GBT stm :notify shutdown,p->state[%lu]
+0x021706  [%t]#GBT stm :send CST,p->state[%lu]
+0x021731   [%t]#GBT stm :EVEmergencyShutDown,p->state[%lu].
+0x021766  [%t]#GBT stm :send CST,p->state[%lu].
+0x02178e  [%t]#GBT stm :notify EVCC shutdown,p->state[%lu]
+0x0217c6  [%t]#GBT stm :unlock ,p->cnt > 500,p->state[%lu].
+0x0217fa  [%t]#GBT stm :STM_EVCC_UNLOCK_ACTION_STEP2,p->state[%lu].
+0x021836  [%t]#GBT stm :STM_EVCC_UNLOCK_ACTION_STEP3,p->state[%lu].
+0x021876  CHAdeMO stm :get_evcc_hw_fault .p->state[%lu].
+0x0218a6  [%t]#CHAdeMO stm :get_evcc_hw_fault .p->state[%lu].
+0x0218de  CHAdeMO stm :h102_status error.p->state[%lu].
+0x021cbe  [%t]#CHAdeMO stm :h102_status error.p->state[%lu].
+0x021d01   CHAdeMO stm :gevcc_sta.plug_in == PLC_EVCC_False.p->state[%lu].
+0x021d49   [%t]#CHAdeMO stm :default, p->state[%lu]
+0x021d76  CHAdeMO stm :DIN70121. EVSE authoried.p->state[%lu]
+0x022096  [%t]#CHAdeMO stm :DIN70121. EVSE authoried.p->state[%lu]
+0x0220d2  CHAdeMO stm :ISO15118.EVSE authoried.p->state[%lu]
+0x022106  [%t]#CHAdeMO stm :ISO15118.EVSE authoried.p->state[%lu]
+0x022145   [%t]#CHAdeMO stm :set lock!p->state[%lu].
+0x022172  [%t]#CHAdeMO stm :waiting ,e-lock being locked!p->state[%lu].
+0x0221b6  [%t]#CHAdeMO stm :ongoing ,e-lock being locked!p->state[%lu].
+0x0221f6  CHAdeMO stm :E-lock Failed 3 times!p->state[%lu].
+0x02222a  [%t]#CHAdeMO stm :E-lock Failed 3 times!p->state[%lu].
+0x022266  CHAdeMO stm :E-lock Failed!p->state[%lu].
+0x022292  [%t]#CHAdeMO stm :E-lock Failed!p->state[%lu].
+0x0222c6  CHAdeMO stm :E-lock Failed!go to shutdown.p->state[%lu].
+0x022302  [%t]#CHAdeMO stm :E-lock Failed!go to shutdown.p->state[%lu].
+0x022342  [%t]#CHAdeMO stm :E-lock OK!!next p->state[%lu].
+0x022776  [%t]#CHAdeMO stm :CableCheck ongoing!!p->state[%lu].
+0x0227ba  [%t]#CHAdeMO stm :good, CHAdeMO connector plugin!
+0x0227f6  [%t]#CHAdeMO stm :wait H100,H101,H102.p->state[%lu].
+0x022900  Bp1F F
+0x022c3a  [%t]#CHAdeMO stm :14 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x022c7a  #CHAdeMO stm :14 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x022cb6  [%t]#CHAdeMO stm :14 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x022cf6  #CHAdeMO stm :14 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x022d36  [%t]#CHAdeMO stm :14 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x022d76  #CHAdeMO stm :14 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x0231ae  [%t]#CHAdeMO stm :15 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x0231ee  #CHAdeMO stm :15 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x02322a  [%t]#CHAdeMO stm :15 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x02326a  #CHAdeMO stm :15 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x0232a6  [%t]#CHAdeMO stm :15 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x0232e6  #CHAdeMO stm :15 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x02342e  Dp1F F
+0x023736  [%t]#CHAdeMO stm :16 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x023776  #CHAdeMO stm :16 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x0237b2  [%t]#CHAdeMO stm :16 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x0237f2  #CHAdeMO stm :16 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x023832  [%t]#CHAdeMO stm :16 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x023872  #CHAdeMO stm :16 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x023cda  [%t]#CHAdeMO stm :17 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x023d1a  #CHAdeMO stm :17 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x023d56  [%t]#CHAdeMO stm :17 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x023d96  #CHAdeMO stm :17 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x023dd2  [%t]#CHAdeMO stm :17 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x023e12  #CHAdeMO stm :17 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x024286  [%t]#CHAdeMO stm :18 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x0242c6  #CHAdeMO stm :18 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x024302  [%t]#CHAdeMO stm :18 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x024342  #CHAdeMO stm :18 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x02437e  [%t]#CHAdeMO stm :18 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x0243be  #CHAdeMO stm :18 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x0244a4  Hp1F F
+0x02483a  [%t]#CHAdeMO stm :19 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x02487a  #CHAdeMO stm :19 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x0248b6  [%t]#CHAdeMO stm :19 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x0248f6  #CHAdeMO stm :19 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x024932  [%t]#CHAdeMO stm :19 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x024972  #CHAdeMO stm :19 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x0249ba  [%t]#CHAdeMO stm :20 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x0249fa  #CHAdeMO stm :20 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x024df2  [%t]#CHAdeMO stm :20 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x024e32  #CHAdeMO stm :20 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x024e6e  [%t]#CHAdeMO stm :20 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x024eae  #CHAdeMO stm :20 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x024ef6  [%t]#CHAdeMO stm :30 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x024f36  #CHAdeMO stm :30 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x024f72  [%t]#CHAdeMO stm :30 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x024fb2  #CHAdeMO stm :30 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x0251dc  Ap1F F
+0x0252c4  Ep1F F
+0x0253ea  [%t]#CHAdeMO stm :30 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x02542a  #CHAdeMO stm :30 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x0258aa  [%t]#CHAdeMO stm :30 case ,end  because normal_shutdown!
+0x0258ee  [%t]#CHAdeMO stm :31 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x02592e  #CHAdeMO stm :31 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x02596a  [%t]#CHAdeMO stm :31 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x0259aa  #CHAdeMO stm :31 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x0259e6  [%t]#CHAdeMO stm :31 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x025a26  #CHAdeMO stm :31 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x025a62  [%t]#CHAdeMO stm :31 case ,wait 4s timeout,GET_VCP()[%lu].
+0x025aa2  [%t]#CHAdeMO stm :31 case ,Switch(k) = OFF.!next state[%lu].
+0x025cb4  HP1F F
+0x025ce9  qgpA< F
+0x025ee6  [%t]#CHAdeMO stm :32 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x025f26  #CHAdeMO stm :32 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x025f62  [%t]#CHAdeMO stm :32 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x025fa2  #CHAdeMO stm :32 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x025fde  [%t]#CHAdeMO stm :32 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x02601e  #CHAdeMO stm :32 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x02605e  [%t]#CHAdeMO stm :33 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x02609e  #CHAdeMO stm :33 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x0260da  [%t]#CHAdeMO stm :33 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x02611a  #CHAdeMO stm :33 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x02615a  [%t]#CHAdeMO stm :33 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x02619a  #CHAdeMO stm :33 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x02655e  [%t]#CHAdeMO stm :34 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x02659e  #CHAdeMO stm :34 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x0265da  [%t]#CHAdeMO stm :34 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x02661a  #CHAdeMO stm :34 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x026656  [%t]#CHAdeMO stm :34 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x026696  #CHAdeMO stm :34 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x026a92  [%t]#CHAdeMO stm :40 case ,Switch(k) = OFF!next state[%d].
+0x026ad2  [%t]#CHAdeMO stm :40 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x026b12  #CHAdeMO stm :40 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x026b4e  [%t]#CHAdeMO stm :40 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x026b8e  #CHAdeMO stm :40 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x026bca  [%t]#CHAdeMO stm :40 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x026c0a  #CHAdeMO stm :40 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x026c4a  [%t]#CHAdeMO stm :41 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x026c8a  #CHAdeMO stm :41 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x026cc6  [%t]#CHAdeMO stm :41 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x026d06  #CHAdeMO stm :41 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x026d42  [%t]#CHAdeMO stm :41 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x026d82  #CHAdeMO stm :41 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x0271d2  [%t]#CHAdeMO stm :42 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x027212  #CHAdeMO stm :42 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x02724e  [%t]#CHAdeMO stm :42 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x02728e  #CHAdeMO stm :42 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x0272ca  [%t]#CHAdeMO stm :42 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x02730a  #CHAdeMO stm :42 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x027346  [%t]#CHAdeMO stm :43 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x027386  #CHAdeMO stm :43 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x0273c2  [%t]#CHAdeMO stm :43 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x027402  #CHAdeMO stm :43 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x02743e  [%t]#CHAdeMO stm :43 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x02747e  #CHAdeMO stm :43 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x027891   [%t]#CHAdeMO stm :50 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x0278d2  #CHAdeMO stm :50 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x02790e  [%t]#CHAdeMO stm :50 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x02794e  #CHAdeMO stm :50 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x02798a  [%t]#CHAdeMO stm :50 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x0279ca  #CHAdeMO stm :50 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x027a0a  [%t]#CHAdeMO stm :51 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x027a4a  #CHAdeMO stm :51 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x027b96  D41Fgp%q
+0x027e3a  [%t]#CHAdeMO stm :51 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x027e7a  #CHAdeMO stm :51 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x027eba  [%t]#CHAdeMO stm :51 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x027efa  #CHAdeMO stm :51 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x027f36  [%t]#CHAdeMO stm :52 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x027f76  #CHAdeMO stm :52 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x027fb2  [%t]#CHAdeMO stm :52 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x027ff2  #CHAdeMO stm :52 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x02802e  [%t]#CHAdeMO stm :52 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x02806e  #CHAdeMO stm :52 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x0280bc  A41F'q'pgpA< F
+0x0280ee  A41F'q
+0x0280f5  q'pgpA< F
+0x0282a8  A41F'q'pgp
+0x02853a  [%t]#CHAdeMO stm :60 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x02857a  #CHAdeMO stm :60 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x0285b6  [%t]#CHAdeMO stm :60 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x0285f6  #CHAdeMO stm :60 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x028632  [%t]#CHAdeMO stm :60 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x028672  #CHAdeMO stm :60 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x0286ae  [%t]#CHAdeMO stm :61 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x0286ee  #CHAdeMO stm :61 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x02872a  [%t]#CHAdeMO stm :61 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x02876a  #CHAdeMO stm :61 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x0287a6  [%t]#CHAdeMO stm :61 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x0287e6  #CHAdeMO stm :61 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x028c02  [%t]#CHAdeMO stm :notify EVCC shutdown,p->state[%lu]
+0x028c3a  [%t]#CHAdeMO stm :send H108 H109,p->state[%lu].
+0x028c6e  [%t]#CHAdeMO stm :set switch d1, d2 OFF,p->state[%lu].
+0x028cad   [%t]#CHAdeMO stm :set switch d2 OFF,p->state[%lu].
+0x028cea  [%t]#CHAdeMO stm :unlock ,p->cnt > 500,p->state[%lu].
+0x028d22  [%t]#CHAdeMO stm :STM_EVCC_UNLOCK_ACTION_STEP2,p->state[%lu].
+0x02911a  [%t]#CHAdeMO stm :STM_EVCC_UNLOCK_ACTION_STEP3,p->state[%lu].
+0x02917f  xxxxxxx
+0x02957b  FAH:Fl0
+0x029b2a  [%t]#CHAdeMO stm :13 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x029b6a  #CHAdeMO stm :13 case ,H100 1s timeout!p->H100.FLAG[%lu].
+0x029ba6  [%t]#CHAdeMO stm :13 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x029be6  #CHAdeMO stm :13 case ,H101 1s timeout!p->H101.FLAG[%lu].
+0x02a006  [%t]#CHAdeMO stm :13 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x02a046  #CHAdeMO stm :13 case ,H102 1s timeout!p->H102.FLAG[%lu].
+0x02b411  QqZHCO
+0x02be65   [%t]#CHAdeMO stm :30 case ,end because normal_shutdown!
+0x02df9a  <P n<'
+0x02e501   [%t]#GBT stm :multiple_packets_timeout!abort. p->state[%lu]
+0x02e545   EVCC_ADAPTER_GBT
+0x02e986   CANCEL
+0x02e995   Input password
+0x02e9a6  Password error
+0x02e9b6  Input error
+0x02e9ce  _SLEEP_AND_WAKEUP
+0x02e9e2  EXI_GBT
+0x02e9f6  EVCC[%c][LINK=%u]
+0x02ea12  %s Ver[%c%c%c%c%c.%c%c%c%c 20%02X-%02X-%02X %c%c:%c%c:%c%c]
+0x02ea52  ***************************MENU***********************
+0x02ea8e       S  -----   System Config
+0x02eaae       O  -----   OS Information  
+0x02ead2       H  -----   HardWare Information
+0x02eafa       I  -----   SLAC-SDP Information
+0x02eb22       L  -----   SHOW LOG
+0x02eb3e       C  -----   Certification Status
+0x02eb66      ESC -----   CLOSE DISPLAY   
+0x02eb8d   Serial  : %s
+0x02eb9e  WCNT    : %u
+0x02ebb6  FirmWare: %s 
+0x02ebc6  MAC ADDR: %02x:%02x:%02x:%02x:%02x:%02x
+0x02ebf2  SET_KEY : %u,%u
+0x02ec06  NID[7]  : 
+0x02ec22  NMK[16] : 
+0x02ec2e  CANBAUD1: %s
+0x02ec3e  CANBAUD2: %s
+0x02ec4e  LOCKTYPE: %s
+0x02ec5e  NETVIEW : %u
+0x02ec6e  Select LOCK type:
+0x02efdf  q0!Aq1"
+0x02f042  OS Information  | OSRdyTbl:%05x | RUN: %u:%02u:%02u
+0x02f07a  Task RT     BASE   IER SS STKF STKS ADDR     NAME
+0x02f0ae  %4lu %6lu %06x %3lu %2lu %4lu %4lu %08x %s
+0x02f0df  Hardware Information
+0x02f0fa  +24V    : %.3u
+0x02f10e  CP_FREQ : %u
+0x02f11e  CP_ST   : %c
+0x02f12e  CP_DUTY : %.1u
+0x02f142  CP_CNT  : %u
+0x02f152  AD_PP   : %.3u
+0x02f166  AD_BAT  : %.3u
+0x02f17a  AD_CPD  : %.3u
+0x02f18e  PP_ST   : %1u
+0x02f19e  KEY_LOCK: %1u
+0x02f1ae  HV      : %.1uV
+0x02f1ce  LINK    : %u
+0x02f1de  INT     : %u
+0x02f1ef  SLAC-SDP Information
+0x02f20a  SLAC_STA: %s
+0x02f21a  D_LINK  : %u
+0x02f22a  EVSE LIST :
+0x02f23b  Show pds
+0x02f246  RUNT  :%u
+0x02f252  PDCNT :%u
+0x02f25e  ARCNT :%u
+0x02f26a  PRCNT :%u
+0x02f276  PDNF  :%u
+0x02f282  ARSF  :%u
+0x02f28e  PRSF  :%u
+0x02f29a  LRTC  :%u
+0x02f2a6  LNKCNT:%u
+0x02f2b2  LOCCNT:%x
+0x02f2be  WCNT  :%u
+0x02f2cb  Show Certification Status
+0x02f2ea  Root certs       : %u
+0x02f302  Pri_root cert    : %u
+0x02f31a  Oem cert         : %u
+0x02f332  Contract certs   : %u
+0x02f34a  Oem pri_key      : %u
+0x02f362  Contract pri_key : %u
+0x02f37a  Wcnt             : %u
+0x02f478  *H@xpG-
+0x02f489  FlF!T@
+0x02f507  Log num:%u
+0x02f5c5  &&p$H8
+0x02f65d   TADDR CHANGED!!! b1=%u b2=%u addr=%u
+0x02f686  system init
+0x02f785  "!FxH8
+0x02f8ce  %02x%02x:
+0x02f8da  %02x%02x
+0x02f92a  SET_KEY : %u
+0x02f93a  IP6_ADR0: 
+0x02f946  IP6_ADR1: 
+0x02f952  INT:%u
+0x02f95e  Serial: 
+0x02f96d   IP4   : %u.%u.%u.%u
+0x02f986  Mask  : %u.%u.%u.%u
+0x02f99e  GW    : %u.%u.%u.%u
+0x02f9b6  MAC   : %x-%x-%x-%x-%x-%x
+0x02f9d2  WCNT  : %u
+0x02f9ea  -----------------------------------------------------------
+0x02fa3a  CP_STATE: %c
+0x02fe9d   > Close PLC power.
+0x02feb6  > Disk capacity: block number[%u], size[%u]
+0x02fee6  EVCC_%s_INFO.TXT
+0x02fefa  HW :%u.%u
+0x02ff0a  SW :%c%c%c%c%c.%c%c%c%c[%02x%02x%02x]
+0x02ff3d   RTC:%u
+0x02ff4a  %s_%s.LST
+0x02ff56  '%s' file Open for read Error
+0x02ff76  '%s' has been updated
+0x02ff8e  [%t]'%s' size = %u
+0x02ffa6  '%s' file size error
+0x02ffc1   '%s' file Read or EOF Error[%u][%u][%d]
+0x02ffee  Write flash error[%u]
+0x03001a  [%t]UPGRADE Finished
+0x030036  EVCC_%s_LOGS.BIN
+0x03004a  '%s' creation failed
+0x030062  '%s' has been downloaded
+0x030082  Failed to Write logs.
+0x03009a  Logs downloaded successfully
+0x0300c2  > Cannot initialize File System.
+0x0300e6  %02x%02x%02x%02x%02x%02x
+0x030102  BOOT_CCS2CHADEMO_1.UPG
+0x03011a  MAIN_CCS2CHADEMO_1.UPG
+0x030132  MAIN_CCS2CHADEMO_1_ID6.UPG
+0x03016a  PJQI(F
+0x0302b6  > Exit usbdisk process.
+0x0302d2  > Usbdisk process timeout.
+0x030409  "!F0F8
+0x0305a4  %F "iF0F8
+0x0305b0  )FhFBF
+0x03060e  %F*F0F
+0x030763  0"FQF8
+0x0307e1   No:%4lu time:%10lu [%s]
+0x0307fe  no log
+0x0308d5   p`(FR
+0x030ac2  cz"zay
+0x030aee  cx"x)F
+0x030be5  bpGXHAjI
+0x030bfc  SHpGTJ@!QH
+0x030c20  RF!F8F7
+0x030c52  @"!FHF7
+0x030c71  aBF@! F
+0x030d51   FsdP[%t]+12V power down
+0x030d72  UPGRADE:[%u]%c%c%c%c%c.%c%c%c%c 20%02X-%02X-%02X %c%c:%c%c:%c%c
+0x030db2  [%t]DEEP SLEEP
+0x030dc6  DEEP SLEEP[%u] at %u
+0x030dde  [%t]RESET
+0x030dea  RESET[%u] at %u
+0x030dfa  Power down at %u
+0x030e0e  Power down
+0x030e1e  PDS_PROCESS
+0x030e2e  PVD_RROCESS
+0x030e42  PDN_RROCESS
+0x030e4e  Passive reset!!!
+0x030f46  2F)F8F
+0x03110e  J{[F*FQF
+0x03126d  I"F(17
+0x0314a0  8a@XpG
+0x0314a7  H$8pG-
+0x0314e0  ,FQF(F
+0x0314ee  JtQF F
+0x031672  CFIF:FPFM
+0x03169a  3F9F*FPFM
+0x031731   Installed %u Root Certs
+0x031849  @lbantsrU-
+0x0319e8  `p7H%p
+0x031acd   Lock->
+0x031ad6  [%t]%s
+0x031ae2  Unlock->
+0x031afa  E_LOCK
+0x031b02  pGpGpGpG
+0x031b7f  pAp1I2
+0x031c4e  led_process
+0x031ceb  LD"!FO
+0x031fae  [%t]CC2 %s
+0x031fbe  [%t]BatteryPower %s
+0x031fd6  BatteryPower %s
+0x031fe6  [%t]BatteryCharge %s
+0x031ffe  BatteryCharge %s
+0x032015   [%t]_PreChargeRELAY %s[v=%.3u]
+0x03203a  _PreChargeRELAY %s[v=%.3u]
+0x032056  [%t]PreChargeRELAY can't open[v=%.3u]
+0x03207e  PreChargeRELAY can't open[v=%.3u]
+0x0320a2  [%t]PreChargeRELAY can't close[v=%.3u]
+0x0320ce  PreChargeRELAY can't close[v=%.3u]
+0x0320f2  [%t]PreChargeRELAY %s[v=%.3u]
+0x032112  PreChargeRELAY %s[v=%.3u]
+0x032296  N pG0 pG1 pG6
+0x03234b  F2\:T@
+0x032431  &0FiF:\
+0x0324cb  &0FYF:\
+0x03295e  ""#Fd"}
+0x032b5a  HPGPRST0
+0x032b6a  ELOCK=
+0x032c4e  P:xy9y
+0x032c6c  3`Jhr`
+0x032c9a  d ACBH 06
+0x032d0a  'H@xpGp
+0x032dba  CAN1_REC
+0x033178  8F1F"FCF
+0x033225   user_timer
+0x0334e2  ?biFPF
+0x033696  [%t]#PKI: DIAG %s
+0x0336ae  [%t]#error!issuer_serialnum :cert body [%d],[%d]
+0x0336e2  [%t]#error!no root certs! ca_num <= 0
+0x03370a  [%t]#error!set_reference, pki_crypt_sha256 fail!
+0x03373e  [%t]#set_signature encode exi fragment error [%d]
+0x033772  [%t]#error! set_signature pki_crypt_sha256 ret [%d]
+0x0337aa  [%t]#error! set_signature pki_crypt_ecdsa_sign ret [%d]
+0x0337ea  [%t]#error! set_root_ca_list failure 
+0x033819   [%t]#error! encode_iso1ExiFragment failure [%d]
+0x033855   [%t]#error! set_cert_install_req set_signifo err [%d]
+0x033926  CFJFPF
+0x033b31  `{IHF/
+0x033b68  KF!F~H
+0x033bb9  !AQYHZJ 8
+0x033c6e  [%t]#error! set_cert_install_req set_signature err [%d]
+0x033cb2  [%t]#error! set_contract_cert_chain failure! 
+0x033ce2  [%t]#error! set_cert_update_req set root ca list failure! 
+0x033d2d   [%t]#error! set_cert_update_req set_signifo err[%d]! 
+0x033d69   [%t]#error! set_cert_update_req set_reference err[%d]! 
+0x033da6  [%t]#error! set_cert_update_req set_signature err[%d]! 
+0x033de6  [%t]#error! set_authorization_req set_signifo err[%d]! 
+0x033e22  [%t]#error! set_authorization_req set_reference err[%d]! 
+0x033e5e  [%t]#error! set_authorization_req set_signature err[%d]! 
+0x033fbe  Jq "hFI
+0x03402b  `1F(F2
+0x034082  ?cjFIF@F
+0x0341d0  *F1F`F
+0x034231   [%t]#error! set_metering_receipt_req set_signifo err[%d]! 
+0x034275   [%t]#error! set_metering_receipt_req set_reference err[%d]! 
+0x0342b9   [%t]#error! set_metering_receipt_req set_signature err[%d]! 
+0x0342fd   [%t]#error!verify_digest ! pki_crypt_sha256 ret [%d] ! 
+0x03433a  [%t]#info:verify_digest!id_name[%s] Digest Match value [%d]!
+0x03437e  [%t]#error!verify_signture ! pki_crypt_sha256 ret [%d] ! 
+0x0343ba  [%t]#error!concat_kdf ! reps[%lu] > max_int[%lu]!
+0x03443c  FF 'd!hFI
+0x0347d6  [%t]#error!decrypt_contract_key ,concat_kdf failure!
+0x03480e  [%t]#error!decrypt_contract_key ,pki_crypt_aes128 result[%d]!
+0x034859   [%t]#error!iso1cert_chaint2pki_chain ,chain_len!=3!
+0x034892  [%t]#verify_cert_install_res!ResponseCode  error!!
+0x0348d5   [%t]#info!decrypt_contract_key  ok!!
+0x0348fe  [%t]#verify_cert_install_res!ret = PKI_FAIL  error!!
+0x034936  [%t]#verify_cert_update_res!ResponseCode  error!!
+0x034d25   [%t]#verify_cert_update_res!ret = PKI_FAIL  error!!
+0x034eea  "F9FhF
+0x034f60  *F1FhF
+0x034f6c  :FAFhF
+0x0350a2  2F9F@F
+0x0353c3  &%c0Fp
+0x035428  "c`x1F
+0x0356f9  4"F)F0F
+0x035708  *F9F0F
+0x035776  hx;FAF
+0x0357f6  RRaArrAaX
+0x0358ac  )F8Fea
+0x0358bc  8D40&a
+0x0361fe  "*:<>?|
+0x03620a  +,;=[]
+0x03638f   0`(Fp
+0x0366a2  (12F@F
+0x03670e  RRaArrAa
+0x036810  .F D(02FAF
+0x036988  0D`a |
+0x0369bc  `i(D`a
+0x036a1f  #BF@x)F
+0x036c81  %et(F8
+0x036dac  ?`AFJ0
+0x03733d  MSDOS5.0
+0x037346  NO NAME    FAT     
+0x03735a  NO NAME    FAT32   
+0x03737e  GFPFWE
+0x0373c0  /F;F!F
+0x037ceb  !2F)F F
+0x037ea7   *F1F F
+0x037f02  2F)F F
+0x03818f  s |(t`|ht
+0x03829d  $,!hFF
+0x03854c  )yBF(F
+0x038592  iyBF(F
+0x0385ca  2"1F8F
+0x0386e5  '0JSr|
+0x03875d  Daa`fY
+0x0387ad  Daa`f1
+0x0388b2  1!pGUSBCP@0 
+0x038d3b  1<" FE
+0x038d8f  F2FIF(F
+0x038f06  ;FBF1F6H
+0x038f5e  ;FBF1F H
+0x03901f  s'aga'
+0x039068  (p`i@x
+0x0391f3  {)raiI{irp
+0x03933b  !ap"p"
+0x039623  0H`"io
+0x03a004  3FAi*F
+0x03a3ca  pGpG<HIy
+0x03a4c5   USB host library started
+0x03a4e2  > Device Attached.
+0x03a4fa  > Unrecovered error state .
+0x03a51a  > Device Disconnected.
+0x03a536  > Reset the USB device.
+0x03a552  > Device Fault.
+0x03a566  > High speed device detected.
+0x03a586  > Full speed device detected.
+0x03a5a6  > Low speed device detected.
+0x03a5c6  VID: %04Xh, PID: %04Xh
+0x03a5e2  > HID device connected.
+0x03a5fe  > Mass storage device connected.
+0x03a622  Manufacturer: %s
+0x03a636  Product: %s
+0x03a646  Serial Number: %s
+0x03a65a  > Enumeration completed.
+0x03a676  > Device not supported.
+0x03a692  > usbh_user_userinput
+0x03a6aa  > Overcurrent detected.
+0x03a9af  pJF1FhF
+0x03ab0d  a^hn@^a
+0x03abb7  bZhr@Zb
+0x03ac28  2F9FhFl`
+0x03ac45  h `Hh``
+0x03aca0  (0_@~@@
+0x03ad3e  '`Whp@[
+0x03adee  %@a@K@O
+0x03aeea  ,`G@Ph
+0x03af64  $0V@Y@
+0x03b15a  %@a@K@<
+0x03b187  2i@L@5
+0x03b1b7  &Q@M@O
+0x03b2be  $@V@a@
+0x03b3d5  "1FhFB
+0x03b3de  #F2FAFHF
+0x03b3eb   !\:\Q@!T@
+0x03b3fb  "iF8FB
+0x03b411   1\:\Q@!T@
+0x03b42d  "!F8FB
+0x03b559  |)p@| p
+0x03b778   |8p`|0p
+0x03b8db  e`hBF9F
+0x03b92e  [FQF F
+0x03b97c  `hRFIF
+0x03bab2  invalid PK
+0x03bd5a  Wi>D5DNi
+0x03beae  GjgD;DF
+0x03bf5e  Wh>D4DO
+0x03bf84  eD=DEd
+0x03c166  NDEDeD
+0x03c317  i+D:D"DO
+0x03c3fe  (0"FAFA
+0x03c4b0  2F9FhF
+0x03c551  F1#jFIF(F-
+0x03c56f  '"F1F(F
+0x03c616  *`jF(F-
+0x03c628  3F"F(F
+0x03c64b  xjF F-
+0x03c6c9  ` hih0#E
+0x03c6d2  jF)F F-
+0x03c8c7  F0#jF-
+0x03c912  %02X%s
+0x03c926  %s key size
+0x03cdc6  0A9F0F
+0x03cfa6  RFAFXF
+0x03d12e  0ABF9F F
+0x03d196  2F)FPF
+0x03d3da  -----BEGIN CERTIFICATE-----
+0x03d3f6  -----END CERTIFICATE-----
+0x03d41a  %sSSL Client
+0x03d42e  %sSSL Server
+0x03d43e  %sEmail
+0x03d446  %sObject Signing
+0x03d45a  %sReserved
+0x03d466  %sSSL CA
+0x03d472  %sEmail CA
+0x03d47e  %sObject Signing CA
+0x03d492  %sDigital Signature
+0x03d4a6  %sNon Repudiation
+0x03d4ba  %sKey Encipherment
+0x03d4ce  %sData Encipherment
+0x03d8d6  %sKey Agreement
+0x03d8e6  %sKey Cert Sign
+0x03d8f6  %sCRL Sign
+0x03d902  %sEncipher Only
+0x03d912  %sDecipher Only
+0x03d926  %scert. version     : %d
+0x03d942  %sserial number     : 
+0x03d95b  %sissuer name       : 
+0x03d973  %ssubject name      : 
+0x03d98b  %sissued  on        : %04d-%02d-%02d %02d:%02d:%02d
+0x03d9c3  %sexpires on        : %04d-%02d-%02d %02d:%02d:%02d
+0x03d9fb  %ssigned using      : 
+0x03da13  %s%-18s: %d bits
+0x03da2f  Certificate is uninitialised!
+0x03da57  %sbasic constraints : CA=%s
+0x03da76  , max_pathlen=%d
+0x03da8b  %ssubject alt name  : 
+0x03daa3  %scert. type        : 
+0x03dabb  %skey usage         : 
+0x03dad3  %sext key usage     : 
+0x03dec7  F>`9hH
+0x03df4a  %sUnknown reason (this should not happen)
+0x03dfbd  FYFVFJF F
+0x03e04f  CNF(`9
+0x03e0d4   ! F.`@
+0x03e1c7  0pG@hI
+0x03e1ef  F0#jF8F+
+0x03e202  *F1F8F+
+0x03e232  "F1F8F+
+0x03e28c  (`jF1F(F+
+0x03e386  2F9F F
+0x03ec9e  1F*FhF
+0x03ed1e  !F*FhF
+0x03ef38  1FjF^N F
+0x03ef64  )F:FSN
+0x03f24a  ;F2FIF@F
+0x03f42c   "1FhF>
+0x03f4f7  F1F@F>
+0x03f509  F@F1F>
+0x03f51b  F"F0F>
+0x03f530  RFAF0F>
+0x03f543  F0F"F>
+0x03f558  RF0FAF>
+0x03f569  FAF"F0F>
+0x03fd9a  lF!F2F
+0x03fdae  ,F!FjF
+0x03fe0f  F"F(h'
+0x03fe1c  h`(h D(`
+0x03ff1d  !nHx8.
+0x03ff35  "lIx8.
+0x03ff3e  fIgHx9.
+0x03ff5a  dKeJ`I_H
+0x03ff68  ^IbKcJ 1[H.
+0x03ffa4   tKNKM
+0x040040  RFIF&H/
+0x0400b0  #F2F9F
+0x0400c2   ")F|0+
+0x040102  123456
+0x04018e  Y59F(F
+0x04019f  #!F@F1
+0x0401b7  ")FY0'
+0x0401f3  "Y1@F1
+0x0403bd  "XI F/
+0x040403  83F:F@h/
+0x0404fa  NO memory
+0x040512  tcpip_process
+0x040549  #1F(F1
+0x040594  /K2F9F F1
+0x04074a  d#2FHF2
+0x040f8a  d !F0F2
+0x0415e3  `pGAk!
+0x0415ef  !AdpGB
+0x041621  PpGpGpG
+0x04168a  pGpGAk!
+0x0416b3  apGpGpG
+0x0416e3  `pGpGpG
+0x0416ef  dAepGpG
+0x041741  `pGpGpGpG
+0x041821  !A`Bi"
+0x04184f  fpGpGAk!
+0x0418b7  cpGpGpG
+0x0418bf  !A`pGpG
+0x0418ef  !A`Ai!
+0x041903  RpGAk!
+0x041921  dpGpGAk!
+0x04192b  1AcpGpG
+0x041948  AbpGpGAk!
+0x041981  `pGpGpGP
+0x0419ab  `pGpGAk!
+0x042ecc  !#"F@F0
+0x042ff6  3#"FXF/
+0x044009  #"F0F.
+0x04477e  3#"FXF.
+0x0447d6  3#JFXF.
+0x045130  3#"FPF-
+0x0467f6  #+3;CKS[cmu}
+0x046ada  B#:FPF,
+0x046b3a  3#BFPF,
+0x047026  3#:F@F+
+0x0476e6  3#2FHF+
+0x047ffa  3#"FXF*
+0x04884c  3#*FHF*
+0x04891c  B#:FPF*
+0x04897c  3#BFPF*
+0x048e7a  3#2FXF*
+0x048fb6  3#*FXF*
+0x0492e0  3#2FHF)
+0x0493aa  )2;GPYbku~
+0x0496f2  0FMFFF
+0x049f1c  N AFHF)
+0x04a0ca  @ 1F8F)
+0x04b3f9  $!F@F(
+0x04b455  $9F@F(
+0x04b49b  $!F(F(
+0x04bb22  l )F0F'
+0x04c813  F)"+*1
+0x04cb1f  `!^@F&
+0x04cf59  $)F0F&
+0x04d4de  B )F@F%
+0x04d528  x 9F@F%
+0x04d60f   9FHF%
+0x04d6d4  B !FPF%
+0x04d74c  x AFPF%
+0x04d883  FVFUFWF
+0x04de49   )FHF%
+0x04de7d  "AFHF%
+0x04dea9  "9FHF%
+0x04dfc5  $1FHF%
+0x04e1a2  l AFHF%
+0x04e28b   !FHF%
+0x04e2d2  X!AFHF%
+0x04e511   !F(F%
+0x04e5de  P&9FHF$
+0x04ebff   )F0F$
+0x04ec54  B )F@F$
+0x04ec9e  x 9F@F$
+0x04edcf   AFHF$
+0x04ef1e  B !F@F$
+0x04ef9b   9F@F$
+0x04f7b5   !F(F#
+0x050223  `pGAkO
+0x0502a8  pGpGAh!
+0x0502b2  A`pGpG
+0x0503ab  `pGpGpGpGpGAk!
+0x0503bb  1AcpGpGpG
+0x0504a0  pGpGpGAk!
+0x0504f3  epGpGpG
+0x050572  A`pGpGpGpG
+0x050591  cpGAh!
+0x0505a1  apGpGpGP
+0x050653  gpGpGpGAj!
+0x050689  fpGAl!
+0x050692  AdpGpGpG
+0x05069b  !A`pGpGAk!
+0x050c3e  3#:F@F"
+0x052060  3#*FHF 
+0x052136  B#:FXF 
+0x052188  3#BFXF 
+0x05290c  3#*FXF 
+0x053814  3#"FPF
+0x053a50  3#*F8F
+0x053d28  3#"F0F
+0x0551eb  1yc ! 
+0x055708  3#2F8F
+0x05581e  3#"FXF
+0x055b92  3#"FHF
+0x056ffa  3#2FHF
+0x0582d0  A#"F@F
+0x059284  &/8AJS\epy
+0x05980e  3#2FPF
+0x059924  3#:F@F
+0x0599e6  (09AIRZbjs{
+0x059d32  3#:FXF
+0x05c09e  l AFPF
+0x05c3f0  X!AFHF
+0x05c7f0  B !FPF
+0x05c868  x AFPF
+0x05ce16  P&9FHF
+0x05d48e  B )FHF
+0x05d4cc  x 9FHF
+0x05d772  B !F@F
+0x05f520   #9F0F
+0x05f6ca  X#)F0F
+0x05f767  F#"$*#
+0x05fac2  H )F0F
+0x05fb9c  r )F0F
+0x061048  @ 1F8F
+0x06196a  B !F(F
+0x062bd8  n )F0F
+0x064cb3  gpGAk!
+0x064d33  1AcpGpGAk!
+0x064e6b  cpGAk!
+0x064ede  B )F@F
+0x064f28  x 9F@F
+0x065352  l 9FHF
+0x066270  X!1F@F
+0x067655  cnI)dnJjdnK+ehe
+0x06767f  `D`hIAahI
+0x0676e4  RKC`RK
+0x06786f  !A`pGpGpG
+0x067d77  @@jpG@
+0x067de6  pGpGpGpGYI
+0x067e3a  @ pGFI
+0x067ed1  apG#H@i
+0x068188  >D3DcaC
+0x0681b9  D`b x@
+0x0681cd  a!aaj`a
+0x0681e6  `p,H00
+0x068319  F,F3F@"!F
+0x06838b  r sasD
+0x068902  %F*FQF8F
+0x068940  "F)F0F
+0x068966  *F1F F
+0x068ab6  4F!F8F
+0x068ad6  %F*FIF8F
+0x068b33   pGpGpGO
+0x068b3d  ppGpGpG
+0x068b45   pGpGp
+0x068f23  %KN,FKH
+0x068f57  h!`Aha`
+0x0690db  xpGpGpGpG
+0x069440   `aH`bp
+0x06944b    qOHeq@
+0x0697c3  K\h!CY`b
+0x069835  h#pkO4
+0x06983f  i-h)DUi
+0x0698e9  !A`>IO
+0x0699a5  Leh)Ca`
+0x069c21  hpG!H@hpGpG
+0x069cb9   SYSTEM1
+0x069d59  hIj#D)D
+0x069d9f  @/@|@&D
+0x069dc5  i*D<D"D\
+0x069e38  (1BF0F
+0x069e5e  @<@6@,
+0x06a153   (` h@
+0x06a275  x `CF"
+0x06a31f  x(` h*
+0x06a328   `9F F
+0x06a4f8  0h(`ihd
+0x06a5e7  "*`"hJC
+0x06a7a3    `nh>
+0x06a974  :F1F(F
+0x06a986  2F9F(F
+0x06ad7e  8h1hHC
+0x06ae8e  JFAFhF
+0x06b482  "F)F8F
+0x06b69a  +F"F1F
+0x06bd3e  "FiF0F
+0x06bfea  $ 1FhF
+0x06c246  "F)FhF
+0x06c286  9FZF@F
+0x06c3b2  0123456789ABCDEF
+0x06c54c  2FKiAF
+0x06c591   Q@)T9\
+0x06c59b   Q@9T@
+0x06c6b0  2F)FhF
+0x06c71e  SHA224
+0x06c726  SHA256
+0x06c754  #FBF1FH
+0x06cad0  @&2F9F F
+0x06cb52  JF9FhF
+0x06cbbe  Proc-Type: 4,ENCRYPTED
+0x06cbd6  DEK-Info: AES-
+0x06cbe6  DEK-Info: AES-128-CBC,
+0x06cbfe  DEK-Info: AES-192-CBC,
+0x06cc16  DEK-Info: AES-256-CBC,
+0x06ccd9  e;FBFIF
+0x06cd40  KFRFYF
+0x06cdde  eckey.Q
+0x06d056  0#jF(F
+0x06d07e  jF1F(F
+0x06d0d6  1F(Fzh
+0x06d54e  *F!F8F
+0x06d55b  F F)FBF
+0x06d66e  -----END EC PRIVATE KEY-----
+0x06d68e  -----BEGIN EC PRIVATE KEY-----
+0x06d6ae  -----END PRIVATE KEY-----
+0x06d6ca  -----BEGIN PRIVATE KEY-----
+0x06d6e6  -----END ENCRYPTED PRIVATE KEY-----
+0x06d70a  -----BEGIN ENCRYPTED PRIVATE KEY-----
+0x06d736  -----END PUBLIC KEY-----
+0x06d752  -----BEGIN PUBLIC KEY-----
+0x06d8a0  p")F F
+0x06d938  (F:FYF
+0x06dce6  server finished
+0x06dcf6  client finished
+0x06dd12  master secret
+0x06dd22  extended master secret
+0x06dd3a  key expansion
+0x06dd7b  #QF(Frh
+0x06dd8b  #IF Frh
+0x06de11  " h!m80
+0x06de40   hiF80
+0x06de57  D!hJiiF
+0x06e333  pYppGp
+0x06e542  ANCM F
+0x06e5dd  @HU"hh
+0x06ecd9    p`p 
+0x06edb1  0%b`aX<
+0x06edd3  f%g%`e`<<9F
+0x06ee22  BgpGBoa
+0x06eeb0  pGAdpGp
+0x06ef14  pGAepG
+0x06efe4  BppGBoa
+0x06efec  M2BgpGBoa
+0x06eff6  I"BgpGBoa
+0x06f017  HpGBoa
+0x06f023   pGBoa
+0x06f02b  2BgpGBoa
+0x06f03f  "BgpGAfpG
+0x06f0a5   pG@i8
+0x06f317  F*FHF!o
+0x06f32a   o(D g(F
+0x06f40e  unknown
+0x06f416  SSLv3.0
+0x06f41e  TLSv1.0
+0x06f426  TLSv1.1
+0x06f42e  TLSv1.2
+0x06f5a7  xpG@xpG
+0x06f620  pGCibJ
+0x06f826  Qh)Da`
+0x06fd3e  :FQF(F
+0x06fdd1  PCF2FIF F
+0x06fe44  3F"F9F(F
+0x06ff4c  pG:IJh
+0x0703bc  (h``&u
+0x0704e2  hh ` Fl`
+0x070e64  +FBF!F8F
+0x071491   %hn{ `
+0x07149f  #*F!F k
+0x071653  p"FQFXF
+0x0718c4  hw ~(t
+0x0718cd  t`~ht x(s x
+0x071984  5F.F0Fp
+0x071a94   b c`cB
+0x0723ea  *0*F!F0F
+0x072524  *02F!Fhh
+0x0726cc  RF!F(F
+0x072864  @#*FIF0F
+0x072914  (h0`.`1h
+0x072b0a  *0BF!F8F
+0x072b6c  z `r(Fp
+0x072c1b  ` wl `w
+0x072ce9  $$HHHHHH
+0x07308c  jFQFXF
+0x0733a8  *F#F0F
+0x073536  2FQFXF
+0x073a8f  @qC#FBFHF
+0x07413d  iSFThJF
+0x0741d4  `j0D`bL
+0x0741ea  XDBFIF
+0x074270  8h(D8`
+0x07428d   0`"hPx
+0x074368  +F:F1F@F
+0x07450d  e;FAF F
+0x074656  \F"FHF
+0x074842  :F!F0F
+0x0748f3  F2FiF$
+0x074913  D0"iF$
+0x074923  D2F(F$
+0x074be5   (p"Fi
+0x074cde   x(p h@
+0x075618  :FAF(F
+0x07581e  KFRFAFhF
+0x075ad0  #FBF)F0F
+0x075b64  KF*F0FN
+0x075db9  v+FBFIFPF
+0x075df6  #F:F)F0F
+0x075e74  #F:FiFHF
+0x075e84  3FBF)FHF
+0x075ee4  CFJF9FXF
+0x075f2a  ZFQF F
+0x076097  C{@cTL
+0x0760cc  SFZF1F
+0x07638c  (`:HAhI
+0x0763ba  1H`f1H !
+0x076537  @a@ADaD
+0x076554  \@DDdD
+0x07656e  S@CDcD
+0x076586  J@BDbD
+0x0765a0  a@ADaD
+0x076638  $CO;cD
+0x0766ce  Y@ADaD
+0x0766e8  T@DDdD
+0x076702  K@CDcD
+0x07671a  b@BDbD
+0x076a78  ]@eD)D=
+0x076a89  OT@<D,D
+0x076a9d  OK@;D+D
+0x076aaf  Nb@2D*D
+0x076ac3  NY@1D)D
+0x076ad7  NT@4D,D
+0x076aeb  NK@3D+D
+0x076b4e  {Nb@2D*D
+0x076b62  wNY@1D)D
+0x076b76  sNT@4D,D
+0x076b8a  oNK@3D+D
+0x076b9e  kNb@2D*D
+0x076e9c  %F*FiF@F
+0x07706c  2F!FhF
+0x0772d7  D `AF F
+0x07739c  KFRF!FXF
+0x077456  &F2FAF(F
+0x077a16  ak*FH``k
+0x077ad0  !h FIo
+0x077f4c  ;F*F1F
+0x077fbd  =AEIMQUY\
+0x0786d0  7F9Fhh
+0x0788ea  co'oji
+0x078bb9  hH`al@
+0x078efa  1F F<`
+0x07963e  Ah9aaB
+0x079bf6  >F9F<F
+0x07a076  "F1F(F
+0x07a0c4  KFRF9F F
+0x07a16a  *F0Fyh
+0x07a4d3  @E!!pO
+0x07a54a  2FIF(F
+0x07a559  0HF2F)F
+0x07a59f  @;F2FaF@F
+0x07a852   F$h)F
+0x07aad2  *FYF F
+0x07ab10  Eh(F.h
+0x07ab3c  AF0Fwh
+0x07ac4e  hhKF8D
+0x07ae35  pah(6O
+0x07ae4a  3F:! F
+0x07ae63  (:F1F F
+0x07ae92  uh0"/p
+0x07af10  CF:!0F
+0x07af27  #:FAF0F
+0x07b663  0HF*F9F
+0x07b6b3  eCF"FHF
+0x07b713  `KF"FAF(F
+0x07bc46  IF8F~h
+0x07bc94   h(`!F
+0x07bd4a  7P%`e`
+0x07bfb6  KF:!8F
+0x07c16e  #F:!8F
+0x07c2f2  (iahjF
+0x07c5f8  @1""(F
+0x07c72e  wL;F44 "!F0F
+0x07cba0  " 1Fkh
+0x07d485  @3`a{m
+0x07d790  "F@F)`
+0x07d855  F;FbF)F0F
+0x07d867  D"F)F0F
+0x07d877  D0")F0F
+0x07d907  %*F1F F
+0x07d9d3  p2FAF(F
+0x07da5e  *F9F`i
+0x07db3c  A#jF!F(F
+0x07db98   "iF F
+0x07df33  eJF1F F%`MF
+0x07e475   pGpGpG
+0x07e485   pGpGpGpG8
+0x07e6a1  0 b Fp
+0x07e6de  SIGRTMEM: Out of heap memory
+0x07e6fe  : Heap memory corrupted
+0x07e9c6  !F `0F
+0x07eafe  [%t]#SLAC: <-- CM_SLAC_PARA_CNF [%02x:%02x:%02x:%02x:%02x:%02x]
+0x07eb42  [%t]#SLAC: <-- CM_ATTEN_CHAR_IND [%02x:%02x:%02x:%02x:%02x:%02x]-[%u]
+0x07eb8a  [%t]#SLAC: --> CM_SLAC_MATCH_REQ [%02x:%02x:%02x:%02x:%02x:%02x]
+0x07ebce  [%t]#SLAC: LINKED_EVSE[%02x:%02x:%02x:%02x:%02x:%02x] ATTEN:%u,TIME:%u
+0x07ec17  0123456789=ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz
+0x07ec5a  [%t]#BMS config enter: userpay[%d],energy_transfermode[%d]welding_detection[%d]
+0x07ecae  [%t]# unlock !waiting for BMS locking locker!BMS CAN data received!evccbms->state [%lu]
+0x07ed0a  [%t]# unlock !waiting for BMS locking locker!BMS CAN data received! evccbms->state [%lu]
+0x07ed66  #CBMS: EV MaximumCurrentLimit: %d[%d],MaximumVoltageLimit: %d[%d]
+0x07edaa  #CBMS: EV MaximumPowerLimit: %d[%d],MaximumEnergyCapacity: %d[%d]
+0x07edee  #CBMS: Wait ChargeParameterDiscoveryRes to synchronize,but session finished! [%u]
+0x07ee42  [%t]#BMS state [%d] wait ChargeParameterDiscoveryRes to synchronize,but session finished!
+0x07ee9e  #CBMS: EVSE MaximumCurrentLimit: %d[%d],MaximumVoltageLimit: %d[%d]
+0x07eee2  #CBMS: EVSE MinimumCurrentLimit: %d[%d],MinimumVoltageLimit: %d[%d]
+0x07ef26  #CBMS: EVSE MaximumPowerLimit: %d[%d],EnergyToBeDelivered: %d[%d]
+0x07ef6a  [%t]# 13!evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime[%lu][%d] notready_shutdown
+0x07efbe  [%t]# 101!evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime[%lu][%d] notready_shutdown
+0x07f016  [%t]#101  EV_REACH_CHARGE_STATUS_FORBID EVChargerStatus[%lu]EVSEProcessing[%d]VIM_Request_ProgState[%d]
+0x07f082  [%t]#103!evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime[%lu][%d] notready_shutdown
+0x07f0d6  [%t]#105!evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime[%lu][%d] notready_shutdown
+0x07f12a  [%t]#201!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime not readyshut down
+0x07f186  [%t]#203!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime not readyshut down
+0x07f1e2  [%t]#203!evcc bms [%d] EV_REACH_PRECHARGE_STATUS_FAIL not readyshut down
+0x07f22e  [%t]# 205!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime not readyshut down
+0x07f28a  [%t]# 207!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime not readyshut down
+0x07f2e6  [%t]# 209!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime not readyshut down
+0x07f342  [%t]#251!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime not readyshut down
+0x07f39e  [%t]#253!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime not readyshut down
+0x07f3fa  [%t]#280!evcc bms [%d] evccbms->errtime>t>=evccbms->tout_recvicecurrentdemand  notreadyshut down
+0x07f45e  [%t]#255!evcc bms [%d] evccbms->errtime>t>=evccbms->tout_recvicecurrentdemand  notreadyshut down
+0x07f4c2  [%t]#301!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime  emergency_shutdown 
+0x07f51e  [%t]#303!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime emergency_shutdown
+0x07f57a  [%t]#305!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime emergency_shutdown
+0x07f5d6  [%t]#307!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime emergency_shutdown
+0x07f632  [%t]#308!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime emergency_shutdown
+0x07f68e  [%t]#310!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime emergency_shutdown
+0x07f6ea  [%t]#312!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime emergency_shutdown
+0x07f746  [%t]#314!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime emergency_shutdown
+0x07f7a2  [%t]#316!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime emergency_shutdown
+0x07f7fe  [%t]# 401!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime
+0x07f846  [%t]#403!evcc bms [%d] evccbms->errtime>t>EVCC_CATL_BMS_Msg_MaxErrTime 
+0x07f892  [%t]#405!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime emergency down 
+0x07f8ea  [%t]#501!evcc bms [%d] evccbms->errtime>EVCC_CATL_BMS_Msg_MaxErrTime  emergency down
+0x07f942  [%t]#501 VIM_Request_ProgState ==EV_Default||gevcc_sta.plug_in == 0 ,state [%lu]
+0x07f996  [%t]#501 EV_REACH_CHARGE_STATUS_FORBID!!ResponseGeneralCfm[%d]
+0x07f9da  [%t]#503errtime > EVCC_CATL_BMS_Msg_MaxErrTime!!ResponseGeneralCfm[%d]
+0x07fa26  [%t]#505 errtime > EVCC_CATL_BMS_Msg_MaxErrTime!!ResponseGeneralCfm[%d]
+0x07fa72  [%t]#507 errtime > EVCC_CATL_BMS_Msg_MaxErrTime!!ResponseGeneralCfm[%d]
+0x07fabe  [%t]#ac  AC_StopReason  heartbeat EVCC_CATL_CHARGE_FORBID [%lu]
+0x07fb02  [%t]#ac  AC_StopReason HEARTBEAT_TMOUT ac heartbeat shut [%lu]
+0x07fb46  AC charging !InquirySwitchACCfm.Rcvstatusflag==1 !evccac->state [%lu]
+0x07fb8e  InquirySwitchACCfm.SwitchType==EV_CAMA_ALLOW_AC_START !evccac->state [%lu]
+0x07fbde  [%t]#[%lu]>=100 VIM_Request_ProgState ==EV_Default||gevcc_sta.plug_in == 0
+0x07fc2e  [%t]# 30 VIM_Request_ProgState ==EV_Default||gevcc_sta.plug_in == 0 ,state [%lu]
+0x07fc82  [%t]#316!evcc bms next state[%d], pause_time_bybms[%lu]seconds
+0x07fcc6  [%t]#403!evcc bms [%d] may do WeldingDetecton,if no pause nor renegotiation! 
+0x07fd16  [%t]#503 errtime > EVCC_CATL_BMS_Msg_MaxErrTime!!ResponseGeneralCfm[%d]
+0x07fd62  [%t]#bmsConfParamRes.Setconfigflag: userpay[%d],energy_transfermode[%d]welding_detection[%d]
+0x07fdc2  [%t]#normal msg_pfm_init :userpayment[%d]energy_transfermode[%d]
+0x07fe06  [%t]#restore last time Pause,msg_pfm_init:  payment[%d],mode[%d]
+0x07fe4a  [%t]# error ! ServiceCategory != iso1serviceCategoryType_EVCharging
+0x07fe92  [%t]# error ! ServiceCategory != iso1serviceCategoryType_ContractCertificate
+0x07fee2  [%t]# error ! ServiceCategory != iso1serviceCategoryType_Internet
+0x07ff26  [%t]# error ! ServiceCategory != iso1serviceCategoryType_OtherCustom
+0x07ff86  [%t]# error!EVSEID.characters[0]=[%x] should between 'A' and 'Z'
+0x07ffca  [%t]# error!EVSEID.characters[1]=[%x] should between 'A' and 'Z'
+0x08000e  [%t]# error!OldSessionJoined but evcc not after pause!EVSEID=%s
+0x080052  [%t]# error! evcc indicates it should be old session after Pause , ResponseCode [%d] !
+0x0800ae  [%t]#EV Supported EnergyTransferMode [%u](DC_core -2,DC_extended - 3)
+0x0800f6  [%t]#EVSE PaymentOption:Contract[%d],ExternalPayment[%d],EV userPaymentOption[%d].
+0x08014e  [%t]#EVSE Response PaymentOption wrong, neither PnC nor EIM is found!
+0x080196  [%t]#EVSE only supports PnC, VAS cert service not offered, but cert not exist or cert exist but expired !
+0x080202  [%t]#OldSession:EV Payment Option [%d]:0-contract,1-external !
+0x080246  [%t]#NewSession:EV user set Payment Option [%d]:0-contract,1-external !
+0x080292  [%t]#AC and CP status B and CP duty nominal,set  ExternalPayment !
+0x0802da  [%t]#EVSE certificate_service[%d],EV cert_status[%d]:0-valid,1-not exist,2-expire soon,3-expired!
+0x08033e  [%t]#EV final selected Payment Option [%d]:0-contract,1-external!
+0x080382  [%t]# attention! CertificateRevoked,so delete cert chain ,need install!
+0x0803ce  [%t]# error! GenChallenge.bytesLen[%d] != iso1AuthorizationReqType_GenChallenge_BYTES_SIZE
+0x08042e  [%t]# error! paymentdetails_pro pki_del_contract_cert_chain ,cause FAILED_ContractCanceled
+0x08048e  [%t]# attention! certificateupdate_pro  pki v2gmessage[%d] verify fail!!
+0x0804da  [%t]#EVCC should try to get the new certificate again immediately!
+0x080522  [%t]#EVCC should try to get the new certificate again after %d days!
+0x08056a  [%t]# error! EVSEProcessing[%d]  is neither ongoing nor finished !
+0x0805b2  [%t]# authorization_pro del contract cert ,cause FAILED_CertificateRevoked!
+0x080602  [%t]# error!EVSENominalVoltage[%d] > EVSENominalVoltage_MAX_VALUE
+0x080646  [%t]#[%d],it returns an error when check ChargeParameterDiscoveryRes
+0x08068e  [%t]#energyTransferType [%d] represents neither AD nor DC,error!
+0x0806d2  [%t]#attention !evseNotification = iso1EVSENotificationType_StopCharging!
+0x08071e  [%t]#The SalesTariff will be ignored  due to failed signature verification during TLS communication.but PMaxSchedule is used!
+0x08079e  [%t]#error! EVSEProcessing is not equal to ongoing nor finished!
+0x0807e2  [%t]#attention! EVSEStatusCode = iso1DC_EVSEStatusCodeType_EVSE_Shutdown
+0x08082e  [%t]#attention! EVSENotification = iso1EVSENotificationType_StopCharging!
+0x08087a  [%t]# attention! precharge EVSEStatusCode = iso1DC_EVSEStatusCodeType_EVSE_Shutdown!
+0x0808d2  [%t]# attention! precharge EVSENotification = iso1EVSENotificationType_StopCharging!
+0x08092a  [%t]#res_powerdelivery_pro EVSEStatus.EVSENotification=[%u]EV_energy_transfermode[%d]DC_EVSEStatus_isUsed[%d]
+0x08099a  [%t]# error! powerdelivery_pro energyTransferType=%u is failure.
+0x0809de  [%t]# attention! powerdelivery_pro iso1DC_EVSEStatusCodeType_EVSE_EmergencyShutdown.
+0x080a36  [%t]# attention! powerdelivery_pro iso1DC_EVSEStatusCodeType_EVSE_Shutdown.
+0x080a86  [%t]#res_powerdelivery_pro chargeprogress [%d]evseNotification[%d]energyTransferType[%d]
+0x080ae2  [%t]#res_powerdelivery_pro iso1chargeProgressType_Stop. [%d], SET CP_ST_B !
+0x080b32  [%t]# error!SAScheduleTupleID[%d] is not equal to the selected SAID[%d] in PowerDeliveryReq message
+0x080b9a  [%t]#do_pause !last_entry_duration[%lu]s,do_pause[%d] pause_time[%lu]s!
+0x080be6  [%t]#error!chargingstatus ReceiptRequired but MeterInfo_isUsed = 0!
+0x080c2e  [%t]#error!currentdemand iso1DC_EVSEStatusCodeType_EVSE_EmergencyShutdown!
+0x080c7e  [%t]#attention!currentdemand iso1DC_EVSEStatusCodeType_EVSE_Shutdown!
+0x080cc6  [%t]#error!check_currentdemand ReceiptRequired but MeterInfo_isUsed = 0!
+0x080d12  [%t]#error!meteringreceipt_pro energyTransferType = ENERGY_TRANSFER_TYPE_NONE!
+0x080d66  [%t]#error!meteringreceipt_pro energyTransferType neither DC nor AC!
+0x080dae  [%t]#error!meteringreceipt_pro is_charging_completed = PLC_EVCC_Fail!
+0x080df6  [%t]#error!weldingdetection_pro check_weldingdetection failure!
+0x080e3a  [%t]#sync_renegotiation , will trigger chargeparameter discovery req!!ISO1StmType[%d]
+0x080e92  [%t]#AC ,neither CP_ST_DUTY_M nor CP_ST_DUTY_5 , cpduty[%d]!ISO1StmType[%d]
+0x080ee2  [%t]#function_session PAUSE0#!wakeup_time_out[%lu]seconds,do_pause[%d].
+0x080f2e  [%t]#pMsgPfm->ctrl_attr.currec_msg != pMsgPfm->ISO1StmType[%d]!
+0x080f72  [%t]#pMsgPfm->ctrl_attr.next_msg ==  iso1SessionSequence_Unknow!
+0x080fb6  [%t]#req_prepare, ChargeParameterDiscoveryReq bms_can_nodata or bms_lock_tmerror  failure!
+0x081016  [%t]#after call sending function to send PowerDeliveryReq with iso1chargeProgressType_Stop!
+0x081076  [%t]#SessionSetupRes  dinresponseCodeType_FAILED_SequenceError
+0x0810ba  [%t]#SessionSetupRes ResponseCode FAILED, cp_duty!=CP_ST_DUTY_5
+0x0810fe   ServiceDiscoveryRes can not find suitable service, goto Sessionstop
+0x081146  [%t]#ServiceDiscoveryRes can not find suitable service, goto Sessionstop
+0x081192   ServiceDiscoveryRes  ResponseCode FAILED_SequenceError ,emerency shutdown
+0x0811de  [%t]#ServiceDiscoveryRes  ResponseCode FAILED_SequenceError ,emerency shutdown
+0x081232   ServiceDiscoveryRes  ResponseCode FAILED CP not 5%,emerency shutdown
+0x08127a  [%t]#ServiceDiscoveryRes  ResponseCode FAILED CP not 5%,emerency shutdown
+0x0812c6  [%t]#ServiceDiscoveryRes  ResponseCode FAILED, goto Sessionstop
+0x08130a  [%t]#ServicePaymentSelectionRes.ResponseCode FAILED!SequenceError 
+0x081352  [%t]#ServicePaymentSelectionRes.ResponseCode FAILED!cp_duty!=5 
+0x081396  [%t]#ServicePaymentSelectionRes.ResponseCode FAILED!goto Sessionstop
+0x0813de  ContractAuthenticationRes dinresponseCodeType_FAILED_SequenceError emergency_shutdown[%d]
+0x08143a  [%t]# ContractAuthenticationRes dinresponseCodeType_FAILED_SequenceError emergency_shutdown[%d]
+0x08149e  [%t]#ContractAuthenticationRes cp_duty!=5, emergency_shutdown[%d]
+0x0814e2  [%t]# ContractAuthenticationRes , responscode[%d],goto Sessionstop
+0x08152a  ChargeParameterDiscoveryRes. EVSEStatusCode is EVSE_Shutdown. will go SessionStop!
+0x08157e  [%t]#ChargeParameterDiscoveryRes. EVSEStatusCode is EVSE_Shutdown. will go SessionStop!
+0x0815da  [%t]#ChargeParameterDiscoveryRes.EVSEStatusCode is EVSE_Shutdown. will go SessionStop!
+0x081636  [%t]#after charge parameter discovery CP_Duty_Error_cnt[%d]>20
+0x08167a  ChargeParameterDiscoveryRes. EVSEStatusCode is  EmergencyEVSE_Shutdown. will go SessionStop!
+0x0816da  [%t]#ChargeParameterDiscoveryRes. EVSEStatusCode is EmergencyEVSE_Shutdown. will go SessionStop!
+0x08173e  [%t]#ChargeParameterDiscoveryRes.EVSEStatusCode is EmergencyEVSE_Shutdown. will go SessionStop!
+0x0817a2  [%t]#ChargeParameterDiscoveryRes.  EVSEStatusCode =EVSE_Shutdown!!
+0x0817ea  ChargeParameterDiscoveryRes.  EVSEStatusCode  is  EmergencyEVSE_Shutdown!
+0x081836  [%t]#ChargeParameterDiscoveryRes.  EVSEStatusCode  is  EmergencyEVSE_Shutdown!!
+0x08188a  [%t]#ChargeParameterDiscoveryRes   EVSEStatusCode is EmergencyEVSE_Shutdown! EVSEProcessing[%d]
+0x0818ee  ChargeParameterDiscoveryRes.responseCodeType_FAILED_SequenceError !
+0x081932  [%t]#ChargeParameterDiscoveryRes.responseCodeType_FAILED_SequenceError !
+0x08197e  [%t]#ChargeParameterDiscoveryRes.contains response code failed!
+0x0819c2  CableCheckRes EVSEStatusCode[%d]_EVSE_EmergencyShutdown :goto SessionStopReq
+0x081a12  [%t]#CableCheckRes EVSEStatusCode[%d]_EVSE_EmergencyShutdown:goto SessionStopReq
+0x081a66  [%t]#CableCheckRes EVSEStatusCode[%d]_EVSE_EmergencyShutdown :goto SessionStopReq
+0x081aba  CableCheckRes ProcessingType_Ongoing EVSEStatusCode[%d] :goto SessionStopReq
+0x081b0a  [%t]#CableCheckRes ProcessingType_Ongoing EVSEStatusCode[%d] :goto SessionStopReq
+0x081b5e  CableCheckRes ResponseCode[%d] :dinDC_EVSEStatusCodeType_EVSE_EmergencyShutdown goto SessionStopReq
+0x081bc2  [%t]#CableCheckRes ResponseCode[%d] :dinDC_EVSEStatusCodeType_EVSE_EmergencyShutdown goto SessionStopReq
+0x081c2e  PreChargeRes responseCodeType_OK ,but EVSEStatusCode EVSE_Shutdown
+0x081c72  [%t]#PreChargeRes responseCodeType_OK ,but EVSEStatusCode EVSE_Shutdown
+0x081cbe  PreChargeRes responseCodeType_OK ,but EVSEStatusCode == dinDC_EVSEStatusCodeType_EVSE_EmergencyShutdown
+0x081d26  [%t]#PreChargeRes responseCodeType_OK ,but EVSEStatusCode==  dinDC_EVSEStatusCodeType_EVSE_EmergencyShutdown
+0x081d96  [%t]#PreChargeRes responseCodeType_OK ,but EVSEStatusCode >=dinDC_EVSEStatusCodeType_EVSE_EmergencyShutdown
+0x081e06  [%t]#PreChargeRes  EVSEStatusCode EVSE_Shutdown,goto Sessionstop
+0x081e4a  PreChargeRes  EVSEStatusCode EVSE_EmergencyShutdown,goto Sessionstop
+0x081e92  [%t]#PreChargeRes  EVSEStatusCode EVSE_EmergencyShutdown,goto Sessionstop
+0x081ede  [%t]#EVSEStatusCode EVSE_Shutdown, pEVCCMsgPfm->EV_RecvPowerDeliveryEVSEShutdown = 1!
+0x081f36  [%t]#PowerDeliveryRes dinresponseCodeType_FAILED_SequenceError
+0x081f7a  PowerDeliveryRes EVSEStatusCode= EVSE_Shutdown,goto CurrentDemand 
+0x081fbe  [%t]#PowerDeliveryRes EVSEStatusCode= EVSE_Shutdown,goto CurrentDemand 
+0x08200a  CurrentDemandRes: pEVCCMsgPfm->EV_RecvPowerDeliveryEVSEShutdown==1
+0x08204e  [%t]#CurrentDemandRes: pEVCCMsgPfm->EV_RecvPowerDeliveryEVSEShutdown==1 
+0x08209a  [%t]#CurrentDemandRes pEVCCMsgPfm->bms_error_stop ==1 ,goto Powerdeliveryreq!
+0x0820ea  CurrentDemandRes pEVCCMsgPfm->bms_error_stop == 1,goto Powerdeliveryreq!
+0x082136  [%t]#CurrentDemandRes pEVCCMsgPfm->bms_error_stop == 1,goto Powerdeliveryreq!
+0x082186  CurrentDemandRes DC_EVSEStatus = EVSE_Shutdown,goto Powerdeliveryreqresponsecod[%d]
+0x0821da  [%t]#CurrentDemandRes DC_EVSEStatus = EVSE_Shutdown,goto Powerdeliveryreqresponsecod[%d]
+0x082236  CurrentDemandRes DC_EVSEStatus = dinDC_EVSEStatusCodeType_EVSE_EmergencyShutdown,goto Powerdeliveryreqresponsecod[%d]
+0x0822ae  [%t]#CurrentDemandRes DC_EVSEStatus = dinDC_EVSEStatusCodeType_EVSE_EmergencyShutdown,goto Powerdeliveryreqresponsecod[%d]
+0x08232e  [%t]#CurrentDemandRes EVSEStatusCode= EVSE_Shutdown,goto Powerdeliveryreq
+0x08237a  CurrentDemandRes EVSEStatusCode= EVSE_Shutdown,goto Powerdeliveryreq
+0x0823c2  [%t]#CurrentDemandRes EVSEStatusCode= EVSE_EmergencyShutdown,goto Powerdeliveryreq
+0x08241a  [%t]#CurrentDemandRes dinresponseCodeType_FAILED_SequenceError
+0x08245e  [%t]#PowerDeliveryRes.ResponseCode EVSE_Shutdown,goto sessionstop
+0x0824a2  [%t]#ev has finished the welding detection,send session stop req
+0x0824e6  WeldingDetectionRes ResponseCodeFAILED_SequenceError,EVWeldingDetectionState[%d]
+0x08253a  [%t]#WeldingDetectionRes ResponseCodeFAILED_SequenceError,EVWeldingDetectionState[%d]
+0x082592  [%t]#evcc_phase[%d]CP state[%c]CP duty[%.1u]period[%u]lock[%02x]
+0x0825d6  [%t]#after charge parameter discovery CP duty[%0.1u] !=5%,period[%u],CPstate[%c],occur_cnt[%d]
+0x08263a  [%t]#EVController4.EVEmergencyShutDown==1,should goto bms_shutdown
+0x082682  [%t]#SupportedApp evcc_sta->tout_commsetup [0x%x],timeout shutdown
+0x0826ca  [%t]#SessionSetupRes  (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x08270e  [%t]#ServiceDiscoveryRes  (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x082756  ServicePaymentSelectionRes. (cpstate==CP_StateE)||(cpstate==CP_StateF) !
+0x0827a2  ContractAuthenticationRes. (cpstate==CP_StateE)||(cpstate==CP_StateF) !
+0x0827ea  ChargeParameterDiscoveryRes.(cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x082832  [%t]#ChargeParameterDiscoveryRes.(cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x082882  CableCheckRes t_cablecheck>=evcc_sta->tout_cablecheck,stime[%lu]
+0x0828c6  [%t]#CableCheckRes t_cablecheck>=evcc_sta->tout_cablecheck,stime[%lu]
+0x08290e  PreChargeRes  t>=evcc_sta->tout! relative tm[%lu],stime[%lu],tout[%lu]
+0x082956  [%t]#PreChargeRes  t>=evcc_sta->tout! relative tm[%lu],stime[%lu],tout[%lu]
+0x0829a6  [%t]#PreChargeRes  t_precharge[%lu]>=tout_precharge[%lu],stime[%lu]
+0x0829ee  [%t]#PowerDeliveryRes  (cpstate==CP_StateE)||(cpstate==CP_StateF) 
+0x082a36  [%t]#CurrentDemandRes msg timeout!@ t>=evcc_sta->tout,stime[%lu]
+0x082a7a  PowerDeliveryRes STOP (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x082abe  [%t]#PowerDeliveryRes STOP (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x082b06  WeldingDetectionRes   (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x082b4a  [%t]#WeldingDetectionRes   (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x082b92  [%t]#SessionStopRes  (cpstate==CP_StateE)||(cpstate==CP_StateF)
+0x082bd6  [%t]#BST.BST_EndEVCC_AchieveTargetSOC[%d]= GBT_STATE_OCCURRENCE
+0x082c1a  [%t]#BST.BST_EndEVCC_AchieveSetTotalVol[%d]= GBT_STATE_OCCURRENCE
+0x082c5e  [%t]#BST.BST_EndEVCC_AchieveSetCellVol[%d]= GBT_STATE_OCCURRENCE
+0x082ca2  [%t]#BST.BST_EndEVCC_Flt_ConnectorOverTemp[%d]= GBT_STATE_OCCURRENCE
+0x082cea  [%t]#BST.BST_EndEVCC_Flt_BMUOverTemp[%d]= GBT_STATE_OCCURRENCE
+0x082d2e  [%t]#BST.BST_EndEVCC_Flt_ConnectorFault[%d]= GBT_STATE_OCCURRENCE
+0x082d72  [%t]#BST.BST_EndEVCC_Flt_OverTempFault[%d]= GBT_STATE_OCCURRENCE
+0x082db6  [%t]#BST.BST_EndEVCC_Flt_HVContactorFlt[%d]= GBT_STATE_OCCURRENCE
+0x082dfa  [%t]#BST.BST_EndEVCC_Flt_Point2VltMonitor[%d]= GBT_STATE_OCCURRENCE
+0x082e42  [%t]#BST.BST_EndEVCC_Err_OverCurrent[%d]= GBT_STATE_OCCURRENCE
+0x082e86  [%t]#BST.BST_EndEVCC_Err_VoltageAbnormal[%d]= GBT_STATE_OCCURRENCE
+0x082ece  [%t]#CHARGE_STOPREASON_EVCC_EMERGENCY .CST_EndEVCC_Flt_EVSEEmergencyShutdown[%d]
+0x082f22  [%t]#CHARGE_STOPREASON_BMS_ERROR .CST_EndEVCC_BMSAbortEVCC[%d]
+0x082f66  [%t]#CHARGE_STOPREASON_EVSE_VOLTAGE_ERR .CST_EndEVCC_Err_VoltageAbnormal[%d]
+0x082fb6  [%t]#CHARGE_STOPREASON_EVSE_CURRENT_ERR .CST_EndEVCC_Err_CurrentNotMatch[%d]
+0x083006  [%t]#CHARGE_STOPREASON_EVSE_ENERGY_TRANSFER_ERR .CST_EndEVCC_Flt_EnergyTransfer[%d]
+0x08305e  [%t]#gbt_set_cem.CEM_Over_Time_Rx_BST [%d]= GBT_STATE_ABNORMAL
+0x0830a2  [%t]#gbt_set_cem.CEM_Over_Time_Rx_BSD [%d]= GBT_STATE_ABNORMAL
+0x0830e6  [%t]#H102.BatteryCurrentDeviationError [%d]= GBT_STATE_OCCURRENCE
+0x08312a  [%t]#H102.BatteryVoltageDeviationError[%d]= GBT_STATE_OCCURRENCE
+0x08316e  [%t]#H102.NormalStopRequestBeforeCharging[%d]= GBT_STATE_OCCURRENCE
+0x0831b6  [%t]#GBT AC stm :plugout 1 ,plug_in = 1 ,ac evccac->stop = 1 ,evccac->state[%lu]!
+0x08320a  [%t]#GBT AC stm :plugout 2,ac evccac->stop is 1 ,evccac->state[%lu]!
+0x083252  [%t]#GBT AC stm :plugout 3,ac evccac->stop == 1 ,evccac->state[%lu]!
+0x08329a  [%t]#GBT AC stm :AC EVSE cpduty_err! not nominal(8%-97%)! evccac->state[%lu]
+0x0832ea  GBT AC stm :AC EVSE cpduty_err! not nominal(8%-97%)! evccac->state[%lu]
+0x083332  [%t]#GBT AC stm :waiting ,e-lock being locked!evccac->state[%lu].
+0x083376  [%t]#GBT AC stm :E-lock locking process Failed!evccac->state[%lu].
+0x0833be  [%t]#GBT AC stm :ongoing ,check e-lock status!evccac->state[%lu].
+0x083402  [%t]#GBT AC stm :E-lock status OK!connector locked!open A+ signal.send SIF.evccac->state[%lu].
+0x083466  GBT AC stm :E-lock Failed!go to STM_EVCC_AC_SHUTDOWN_ACTION_STEP1.evccac->state[%lu].
+0x0834be  [%t]#GBT AC stm :E-lock Failed!go to STM_EVCC_AC_SHUTDOWN_ACTION_STEP1.evccac->state[%lu].
+0x08351e  GBT AC stm :BLM 5s timeout!evccac->state[%lu], p->BLM.FLAG = BMS_TIMEOUT
+0x08356a  [%t]#GBT AC stm :BLM 5s timeout!evccac->state[%lu], p->BLM.FLAG = BMS_TIMEOUT
+0x0835ba  [%t]#GBT AC stm :BLM received. BMSChrgMod[%d],evccac->state[%lu]
+0x0835fe  GBT AC stm :BMSChrgMod in BLM is not AC MODE, 5s timeout!evccac->state[%lu]
+0x08364a  [%t]#GBT AC stm :BMSChrgMod in BLM is not AC MODE, 5s timeout!evccac->state[%lu]
+0x08369e  [%t]#GBT AC stm :close S2 .SET CP state C.OK.BLM.CF_Bms_S2_Open_Req[%d],evccac->state[%lu]
+0x0836fe  [%t]#GBT AC stm :BLM received,BLM.CF_Bms_S2_Open_Req[%d],evccac->state[%lu]
+0x08374e  GBT AC stm :CF_Bms_S2_Open_Req in BLM is not close, 30s timeout!evccac->state[%lu]
+0x0837a2  [%t]#GBT AC stm :CF_Bms_S2_Open_Req in BLM is not close, 30s timeout!evccac->state[%lu]
+0x0837fe  [%t]#GBT AC stm :open S2 .SET CP state B.BLM.CF_Bms_S2_Open_Req[%d],evccac->state[%lu]
+0x08385a  [%t]#GBT AC stm :BLM received,CF_Bms_S2_Open_Req[%d],evccac->state[%lu]
+0x0838a6  [%t]#GBT AC stm :AC Charging phase,e-lock unlocked status has lasted 2s!p->state[%lu].
+0x083902  GBT AC stm :AC Charging phase,e-lock unlocked status has lasted 2s!p->state[%lu]. 
+0x083956  [%t]#GBT AC stm :close A+,STM_EVCC_UNLOCK_ACTION_STEP1,evccac->state[%lu]
+0x0839a2  [%t]#GBT AC stm :STM_EVCC_UNLOCK_ACTION_STEP2,evccac->state[%lu]
+0x0839e6  [%t]#GBT AC stm :STM_EVCC_UNLOCK_ACTION_STEP2,unlock failed 3 times !evccac->state[%lu]
+0x083a42  GBT AC stm :STM_EVCC_UNLOCK_ACTION_STEP2,unlock failed 3 times !evccac->state[%lu]
+0x083a96  [%t]#GBT AC stm :STM_EVCC_UNLOCK_ACTION_STEP3 close A+,evccac->state[%lu]
+0x083ae2  GBT AC stm :STM_EVCC_AC_UNLOCK_ACTION_STEP3,evccac->state[%lu], e-lock unlock action may be failed!!
+0x083b4a  [%t]#GBT AC stm :STM_EVCC_AC_UNLOCK_ACTION_STEP3 ,evccac->state[%lu],e-lock unlock action may be failed!
+0x083bb6  GBT AC stm :CF_Bms_S2_Open_Req in BLM is not open, 5s timeout!evccac->state[%lu]
+0x083c0a  [%t]#GBT AC stm :CF_Bms_S2_Open_Req in BLM is not open, 5s  timeout!evccac->state[%lu]
+0x083c66  [%t]#GBT AC stm :AC Charging phase,e-lock unlocked status lasts 2s!p->state[%lu]
+0x083cba  GBT AC stm :AC Charging phase,e-lock unlocked status lasts 2s!p->state[%lu] 
+0x083d0a  GBT AC stm :in default handle,sth wrong ,do shutdown!evccac->state[%lu]!
+0x083d56  [%t]#GBT AC stm :in default handle,sth wrong ,do shutdown!evccac->state[%lu]!
+0x083da6  [%t]#GBT stm :notify_bms_shutdown == PLC_EVCC_True.p->state[%lu].
+0x083dea  [%t]#GBT stm :notify_normal_shutdown == PLC_EVCC_True.p->state[%lu].
+0x083e32  [%t]#GBT stm :gevcc_sta.plug_in == PLC_EVCC_False.p->state[%lu].
+0x083e76  [%t]#GBT machine :g_v2g_data_link == PLC_EVCC_False.p->state[%lu].
+0x083ebe  GBT stm :DIN70121. START GB/T BMS interaction after having been authoried by EVSE.p->state[%lu]
+0x083f1e  [%t]#GBT stm :DIN70121. START GB/T BMS interaction after having been authoried by EVSE.p->state[%lu]
+0x083f86  GBT stm :ISO15118.START GB/T BMS interaction after having been authoried by EVSE.p->state[%lu]
+0x083fe6  [%t]#GBT stm :ISO15118.START GB/T BMS interaction after having been authoried by EVSE.p->state[%lu]
+0x08404e  GBT stm :E-lock action Failed!get_locking() return unfinished !p->state[%lu].
+0x08409e  [%t]#GBT stm :E-lock action Failed!get_locking() return unfinished !p->state[%lu].
+0x0840f6  GBT stm :BHM 5s timeout!p->state[%lu], p->BHM.FLAG = BMS_TIMEOUT.
+0x08413a  [%t]#GBT stm :BHM 5s timeout!p->state[%lu], p->BHM.FLAG = BMS_TIMEOUT.
+0x084186  [%t]#GBT stm :BRM phase,p->state[%lu],err_flag == PLC_EVCC_True,STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x0841f2  GBT stm :BRM phase,p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x08425a  [%t]#GBT stm :BCP 5s timeout, p->state[%lu],err_flag =PLC_EVCC_True
+0x0842a2  GBT stm :BCP 5s timeout, p->state[%lu], err_flag = PLC_EVCC_True 
+0x0842e6  [%t]#GBT stm :BCP *EVTargetVoltageValue[%lu]V,EVTargetVoltageMultiplier[%d].
+0x084336  [%t]#GBT stm :BCP *EVTargetCurrentValue[%lu]A,EVTargetCurrentMultiplier[%d].
+0x084386  [%t]#GBT stm :BCP *EVMaximumVoltageLimit[%lu]V,EVMaximumVoltageLimitMultiplier[%d].
+0x0843de  [%t]#GBT stm :BCP *EVMaximumCurrentLimit[%lu]A,EVMaximumCurrentLimitMultiplier[%d].
+0x084436  [%t]#GBT stm :BCP *EVMaximumEnergyCapacity[%lu]KWh,EVMaximumEnergyCapacityMultiplier[%d].
+0x084492  [%t]#GBT stm :BCP received,BCP_Battery_Total_Voltage is valid.will go to state[%lu].
+0x0844ea  [%t]#GBT stm :p->state[%lu],err_flag == PLC_EVCC_True,STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x08454e  GBT stm :p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x0845aa  #GBT stm :BRM received 4.3s!send CRM AA.will go to state[%lu].
+0x0845ee  [%t]#GBT stm :BRM received 4.3s!send CRM AA.will go to state[%lu].
+0x084636  [%t]#GBT stm :good !synchronize ChargeParameterDiscovery OK!next state[%lu].
+0x084686  GBT stm :good !synchronize ChargeParameterDiscovery OK! next state[%lu].
+0x0846d2  [%t]#GBT stm :ChargeParameterDiscovery ongoing 65s timeout,p->state[%lu],STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x084746  GBT stm :ChargeParameterDiscovery ongoing 65s timeout,p->state[%lu], STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x0847b6  [%t]#GBT stm :4.5s passed .EVCC has to send CML and CTS !p->state[%lu].
+0x084802  GBT stm :4.5s passed .EVCC has to send CML and CTS !p-sttate[%lu].
+0x084846  GBT stm :p->state[%lu],  STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x08488a  [%t]#GBT stm :p->state[%lu], STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x0848d2  [%t]#GBT stm :send CML, CTS! BRO.FLAG[0x%x],p->state[%lu],EV_RecvCableCheckFinish[%d].EV_RecvChargeParameterDiscoveryOK[%d]
+0x084952  [%t]#GBT stm :15 case ,BRO 5s timeout, not received ! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x0849b6  #GBT stm :15 case ,BRO 5s timeout, not received ! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x084a12  [%t]#GBT stm :15 case ,BRO 60s timeout!no BRO 0xAA! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x084a72  #GBT stm :15 case ,BRO 60s timeout!no BRO 0xAA! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x084ace  [%t]#GBT stm :15 case ,GOOD BRO AA received! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x084b26  [%t]#GBT stm :CableCheck Finished,ok!p->state[%lu],EVSEIsolationStatus[%d].
+0x084b76  [%t]#GBT stm :CableCheck Finished, error!p->state[%lu],EVSEIsolationStatus[%d].
+0x084bca  GBT stm :CableCheck Finished, error! p->state[%lu],EVSEIsolationStatus[%d].
+0x084c1a  [%t]#GBT stm :CableCheck 50s timeout, error!p->state[%lu],EVSEIsolationStatus[%d]
+0x084c6e  GBT stm :CableCheck 50s timeout, error! p->state[%lu],EVSEIsolationStatus[%d].
+0x084cc2  [%t]#GBT stm :wait BRO AA, p->state[%lu],err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x084d32  GBT stm :wait BRO AA, p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x084d9e  [%t]#GBT stm :CableCheck Finished, ok!Start Precharge .p->state[%lu],EVSEIsolationStatus[%d].
+0x084dfe  [%t]#GBT stm :GOOD! Precharge voltage OK,go to state[%lu],outvol[%lu].
+0x084e4a  GBT stm :GOOD! Precharge voltage OK,go to state[%lu], outvol[%lu]. 
+0x084e8e  [%t]#GBT stm :Precharge  timeout! Precharge voltage FAILED,go to state[%lu],outvol[%lu].
+0x084eea  GBT stm :Precharge timeout ! Precharge voltage FAILED,go to state[%lu], outvol[%lu]. 
+0x084f42  [%t]#GBT stm :BRO p->state[%lu],err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x084faa  GBT stm :BRO p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x08500a  [%t]#GBT stm :1s timeout,set_precharge_relay failed!terminate session! p->state[%lu],err_flag =PLC_EVCC_True
+0x08507a  GBT stm :1s timeout,set_precharge_relay failed! terminate session! p->state[%lu], err_flag = PLC_EVCC_True 
+0x0850e6  [%t]#GBT stm :17 case ,GOOD, BRO 0xAA!send CRO 00,set ready to charge ,go to 18, Precharge:[%lu]VIM_Request_ProgState[%d].
+0x085166  [%t]#GBT stm : 5s timeout, p->state[%lu],err_flag =PLC_EVCC_True
+0x0851aa  [%t]#GBT stm :wait EV_RecvPowerDeliveryFinish [%d],p->state[%lu] CRO-0x00.
+0x0851fa  [%t]#GBT stm :18 case ,EV_RecvPowerDeliveryFinish:go to 24 case,ChargeParameterDiscovery[%d].
+0x08525a  [%t]#GBT stm :p->state[%lu],SYNCH_POWERDELIVERY_ERR,STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x0852ba  GBT stm :p->state[%lu], SYNCH_POWERDELIVERY_ERR, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x085316  [%t]#GBT stm :send CML, CTS! BRO.FLAG[0x%x],p->state[%lu],EV_RecvCableCheckFinish[%d].
+0x085372  [%t]#GBT stm :19 case ,BRO 5s timeout, not received ! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x0853d6  #GBT stm :19 case ,BRO 5s timeout, not received ! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x085432  [%t]#GBT stm :19 case ,BRO 60s timeout!no BRO 0xAA! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x085492  #GBT stm :19 case ,BRO 60s timeout!no BRO 0xAA! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x0854ee  [%t]#GBT stm :19 case ,GOOD BRO received! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x085546  [%t]#GBT stm :19 case ,GOOD, BRO 0xAA!send CRO 00,set ready to charge ,go to 18, Precharge:[%lu]VIM_Request_ProgState[%d].
+0x0855c6  [%t]#GBT stm :21 case ,BRO 5s timeout, not received ! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x08562a  #GBT stm :21 case ,BRO 5s timeout, not received ! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x085686  [%t]#GBT stm :21 case ,BRO 60s timeout!no BRO 0xAA! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x0856e6  #GBT stm :21 case ,BRO 60s timeout!no BRO 0xAA! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x085742  [%t]#GBT stm :21 case ,GOOD BRO received! Precharge:BRO_Battery_Charge_Ready[%lu].
+0x08579a  [%t]#GBT stm :p->BCL.FLAG[0x%x],p->state[%lu],send_cro,  BCS[%d].
+0x0857de  [%t]#GBT stm :22 case ,BCL 1s timeout!Powerdelivery: BRO_Battery_Charge_Ready[%lu]
+0x085836  #GBT stm :22 case ,BCL 1s timeout!Powerdelivery: BRO_Battery_Charge_Ready[%lu]
+0x085886  [%t]#GBT stm :22 case ,BCS 5s timeout! Powerdelivery: BRO_Battery_Charge_Ready[%lu]
+0x0858de  #GBT stm :22 case ,BCS 5s timeout! Powerdelivery: BRO_Battery_Charge_Ready[%lu]
+0x08592e  [%t]#GBT stm :precharge voltage0x[%x] is not valid,not set_precharge_relay !terminate session! p->state[%lu],err_flag =PLC_EVCC_True
+0x0859b6  GBT stm :precharge voltage0x [%x]is not valid, not set_precharge_relay ! terminate session! p->state[%lu], err_flag = PLC_EVCC_True 
+0x085a3e  [%t]#GBT stm :set_precharge_relay failed!terminate session! p->state[%lu],err_flag =PLC_EVCC_True
+0x085aa2  GBT stm :set_precharge_relay failed! terminate session! p->state[%lu], err_flag = PLC_EVCC_True 
+0x085b06  [%t]#GBT stm : 22 case , BCL and  BCS ok, p->BCS.BCS_Voltage_Measurement/10[%lu],outvol[%lu],outcur[%lu].
+0x085b72  [%t]#GBT stm :BCL BCS p->state[%lu],err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x085bde  GBT stm :BCL  BCS p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x085c46  [%t]#GBT stm :24 case ,BCL 1s timeout!Powerdelivery: BRO_Battery_Charge_Ready[%lu]
+0x085c9e  #GBT stm :24 case ,BCL 1s timeout!Powerdelivery: BRO_Battery_Charge_Ready[%lu]
+0x085cee  [%t]#GBT stm :24 case ,BCS 5s timeout! Powerdelivery: BRO_Battery_Charge_Ready[%lu]
+0x085d46  #GBT stm :24 case ,BCS 5s timeout! Powerdelivery: BRO_Battery_Charge_Ready[%lu]
+0x085d96  [%t]#GBT stm :24 case , p->BCS.BCS_Voltage_Measurement/10[%lu],outvol[%lu],outcur[%lu].
+0x085df2  [%t]#GBT stm : 24 case , BCL and  BCS ok, p->BCS.BCS_Voltage_Measurement/10[%lu],outvol[%lu],outcur[%lu].
+0x085e5e  [%t]#GBT stm :BCL or BCS,p->state[%lu],err_flag == PLC_EVCC_True,STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x085eca  GBT stm :BCL or  BCS,p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x085f32  [%t]#GBT stm :CurrentDemand phase,BCL 1s timout, p->state[%lu].
+0x085f76  [%t]#GBT stm :CurrentDemand phase,BCS 5s timeout, p->state[%lu]
+0x085fba  [%t]#GBT stm :CurrentDemand phase,BSM 5s timeout, p->state[%lu]
+0x085ffe  [%t]#GBT stm :CurrentDemand phase,e-lock unlocked dangerous!p->state[%lu].
+0x08604e  GBT stm :CurrentDemand phase,e-lock unlocked dangerous!p->state[%lu]. 
+0x086096  [%t]#GBT stm :CurrentDemand phase,EVSE isolationLevelType_Fault! p->state[%lu].
+0x0860ea  GBT stm :CurrentDemand phase,EVSE isolationLevelType_Fault! p->state[%lu]. 
+0x086136  [%t]#GBT stm :CurrentDemand phase,EVSE dinisolationLevelType_Warning! p->state[%lu].
+0x08618e  GBT stm :CurrentDemand phase,EVSE dinisolationLevelType_Warning! p->state[%lu]. 
+0x0861e2  [%t]#GBT stm :30 case ,BSM.BSM_ChargingAllow == PLC_EVCC_False,state[%d]. 
+0x086232  [%t]#GBT stm :30 case ,BSM.BSM_ChargingAllow == PLC_EVCC_False,pause_cnt > 10 minutes,state[%d]. 
+0x086296  GBT stm :30 case ,BSM.BSM_ChargingAllow == PLC_EVCC_False,pause_cnt > 10 minutes,state[%d]. 
+0x0862f6  [%t]#GBT stm :p->state[%lu],data_tmout == PLC_EVCC_True,bms_error_stop
+0x086342  GBT stm :p->state[%lu], data_tmout == PLC_EVCC_True, bms_error_stop
+0x086386  [%t]#GBT stm : 31 case ,BST 5s timeout!Powerdelivery: BRO_Battery_Charge_Ready[%lu].
+0x0863de  [%t]#GBT stm : 31 case ,BSD 10s timeout!Powerdelivery: BRO_Battery_Charge_Ready[%lu].
+0x086436  [%t]#GBT stm :BST or BSD ,p->state[%lu],err_flag == PLC_EVCC_True,STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x0864a6  GBT stm :BST or  BSD ,p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x086512  [%t]#GBT stm :close A+,STM_EVCC_UNLOCK_ACTION_STEP1,p->state[%lu].
+0x08655a  #GBT stm :close A+,STM_EVCC_UNLOCK_ACTION_STEP1,p->state[%lu].
+0x08659e  [%t]#GBT stm :STM_EVCC_UNLOCK_ACTION_STEP2,unlock failed 3 times !p->state[%lu].
+0x0865f2  GBT stm :STM_EVCC_SHUTDOWN_UNLOCK_STEP2,unlock failed 3 times !p->state[%lu].
+0x086642  GBT stm :STM_EVCC_UNLOCK_ACTION_STEP3,p->state[%lu], e-lock unlock action may be failed!!
+0x08669e  [%t]#GBT stm :STM_EVCC_UNLOCK_ACTION_STEP3 ,p->state[%lu],e-lock unlock action may be failed!
+0x0866fe  CHAdeMO stm :notify_bms_shutdown == PLC_EVCC_True.p->state[%lu].
+0x086742  [%t]#CHAdeMO stm :notify_bms_shutdown == PLC_EVCC_True.p->state[%lu].
+0x08678a  CHAdeMO stm :notify_normal_shutdown == PLC_EVCC_True.p->state[%lu].
+0x0867ce  [%t]#CHAdeMO stm :notify_normal_shutdown == PLC_EVCC_True.p->state[%lu].
+0x08681a  [%t]#CHAdeMO stm :gevcc_sta.plug_in == PLC_EVCC_False.p->state[%lu].
+0x086862  CHAdeMO machine :g_v2g_data_link == PLC_EVCC_False.p->state[%lu].
+0x0868a6  [%t]#CHAdeMO machine :g_v2g_data_link == PLC_EVCC_False.p->state[%lu].
+0x0868f2  CHAdeMO stm :E-lock action Failed!get_locking() return unfinished !p->state[%lu].
+0x086946  [%t]#CHAdeMO stm :E-lock action Failed!get_locking() return unfinished !p->state[%lu].
+0x0869a2  [%t]#CHAdeMO stm :connector locked!open A+ signal!p->state[%lu].
+0x0869e6  [%t]#CHAdeMO stm :good ! ChargeParameterDiscovery OK!next state[%lu].
+0x086a2e  CHAdeMO stm :good !ChargeParameterDiscovery OK! next state[%lu].
+0x086a72  [%t]#CHAdeMO stm :ChargeParameterDiscovery ongoing 70s timeout,p->state[%lu],STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x086aea  CHAdeMO stm :ChargeParameterDiscovery ongoing 70s timeout,p->state[%lu], STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x086b5e  [%t]#CHAdeMO stm :ChargeParameterDiscovery ongoing 65s timeout,p->state[%lu],STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x086bd6  CHAdeMO stm :ChargeParameterDiscovery ongoing 65s timeout,p->state[%lu], STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x086c4a  [%t]#CHAdeMO stm :good, EV_RecvCableCheckFinish! SET_CSS1 d1 ON, next state[%d]
+0x086c9e  #CHAdeMO stm :good, EV_RecvCableCheckFinish! SET_CSS1 d1 ON, next state[%d]
+0x086cee  [%t]#CHAdeMO stm :CableCheck Finished,ok!p->state[%lu],EVSEIsolationStatus[%d].
+0x086d42  [%t]#CHAdeMO stm :CableCheck Finished, error!p->state[%lu],EVSEIsolationStatus[%d].
+0x086d9a  CHAdeMO stm :CableCheck Finished, error! p->state[%lu],EVSEIsolationStatus[%d].
+0x086dee  [%t]#CHAdeMO stm :CableCheck 50s timeout, error!p->state[%lu],EVSEIsolationStatus[%d]
+0x086e46  CHAdeMO stm :CableCheck 50s timeout, error! p->state[%lu],EVSEIsolationStatus[%d].
+0x086e9e  #CHAdeMO stm :good, EV_RecvChargeParameterDiscoveryOK ,EV_RecvCableCheckFinish! SET_CSS1 d1 ON, next state[%d]
+0x086f12  [%t]#CHAdeMO stm :good, EV_RecvChargeParameterDiscoveryOK ,EV_RecvCableCheckFinish! SET_CSS1 d1 ON, next state[%d]
+0x086f8a  [%t]#CHAdeMO stm :CableCheck ongoing 50s timeout,p->state[%lu],STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x086ff6  CHAdeMO stm :CableCheck ongoing 50s timeout,p->state[%lu], STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x08705a  [%t]#CHAdeMO stm :CableCheck ongoing  error,p->state[%lu],STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x0870c2  CHAdeMO stm :CableCheck ongoing  error,p->state[%lu], STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x087122  #CHAdeMO stm :CHAdeMO CAN data received..next p->state[%lu].MaximumBatteryVoltage[%lu],TotalCapacityTractionBattery[%lu]
+0x08719e  #CHAdeMO stm :CHAdeMO min value of EV are :MinimumBatteryVoltage[%lu],MinimumChargeCurrent[%lu]
+0x087202  #CHAdeMO stm :EVSE  AvailableOutputVoltage[%lu],AvailableOutputCurrent[%lu],ThresholdVoltage[%lu]
+0x087266  #CHAdeMO stm :EVSE PresentOutputVoltage[%lu],PresentChargingCurrent[%lu],RemainingChargingTime10s[%lu],RemainingChargingTime1m[%lu]
+0x0872ee  [%t]#CHAdeMO stm :CHAdeMO CAN data received..next p->state[%lu].MaximumBatteryVoltage[%lu],TotalCapacityTractionBattery[%lu]
+0x08736e  [%t]#CHAdeMO stm :CHAdeMO min value of EV are :MinimumBatteryVoltage[%lu],MinimumChargeCurrent[%lu]
+0x0873d6  [%t]#CHAdeMO stm :CHAdeMO  CHAdeMOProtocolNumber[%lu].EV TargetBatteryVoltage[%lu],ChargingCurrentRequest[%lu]
+0x08744a  [%t]#CHAdeMO stm :EVSE  AvailableOutputVoltage[%lu],AvailableOutputCurrent[%lu],ThresholdVoltage[%lu]
+0x0874b2  [%t]#CHAdeMO stm :EVSE PresentOutputVoltage[%lu],PresentChargingCurrent[%lu],RemainingChargingTime10s[%lu],RemainingChargingTime1m[%lu]
+0x08753e  CHAdeMO stm :CHAdeMO CAN 6s timeout!p->state[%lu], H100, H101, H102 TIMEOUT.
+0x08758e  [%t]#CHAdeMO stm :CHAdeMO CAN 6s timeout!p->state[%lu], H100, H101, H102 TIMEOUT.
+0x0875e2  CHAdeMO stm :p->state[%lu],  STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1.
+0x08762a  [%t]#CHAdeMO stm :p->state[%lu], STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1.
+0x08767a  [%t]#CHAdeMO stm :send H108, H109 !wait until  Vehicle charging enabled[%d] and swtichk[%d] on!get_hv=%lu,p->state[%lu].
+0x0876f6  [%t]#CHAdeMO stm :14 case ,8s timeout From (d1)=ON GET_VCP[%lu].H102.VehicleChargingEnabled[%d] get_hv=%lu
+0x087766  #CHAdeMO stm :14 case ,8s timeout From (d1)=ON GET_VCP[%lu].H102.VehicleChargingEnabled[%d]get_hv=%lu
+0x0877ce  [%t]#CHAdeMO stm :good ,Vehicle charging enabled and swithc K ON!enable CCS precharge,next state[%lu].
+0x08783a  #CHAdeMO stm :good ,Vehicle charging enabled and swithc K ON!enable CCS precharge,next state[%lu].
+0x0878a2  [%t]#CHAdeMO stm :CableCheck ongoing!send CML, CTS!p->state[%lu].
+0x0878e6  [%t]#CHAdeMO stm :p->state[%lu],err_flag == PLC_EVCC_True,STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x08794e  CHAdeMO stm :p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x0879ae  [%t]#CHAdeMO stm :send H108, H109 !phase_cnt[%lu],get_hv=%lu,get_precharge_relay=%d(0-open,1-close),state[%lu].
+0x087a22  [%t]#CHAdeMO stm :1s timeout,set_precharge_relay open failed!terminate session! p->state[%lu],err_flag =PLC_EVCC_True
+0x087a9a  CHAdeMO stm :1s timeout,set_precharge_relay open failed! terminate session! p->state[%lu], err_flag = PLC_EVCC_True 
+0x087b12  [%t]#CHAdeMO stm :CCS has already done precharge 4s,Switch(d2) = ON, notify CHAdeMO EV that Cablecheck finished !next  state[%lu].
+0x087b9a  [%t]#CHAdeMO stm :CableCheck ongoing!send H108, H109!p->state[%lu].
+0x087be2  [%t]#CHAdeMO stm :wait CableCheck ok or 20s timeout, p->state[%lu],err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x087c6e  CHAdeMO stm :wait CableCheck ok or 20s timeout, p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x087cf2  [%t]#CHAdeMO stm :send H108, H109 !H102.VehicleStatus [%d],relay[%d],get_hv() = %lu,p->state[%lu].
+0x087d5a  [%t]#CHAdeMO stm :16 case ,4s timeout after Switch(d2) = ON!H102.VehicleStatus[%d],but EV contactor is not closed!get_hv[%lu].
+0x087dde  #CHAdeMO stm :16 case ,4s timeout after Switch(d2) = ON!H102.VehicleStatus[%d],but EV contactor is not closed!get_hv[%lu].
+0x087e5e  [%t]#CHAdeMO stm :16 case ,good,H102.VehicleStatus == 0!output voltage[%lu] more than 50v.next 17 case
+0x087eca  #CHAdeMO stm :16 case ,good,H102.VehicleStatus == 0!output voltage[%lu] more than 50v.next 17 case
+0x087f32  [%t]#CHAdeMO stm :Precharge timeout, error!p->state[%lu],EVSEIsolationStatus[%d].
+0x087f86  CHAdeMO stm :Precharge timeout, error! p->state[%lu],EVSEIsolationStatus[%d].
+0x087fd6  [%t]#CHAdeMO stm :wait EV contactor is closed. p->state[%lu],err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x08805a  CHAdeMO stm :wait EV contactor is closed. p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x0880da  [%t]#CHAdeMO stm :17 case ,outvol[%lu],H102.ChargingCurrentRequest[%lu],get_hv[%lu],inner relay[%d].
+0x088142  [%t]#CHAdeMO stm :17 case ,4s timeout after Switch(d2) = ON!but H102.ChargingCurrentRequest[%lu] is not more than 0A.p->state[%lu].
+0x0881ca  #CHAdeMO stm :17 case ,4s timeout after Switch(d2) = ON!but H102.ChargingCurrentRequest[%lu] is not more than 0A.p->state[%lu].
+0x08824e  [%t]#CHAdeMO stm :17 case ,p->H102.ChargingCurrentRequest[%lu] > 0A,get_hv[%lu],next state 18.
+0x0882b2  #CHAdeMO stm :17 case ,p->H102.ChargingCurrentRequest[%lu] > 0A,get_hv[%lu],next state 18.
+0x088312  [%t]#CHAdeMO stm :GOOD! Precharge voltage OK,go to state[%lu],outvol[%lu].
+0x088362  CHAdeMO stm :GOOD! Precharge voltage OK,go to state[%lu], outvol[%lu]. 
+0x0883aa  [%t]#CHAdeMO stm :wait H102.ChargingCurrentRequest >0, p->state[%lu],err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x088436  CHAdeMO stm :wait H102.ChargingCurrentRequest > 0, p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x0884be  [%t]#CHAdeMO stm :send h108, h109,outvol[%lu],get_precharge_relay[%lu],get_hv[%lu].state[%d]
+0x08851e  [%t]#CHAdeMO stm :18 case ,GOOD! Precharge voltage OK,go to state[%lu],outvol[%lu],p->ress_vol[%lu].
+0x088586  CHAdeMO stm :18 case ,GOOD! Precharge voltage OK,go to state[%lu], outvol[%lu],p->ress_vol[%lu]. 
+0x0885ea  [%t]#CHAdeMO stm :wait Precharge, p->state[%lu],outvol[%lu],p->ress_vol[%lu],err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x08867e  CHAdeMO stm :wait Precharge, p->state[%lu],outvol[%lu],p->ress_vol[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x08870e  [%t]#CHAdeMO stm :send h108, h109,get_precharge_relay[%lu],get_hv[%lu].state[%d]
+0x088762  [%t]#CHAdeMO stm :1s timeout,set_precharge_relay failed!terminate session! p->state[%lu],err_flag =PLC_EVCC_True
+0x0887d6  CHAdeMO stm :1s timeout,set_precharge_relay failed! terminate session! p->state[%lu], err_flag = PLC_EVCC_True 
+0x088846  [%t]#CHAdeMO stm :19 case ,GOOD,set_precharge_relay,go to 20, TargetBatteryVoltage:[%lu]VIM_Request_ProgState[%d].
+0x0888be  #CHAdeMO stm :19 case ,GOOD,set_precharge_relay,go to 20, TargetBatteryVoltage:[%lu]VIM_Request_ProgState[%d].
+0x088932  [%t]#CHAdeMO stm : 5s timeout, p->state[%lu],err_flag =PLC_EVCC_True
+0x08897a  CHAdeMO stm : 5s timeout, p->state[%lu], err_flag = PLC_EVCC_True 
+0x0889be  [%t]#CHAdeMO stm :wait, p->state[%lu],err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x088a2a  CHAdeMO stm :wait, p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x088a92  [%t]#CHAdeMO stm :wait EV_RecvPowerDeliveryFinish [%d],p->state[%lu]
+0x088ada  [%t]#CHAdeMO stm :20 case ,EV_RecvPowerDeliveryFinish:go to 30 case,EV_RecvPowerDeliveryFinish[%d].
+0x088b42  #CHAdeMO stm :20 case ,EV_RecvPowerDeliveryFinish:go to 30 case,EV_RecvPowerDeliveryFinish[%d].
+0x088ba6  [%t]#CHAdeMO stm :p->state[%lu],SYNCH_POWERDELIVERY_ERR,STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x088c0a  CHAdeMO stm :p->state[%lu], SYNCH_POWERDELIVERY_ERR, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x088c6a  [%t]#CHAdeMO stm :wait EV_RecvPowerDeliveryFinish, p->state[%lu],err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x088cf2  CHAdeMO stm :wait EV_RecvPowerDeliveryFinish, p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x088d76  [%t]#CHAdeMO stm :30 case ,EVTargetCurrentValue[%lu]!EVTargetVoltageValue[%lu].outcur[%lu],outvol[%lu]
+0x088de2  [%t]#CHAdeMO stm :CurrentDemand phase,e-lock unlocked dangerous!p->state[%lu].
+0x088e36  CHAdeMO stm :CurrentDemand phase,e-lock unlocked dangerous!p->state[%lu]. 
+0x088e82  [%t]#CHAdeMO stm :CurrentDemand phase,EVSE isolationLevelType_Fault! p->state[%lu].
+0x088eda  CHAdeMO stm :CurrentDemand phase,EVSE isolationLevelType_Fault! p->state[%lu]. 
+0x088f2a  [%t]#CHAdeMO stm :CurrentDemand phase,EVSE dinisolationLevelType_Warning! p->state[%lu].
+0x088f86  CHAdeMO stm :CurrentDemand phase,EVSE dinisolationLevelType_Warning! p->state[%lu]. 
+0x088fde  [%t]#CHAdeMO stm :30 case ,stop because normal operation : stop by vehicle, event flag h102[%d], 102.4[%x]102.5[%x] 
+0x089056  #CHAdeMO stm :30 case ,stop because normal operation : stop by vehicle, event flag h102[%d], 102.4[%x]102.5[%x] 
+0x0890ca  [%t]#CHAdeMO stm :30 case ,stop because Abnormal operation: stop by vehicle, Switch(k) = OFF 102 flag[%d] h102.4[%x]h102.5[%x],next state [%d]
+0x08915e  #CHAdeMO stm :30 case ,stop because Abnormal operation: stop by vehicle, Switch(k) = OFF 102 flag[%d] h102.4[%x]h102.5[%x],next state [%d]
+0x0891ee  [%t]#CHAdeMO stm :30 case ,stop because Abnormal operation: stop by vehicle, event flag h102[%d] h102.4[%x]h102.5[%x],next state [%d]
+0x089276  #CHAdeMO stm :30 case ,stop because Abnormal operation: stop by vehicle, event flag h102[%d] h102.4[%x]h102.5[%x],next state [%d]
+0x0892fa  [%t]#CHAdeMO stm :30 case ,stop because Abnormal operation: stop by charger, event flag h102[%d],next state [%d]
+0x08936e  #CHAdeMO stm :30 case ,stop because Abnormal operation: stop by charger, event flag h102[%d],next state [%d]
+0x0893de  [%t]#CHAdeMO stm :30 case ,end  because charging remaining time is 0!
+0x089426  #CHAdeMO stm :30 case ,end  because charging remaining time is 0!
+0x08946a  [%t]#CHAdeMO stm :p->state[%lu],data_tmout == PLC_EVCC_True,bms_error_stop
+0x0894ba  CHAdeMO stm :p->state[%lu], data_tmout == PLC_EVCC_True, bms_error_stop
+0x089502  [%t]#CHAdeMO stm :wait switchK off, 4s timeout,p->state[%lu],err_flag == PLC_EVCC_True,STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x089586  CHAdeMO stm :wait switchK off, 4s timeout ,p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x089606  [%t]#CHAdeMO stm :32 case ,sesssionstop finished or 2s timeout.!next state[%lu].
+0x08965a  [%t]#CHAdeMO stm :33 case ,EV contactor = OPEN,  Switch(d2) = OFF.!next state[%lu].
+0x0896b2  [%t]#CHAdeMO stm :34 case ,output voltage is less than 10 v, set  energizing_state to 0.!next state[%lu].
+0x08971e  [%t]#CHAdeMO stm :34 case ,timeout 3.5s, has to set  energizing_state to 0.!next state[%lu].
+0x08977e  [%t]#CHAdeMO stm :35 case ,p->phase_cnt >= 350!next state[%lu].
+0x0897c2  [%t]#CHAdeMO stm :35 case ,ok can data received!next state[%lu].
+0x089806  [%t]#CHAdeMO stm :40 case ,wait for 4s timeout! Switch(k) is not OFF!p->state[%lu].
+0x08985e  [%t]#CHAdeMO stm :41 case ,2s or sessionstop received!p->phase_cnt[%lu].
+0x0898aa  [%t]#CHAdeMO stm :42 case ,10s timeout.!TC 11 handler, set H'109.5.4=1 p->H102.FLAG[%lu].
+0x089906  [%t]#CHAdeMO stm :p->state[%lu],2.5s timeout . H'109.5.4=1 charging_system_error 
+0x08995a  [%t]#CHAdeMO stm :p->state[%lu],3.5s timeout . H'109.5.4=1 STM_EVCC_UNLOCK_ACTION_STEP1 
+0x0899b6  [%t]#CHAdeMO stm :good received ,next p->state[%lu],3.5s timeout . H'109.5.4=1 STM_EVCC_UNLOCK_ACTION_STEP1 
+0x089a26  [%t]#CHAdeMO stm :p->state[%lu],2.2s timeout .  charger_error 
+0x089a6a  [%t]#CHAdeMO stm :p->state[%lu],VIM_Request_ProgState == EV_Default)||(gevcc_sta.plug_in == PLC_EVCC_False 
+0x089ada  [%t]#CHAdeMO stm :case 51,10s timeout ,next  state[%lu], TC 11 handler, set H'109.5.4=1 
+0x089b36  [%t]#CHAdeMO stm :case 51,VehicleStatus == 1 ,next  state[%lu], set d2 off 
+0x089b86  [%t]#CHAdeMO stm :case 52,1.5s passed  output voltage is less than 10  ,next  state[%lu] 
+0x089be2  [%t]#CHAdeMO stm :case 52,3.5s passed , has to set  energizing_state to 0. ,next  state[%lu] 
+0x089c42  [%t]#CHAdeMO stm :case 53,3.5s passed ,send H'109.5.4=1 for 1second,next  state[%lu] 
+0x089c9a  [%t]#CHAdeMO stm :case 53,good ,can data received!next  state[%lu] STM_EVCC_UNLOCK_ACTION_STEP1
+0x089cfe  [%t]#CHAdeMO stm :case 60,2.2s passed ,H'109.5.5 = 0!next  state[%lu] 
+0x089d4a  [%t]#CHAdeMO stm :case 61,p->phase_cnt >=200  ,charging_stop_control = 1, charger_status = 0,next  state[%lu] 
+0x089dbe  [%t]#CHAdeMO stm :case 62,p->phase_cnt >= 350  ,STM_EVCC_UNLOCK_ACTION_STEP1,next  state[%lu] 
+0x089e22  [%t]#CHAdeMO stm :case 62, good  EV can recieved,next  state[%lu] 
+0x089e6a  [%t]#CHAdeMO stm :notify shutdown,set switch d1 OFF.p->state[%lu]
+0x089eae  [%t]#CHAdeMO stm :close A+,STM_EVCC_UNLOCK_ACTION_STEP1,p->state[%lu].
+0x089efa  #CHAdeMO stm :close A+,STM_EVCC_UNLOCK_ACTION_STEP1,p->state[%lu].
+0x089f42  [%t]#CHAdeMO stm :STM_EVCC_UNLOCK_ACTION_STEP2,unlock failed 3 times !p->state[%lu].
+0x089f9a  CHAdeMO stm :STM_EVCC_SHUTDOWN_UNLOCK_STEP2,unlock failed 3 times !p->state[%lu].
+0x089fee  CHAdeMO stm :STM_EVCC_UNLOCK_ACTION_STEP3,p->state[%lu], e-lock unlock action may be failed!!
+0x08a04e  [%t]#CHAdeMO stm :STM_EVCC_UNLOCK_ACTION_STEP3 ,p->state[%lu],e-lock unlock action may be failed!
+0x08a0b2  CHAdeMO stm :DIN70121. EVSE authoried.CCS EVSE starts to communicate with CHAdeMO EV.p->state[%lu]
+0x08a116  [%t]#CHAdeMO stm :DIN70121. EVSE authoried.CCS EVSE starts to communicate with CHAdeMO EV.p->state[%lu]
+0x08a182  CHAdeMO stm :ISO15118.EVSE authoried.CCS EVSE starts to communicate with CHAdeMO EV.p->state[%lu]
+0x08a1e6  [%t]#CHAdeMO stm :ISO15118.EVSE authoried.CCS EVSE starts to communicate with CHAdeMO EV.p->state[%lu]
+0x08a252  [%t]#CHAdeMO stm :good !GET_AD_CPD()=%.3u CHAdeMO EV connector plugin!.
+0x08a29e  #CHAdeMO stm :good !GET_AD_CPD()=%.3u CHAdeMO EV connector plugin!.
+0x08a2e6  [%t]#CHAdeMO stm :good ! ChargeParameterDiscovery OK!SET d1 ON!next state[%lu].
+0x08a33a  CHAdeMO stm :good !ChargeParameterDiscovery OK!SET d1 ON! next state[%lu].
+0x08a386  #CHAdeMO stm :CHAdeMO CAN data received..next p->state[%lu].EV MaximumBatteryVoltage[%lu],TotalCapacityTractionBattery[%lu]
+0x08a406  #CHAdeMO stm :CHAdeMO next state[%lu]. EV min value are:EV MinimumBatteryVoltage[%lu],MinimumChargeCurrent[%lu]
+0x08a47a  #CHAdeMO stm : CHAdeMOProtocolNumber[%lu]. EV TargetBatteryVoltage[%lu], EV ChargingCurrentRequest[%lu]
+0x08a4e6  [%t]#CHAdeMO stm :CHAdeMO CAN data received..next p->state[%lu].EV MaximumBatteryVoltage[%lu],TotalCapacityTractionBattery[%lu]
+0x08a56a  [%t]#CHAdeMO stm :CHAdeMO  state[%lu]. EV min value are:EV MinimumBatteryVoltage[%lu],MinimumChargeCurrent[%lu]
+0x08a5de  [%t]#CHAdeMO stm :send H108, H109 !wait until  Vehicle charging enabled[%d] and swtichk[%d] on!get_hv[%lu],p->state[%lu].
+0x08a65a  [%t]#CHAdeMO stm :send H108, H109 !8s timeout From (d1)=ON,wait until Vehicle charging enabled[%d] and swtichk[%d] on!p->state[%lu].
+0x08a6e2  #CHAdeMO stm :send H108, H109 !8s timeout From (d1)=ON,wait until Vehicle charging enabled[%d] and swtichk[%d] on!p->state[%lu].
+0x08a766  [%t]#CHAdeMO stm :good ,Vehicle charging enabled and swithc K ON!next state[%lu].
+0x08a7ba  #CHAdeMO stm :good ,Vehicle charging enabled and swithc K ON!next state[%lu].
+0x08a80a  [%t]#CHAdeMO stm :send H108, H109 !EV_RecvCableCheckFinish[%d],get_precharge_relay[%d],p->state[%lu].
+0x08a872  [%t]#CHAdeMO stm :good ,EV_RecvCableCheckFinish!SET_CSS2 ON! next state[%lu].
+0x08a8c2  #CHAdeMO stm :good ,EV_RecvCableCheckFinish!SET_CSS2 ON! next state[%lu].
+0x08a90e  [%t]#CHAdeMO stm :20s timeout ,but CCS Cablecheck ongoing !SET_CSS2 ON! next  state[%lu].
+0x08a96a  #CHAdeMO stm :20s timeout ,but CCS Cablecheck ongoing !SET_CSS2 ON! next  state[%lu].
+0x08a9c2  [%t]#CHAdeMO stm :send H108, H109 !H102.VehicleStatus[%d],get_hv=%lu,get_precharge_relay=%d(0-open,1-close),state[%lu].
+0x08aa3e  [%t]#CHAdeMO stm :15 case ,8s timeout after Switch(d2) = ON!but EV contactor is not closed!H102.VehicleStatus[%lu],get_hv=%lu,get_precharge_relay=%d(0-open,1-close).
+0x08aae6  #CHAdeMO stm :15 case ,8s timeout after Switch(d2) = ON!but EV contactor is not closed!H102.VehicleStatus[%lu],get_hv=%lu,get_precharge_relay=%d(0-open,1-close).
+0x08ab8a  [%t]#CHAdeMO stm :15 case ,good,H102.VehicleStatus == 0!output voltage [%lu] is more than 50v.next 16 case
+0x08abfa  #CHAdeMO stm :15 case ,good,H102.VehicleStatus == 0!output voltage [%lu] is more than 50v.next 16 case
+0x08ac66  [%t]#CHAdeMO stm :16 case ,p->H102.ChargingCurrentRequest[%lu]A,get_precharge_relay= %d(0-open,1-close),get_hv() = %lu.
+0x08ace2  [%t]#CHAdeMO stm :16 case ,8s timeout after Switch(d2) = ON!but H102.ChargingCurrentRequest is [%lu]A not more than 0A.relay= %d(0-open,1-close),get_hv = %lu,state[%lu].
+0x08ad8e  #CHAdeMO stm :16 case ,8s timeout after Switch(d2) = ON!but H102.ChargingCurrentRequest is [%lu]A not more than 0A.relay= %d(0-open,1-close),get_hv = %lu,state[%lu].
+0x08ae36  [%t]#CHAdeMO stm :16 case ,p->H102.ChargingCurrentRequest[%lu]A > 0A ,next state 17.
+0x08ae8e  #CHAdeMO stm :16 case ,p->H102.ChargingCurrentRequest[%lu]A > 0A ,next state 17.
+0x08aee2  [%t]#CHAdeMO stm :wait H102.ChargingCurrentRequest[%d] >0, p->state[%lu],err_flag == PLC_EVCC_True, will shutdown
+0x08af56  CHAdeMO stm :wait H102.ChargingCurrentRequest[%d] > 0, p->state[%lu], err_flag == PLC_EVCC_True, will shutdown
+0x08afc6  [%t]#CHAdeMO stm :EVSE outvol[%lu],p->ress_vol[%lu] wait until CCS precharge finished!send H108, H109!get_precharge_relay=%d(0-open,1-close),state[%lu].
+0x08b062  [%t]#CHAdeMO stm :17case ,GOOD! Precharge voltage OK,go to state[%lu],outvol[%lu],p->ress_vol [%lu].
+0x08b0ca  CHAdeMO stm :17case ,GOOD! Precharge voltage OK,go to state[%lu], outvol[%lu],p->ress_vol [%lu]. 
+0x08b12e  [%t]#CHAdeMO stm :wait until Precharge finished,EVSE outvol[%lu], ress_vol [%lu],p->state[%lu],err_flag == PLC_EVCC_True, will shutdown
+0x08b1ba  CHAdeMO stm :wait until Precharge finished,EVSE outvol[%lu],ress_vol [%lu], p->state[%lu], err_flag == PLC_EVCC_True, will shutdown
+0x08b23e  [%t]#CHAdeMO stm :close inner relay,send h108, h109,get_precharge_relay = %d(0-open,1-close),state[%d]
+0x08b2aa  [%t]#CHAdeMO stm :18 case ,GOOD,set_precharge_relay close,go to 19, TargetBatteryVoltage:[%lu]VIM_Request_ProgState[%d].
+0x08b326  #CHAdeMO stm :18 case ,GOOD,set_precharge_relay close,go to 19, TargetBatteryVoltage:[%lu]VIM_Request_ProgState[%d].
+0x08b39e  [%t]#CHAdeMO stm :wait inner contactor until closed, p->state[%lu],err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x08b42a  CHAdeMO stm :wait inner contactor until closed, p->state[%lu], err_flag == PLC_EVCC_True, STM_TIMEOUT_STOP_CHARGER_TRIGGERED_STEP1
+0x08b4ae  [%t]#CHAdeMO stm :19 case ,EV_RecvPowerDeliveryFinish:go to 30 case,EV_RecvPowerDeliveryFinish[%d].
+0x08b516  #CHAdeMO stm :19 case ,EV_RecvPowerDeliveryFinish:go to 30 case,EV_RecvPowerDeliveryFinish[%d].
+0x08b57a  [%t]#CHAdeMO stm :30 case ,p->H102.ChargingCurrentRequest[%lu],relay[%d],outv[%lu],EVTargetCurrentValue[%lu]!EVTargetVoltageValue[%lu].outcur[%lu],outvol[%lu]
+0x08b61e  [%t]#CHAdeMO stm :30 case ,stop because Abnormal operation: stop by charger,emergency_flag == 1, event flag h102[%d],next state [%d]
+0x08b6a6  #CHAdeMO stm :30 case ,stop because Abnormal operation: stop by charger, emergency_flag == 1,event flag h102[%d],next state [%d]
+0x08b72a  [%t]#CHAdeMO stm :30 case ,end because charging remaining time is 0!
+0x08b772  #CHAdeMO stm :33 case ,EV contactor = OPEN,  Switch(d2) = OFF.!next state[%lu].
+0x08b7c6  #CHAdeMO stm :34 case ,output voltage [%d]is less than 10 v, set  energizing_state to 0.!next state[%lu].
+0x08b832  [%t]#CHAdeMO stm :close A+,STM_EVCC_UNLOCK_ACTION_STEP1,p->state[%lu],charging_tm[%lu]minutes.
+0x08b896  #CHAdeMO stm :close A+,STM_EVCC_UNLOCK_ACTION_STEP1,p->state[%lu] ,charging_tm[%lu]minutes.
+0x08b8f6  #CHAdeMO stm :CCS to CHAdeMO adapter charging end.charging_tm[%lu]minutes.
+0x08b946  -\|/-------------------------------------------------------------------
+0x08b992  Version : %c%c%c%c%c.%c%c%c%c [20%02x-%02x-%02x %c%c:%c%c:%c%c]
+0x08ba0e  33wwww
+0x08ba2e  [%t]#pki_get_v2groot_cert size(%d) is bigger than cert_size(%d)!
+0x08ba72  [%t]#error! set_cert_install_req pki_get_oem_cert_prikey err [%d]
+0x08bab6  [%t]#error! set_cert_install_req pki_get_cert_by_type failure! 
+0x08bafa  [%t]#error! set_contract_cert_chain ,pki_get_contract_emaid failure! 
+0x08bb42  [%t]#error! set_contract_cert_chain, pki_get_cert_by_type SUBCA1 failure! 
+0x08bb92  [%t]#error! set_contract_cert_chain, pki_get_cert_by_type failure! 
+0x08bbda  [%t]#error! set_cert_update_req pki_get_contract_cert_prikey err[%d]! 
+0x08bc26  [%t]#error! set_cert_update_req set contract cert chain failure! 
+0x08bc6a  [%t]#error! set_authorization_req parameter failure!preq->Id.charactersLen[%lu] 
+0x08bcbe  [%t]#error! set_authorization_req pki_get_contract_cert_prikey err[%d]! 
+0x08bd0a  [%t]#error! set_metering_receipt_req contract_prikey different! 
+0x08bd4e  [%t]#error!verify_signture ! encode_xmldsigExiFragment result [%d] ! 
+0x08bd96  [%t]#error!verify_signture ! pki_crypt_ecdsa_verify result [%d] ! 
+0x08bdde  [%t]#error!concat_kdf ! (4 + z_len + other_info_len) >  sizeof(buf)!
+0x08be26  [%t]#error!decrypt_contract_key ,pki_crypt_ecdh_share_key result[%d]!
+0x08be6e  [%t]#verify_charge_parameter_discovery_res!ResponseCode  error!!
+0x08beb2  [%t]#verify_charge_parameter_discovery_res!schedule_tuple_num [%d]  error!!
+0x08bf02  [%t]#verify_charge_parameter_discovery_res!verify_digest i[%d]  error!!
+0x08bf4e  [%t]#verify_charge_parameter_discovery_res!verify_signture failure!!
+0x08bf96  [%t]#pki_crypt_verify_chain ,1 mbedtls_x509_crt_verify  result %d
+0x08bfda  [%t]#pki_crypt_verify_chain ,2 mbedtls_x509_crt_verify  result %d
+0x08c02b  CUEAAAACEEEIIIAAE
+0x08c03e  OOOUUYOUO
+0x08c07d  EEEIIII
+0x08c13a  c%Q%W%]%
+0x08c158  Z%T%i%f%`%P%l%
+0x08c662  L&&jl66Z~??A
+0x08c675  Oh44\Q
+0x08c68d  sb11S*
+0x08c7c1  uB!!c 
+0x08c826  D""fT**~;
+0x08c859  ;d22Vt::N
+0x08c8de  J%%o\..r8
+0x08ca00  gg}V++
+0x08ca62  jL&&Zl66A~??
+0x08ca8e  Sb11?*
+0x08cade  tX,,.4
+0x08caf8  RRMv;;a
+0x08cb6c  MMUf33
+0x08cb88  PPDx<<
+0x08cbc2  cB!!0 
+0x08cc00  ~~Gz==
+0x08cc26  fD""~T**
+0x08cc5a  Vd22Nt::
+0x08ccdc  xxoJ%%r\..$8
+0x08cd18  ppB|>>
+0x08cd38  aa_j55
+0x08cd8c  UUxP((z
+0x08ce62  &jL&6Zl6?A~?
+0x08d001  ~=Gz=d
+0x08d026  "fD"*~T*
+0x08d05a  2Vd2:Nt:
+0x08d0dd  x%oJ%.r\.
+0x08d139  a5_j5W
+0x08d261  =&&jL66Zl??A~
+0x08d341  g99KrJJ
+0x08d402  ==Gzdd
+0x08d426  ""fD**~T
+0x08d45a  22Vd::Nt
+0x08d46e  $$lH\\
+0x08d49e  77Ynmm
+0x08d4de  %%oJ..r\
+0x08d53a  55_jWW
+0x08dc90  [T:$6.
+0x08e091  [.:$6g
+0x08e180  j_FbT~
+0x08e29d  h4,8$@_
+0x08e2cd  2\tHlWB
+0x08e2d8  PQAeS~
+0x08e4f3  ~4[C)v
+0x08edba  <html>
+0x08edc4  <head>
+0x08edcc  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+0x08ee11  <meta http-equiv="Content-Language" content="en-US">
+0x08ee47  <title>KM-HPGP-CC</title>
+0x08ee62  </head>
+0x08ee6d  <body bgcolor="#CCFFCC">
+0x08ee89  <p align="center" style="border-style: double"><font face="Arial" color="#6699CC" size="5">CAMA</font></p>
+0x08eefb  <p><a target="_self" href="#2">System Config</a></p>
+0x08ef31  <p><a name="2"></a></p>
+0x08ef4a  <pre><font face="Courier" size="4" color="#0000FF">
+0x08ef7f  </font></pre>
+0x08ef8e  <pre><a name="3"></a>
+0x08efa5  <b><font face="Courier" size="4" color="#FF9900">
+0x08efd8  </font></b></pre>
+0x08efeb  <font face="Arial" size="4" color="#0000FF"><a href="#1" target="_top">TOP</a></font> 
+0x08f049  </body>
+0x08f052  </html>
+0x08f237  0123456789------
+0x08f6d9   ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/
+0x08f749  ?456789:;<=
+0x08f781   !"#$%&'()*+,-./0123
+0x08f98e  zyxwvutsrqponmlkjihgfedcba9876543210123456789abcdefghijklmnopqrstuvwxyz
+0x08fb2a  0123456789ABCDEF@0X
+0x08fb3e  0123456789abcdef@0x
+0x08fb6f  MATCH_INIT00
+0x08fb7c  MATCH_INIT10
+0x08fb89  MATCH_INIT0
+0x08fb95  MATCH_INIT01
+0x08fba2  MATCH_RESTORE1
+0x08fbb1  MATCH_PAUSE1
+0x08fbbe  MATCH_INIT1
+0x08fbca  MATCH_INIT0_1
+0x08fbd8  MATCH_INIT02
+0x08fbe5  MATCH_AC_CHARGE2
+0x08fbf6  MATCH_RESTORE2
+0x08fc05  MATCH_PAUSE2
+0x08fc12  MATCH_LOCK2
+0x08fc1e  MATCH_INIT0_2
+0x08fc2c  MATCH_INIT03
+0x08fc39  MATCH_RESTORE3
+0x08fc48  MATCH_INIT04
+0x08fc55  MATCH_RESTORE4
+0x08fc64  MATCH_INIT05
+0x08fc71  MATCH_RESTORE5
+0x08fc80  MATCH_INIT06
+0x08fc8d  MATCH_INIT07
+0x08fc9a  MATCH_INIT08
+0x08fca7  MATCH_INIT09
+0x08fcb4  MATCH_UNMATCHED
+0x08fcc4  MATCH_MATCHED
+0x08fcd2  MATCH_AC_CHARGE
+0x08fce2  MATCH_RESTORE
+0x08fcf0  MATCH_PAUSE
+0x08fcfc  MATCH_MATCHING
+0x08fd0b  MATCH_BREAK
+0x08fd17  MATCH_LOCK
+0x08fd22  MATCH_WAITING_PLUGIN
+0x08fd37  MATCH_INIT
+0x08fd42  iso1SessionSequence_None
+0x08fd5b  iso1SessionSequence_FinishSession
+0x08fd7d  iso1SessionSequence_CurrentDemandReq
+0x08fda2  iso1SessionSequence_PreChargeReq
+0x08fdc3  iso1SessionSequence_CertificateUpdateReq
+0x08fdec  iso1SessionSequence_CableCheckReq
+0x08fe0e  iso1SessionSequence_ServiceDetailReq
+0x08fe33  iso1SessionSequence_SupportedAppProtocolReq
+0x08fe5f  iso1SessionSequence_CertificateInstallationReq
+0x08fe8e  iso1SessionSequence_AuthorizationReq
+0x08feb3  iso1SessionSequence_PaymentServiceSelectionReq
+0x08fee2  iso1SessionSequence_WeldingDetectionReq
+0x08ff0a  iso1SessionSequence_SessionStopReq
+0x08ff2d  iso1SessionSequence_SessionSetupReq
+0x08ff51  iso1SessionSequence_PaymentDetailsReq
+0x08ff77  iso1SessionSequence_ChargingStatusReq
+0x08ff9d  iso1SessionSequence_MeteringReceiptReq
+0x08ffc4  iso1SessionSequence_PowerDeliveryReq
+0x08ffe9  iso1SessionSequence_ServiceDiscoveryReq
+0x090011  iso1SessionSequence_ChargeParameterDiscoveryReq
+0x090041  iso1SessionSequence_Unknow
+0x090060  H12[1.667=locked 0=unlocked,300mS]
+0x090083  JH12[0=locked 1.667=unlocked,300mS]
+0x0900a7  JH24[0=locked 1.667=unlocked,300mS]
+0x0900cb  A12[1.037=locked 0.217=unlocked,600mS]
+0x0900f2  IE12[1.037=locked 0.217=unlocked,600mS]
+0x09011a  A24[0=locked 1.667=unlocked,600mS]
+0x09013d  IE24[0=locked 1.667=unlocked,600mS]
+0x090161  ELS5_V12M[0=locked 1.667=unlocked,350mS]
+0x09019e  http://www.w3.org/TR/canonical-exi/
+0x0901c2  http://www.w3.org/2001/04/xmlenc#sha256
+0x0901ea  http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256
+0x09034a  secp256r1
+0x090354  HMAC-SHA-224
+0x090361  ECDSA with SHA224
+0x090373  ecdsa-with-SHA224
+0x090385  hmacSHA224
+0x090390  id-sha224
+0x09039e  id-md5
+0x0903a5  HMAC-SHA-256
+0x0903b2  ECDSA with SHA256
+0x0903c4  ecdsa-with-SHA256
+0x0903d6  hmacSHA256
+0x0903e1  id-sha256
+0x0903f3  DES-EDE3-CBC
+0x090400  pbeWithSHAAnd2-KeyTripleDES-CBC
+0x090420  pbeWithSHAAnd3-KeyTripleDES-CBC
+0x090440  desCBC
+0x09044a  EC key for ECDH
+0x09045a  id-ecDH
+0x09046c  PBE with SHA1 and 2-Key 3DES
+0x090489  PBE with SHA1 and 3-Key 3DES
+0x0904ac  des-ede3-cbc
+0x0904b9  id-at-postalCode
+0x0904ca  Postal code
+0x0904d6  Extended Key Usage
+0x0904e9  id-ce-extKeyUsage
+0x0904fb  id-ce-keyUsage
+0x090510  id-at-title
+0x09051c  Common Name
+0x090528  Subject Alt Name
+0x090539  id-at-givenName
+0x090549  id-at-organizationName
+0x090560  id-at-commonName
+0x090571  id-at-surName
+0x09057f  id-at-organizationalUnitName
+0x09059c  id-ce-subjectAltName
+0x0905b1  id-at-countryName
+0x0905c3  Given name
+0x0905ce  Surname
+0x0905d6  Netscape Certificate Type
+0x0905f0  id-netscape-certtype
+0x09060b  id-at-state
+0x090617  OCSP Signing
+0x090624  Code Signing
+0x090631  id-kp-OCSPSigning
+0x090643  id-kp-codeSigning
+0x090655  Time Stamping
+0x090663  id-kp-timeStamping
+0x090676  id-kp-serverAuth
+0x090687  id-kp-clientAuth
+0x090698  Pseudonym
+0x0906a2  id-at-pseudonym
+0x0906b2  TLS Web Server Authentication
+0x0906d0  TLS Web Client Authentication
+0x0906ee  Organization
+0x0906fb  E-mail Protection
+0x09070d  id-kp-emailProtection
+0x090723  rsaEncryption
+0x090731  id-at-serialNumber
+0x090744  Serial number
+0x090752  id-at-dnQualifier
+0x090764  id-at-generationQualifier
+0x09077e  Distinguished Name qualifier
+0x09079b  Generation qualifier
+0x0907b0  Unique Identifier
+0x0907c2  id-at-uniqueIdentifier
+0x0907d9  Initials
+0x0907e2  id-at-initials
+0x0907f1  id-at-postalAddress
+0x090805  emailAddress
+0x090812  Postal address
+0x090821  E-mail address
+0x090830  Basic Constraints
+0x090842  id-ce-basicConstraints
+0x090859  Org Unit
+0x090862  id-domainComponent
+0x090875  Domain component
+0x090886  id-ecPublicKey
+0x090895  Generic EC key
+0x0908a4  Country
+0x0908ac  Locality
+0x0908b5  id-at-locality
+0x0908c4  The certificate has been revoked (is on a CRL)
+0x0908f3  Other reason (can be used by verify callback)
+0x090921  The CRL is signed with an unacceptable PK alg (eg RSA vs ECDSA).
+0x090962  The certificate is signed with an unacceptable PK alg (eg RSA vs ECDSA).
+0x0909ab  The CRL is signed with an unacceptable key (eg bad curve, RSA too short).
+0x0909f5  The certificate is signed with an unacceptable key (eg bad curve, RSA too short).
+0x090a47  The CRL is signed with an unacceptable hash.
+0x090a74  The certificate is signed with an unacceptable hash.
+0x090aa9  The CRL is not correctly signed by the trusted CA
+0x090adb  The certificate is not correctly signed by the trusted CA
+0x090b15  The certificate Common Name (CN) does not match with the expected CN
+0x090b5a  Certificate verification was skipped
+0x090b7f  The certificate validity has expired
+0x090ba4  The CRL is expired
+0x090bb7  The CRL is from the future
+0x090bd2  The certificate validity starts in the future
+0x090c00  Certificate was missing
+0x090c18  Usage does not match the extendedKeyUsage extension
+0x090c4c  Usage does not match the keyUsage extension
+0x090c78  Usage does not match the nsCertType extension
+0x090cb5  FIN_WAIT_1
+0x090cc0  FIN_WAIT_2
+0x090ccb  ESTABLISHED
+0x090cd7  CLOSED
+0x090cde  SYN_RCVD
+0x090ce7  CLOSING
+0x090cef  LAST_ACK
+0x090cf8  LISTEN
+0x090cff  TIME_WAIT
+0x090d09  CLOSE_WAIT
+0x090d14  SYN_SENT
+0x090d1d  TLS-ECDHE-ECDSA-WITH-AES-128-CBC-SHA256
+0x090d45  TLS-ECDH-ECDSA-WITH-AES-128-CBC-SHA256
+0x090d6c  AES-128-ECB
+0x090d78  AES-192-ECB
+0x090d84  AES-256-ECB
+0x090d90  AES-128-CBC
+0x090d9c  AES-192-CBC
+0x090da8  AES-256-CBC
+0x090df6  F$K$N$T$2005$VR$CAMA000000002.01
+0x090e18  %093939C009 
+0x090e25  F$K$N$T$2005$TY$KM-CCS2CHAdeMO-1
+0x09107e  CIA`CIA`
+0x091091  `pG=J@
