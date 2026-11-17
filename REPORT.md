@@ -370,6 +370,55 @@ CHAdeMO uses **fixed 11-bit IDs** (no addressing). Confirmed used via debug stri
   free-running TIM2 timebase). The numeric tick-constants behind the second-valued timeouts remain to be
   extracted from the state machines.
 
+### 5.9 CCS2 handshake — how the adapter introduces itself (EVCC)  [C unless noted]
+
+Traced end-to-end in code (`hs1.py … hs14.py`, §7). Toward the CCS2 charger the adapter is purely an
+**EVCC** (the "EV" side); its identity is its **6-byte PLC MAC**, offered through a **dual
+DIN 70121 + ISO 15118-2** protocol proposal. The introduction runs SLAC → SDP → appHandshake →
+SessionSetup:
+
+**1. SLAC (ISO 15118-3) — link-level identity.** After CP B→C and the BCB toggle:
+`CM_SLAC_PARM.REQ → CM_START_ATTEN_CHAR.IND → CM_ATTEN_CHAR.RSP → CM_SLAC_MATCH.REQ → SET_KEY.REQ`
+(NMK/NID for the matched AVLN). The `CM_SLAC_PARM_REQ` builder (`0x001D36`) copies the **6-byte EV
+MAC** from a global SLAC struct (`[r5+6]`) into the EVHost-MAC field (`[r5+0x18]`) and appends a
+4-byte **RunID** (`[r4+0x24]`); `CM_SLAC_MATCH_REQ` (`0x07EB8A`) logs the same MAC.
+
+**2. SDP — SECC discovery (UDP).** Client @ `0x000A50`: destination port **15118**
+(`movw sb,#0x3b0e`), V2GTP payload type **0x9000**. The request payload is 2 bytes
+**{security, transport}**: security = **`0x10` (TLS) or `0x00` (no TLS)**, selected by a mode flag
+@ `0x000900` (`tst r0,#0xff` → `0x10`/`0x00`) and stored `[r4+0x22]`; transport = TCP.
+**500 ms** per attempt (`0x1f4`), **50 retries** (`0x32`). The SECC's offered security is checked
+(`0x10`/`0x30`); `"NO TLS"` is logged and TLS (mbedTLS) is used for ISO 15118 PnC — cf. the error
+`"EVSE only supports PnC, but no TLS!"`.
+
+**3. appHandshake — `supportedAppProtocolReq` (the formal introduction).** Encoder @ **`0x013F50`**,
+V2GTP payload type **`0x8001`** (EXI V2G). It proposes **two** protocols (`[base+0x244]=2`), both
+**v2.0** (`r6=2` major, `r7=0` minor):
+
+| # | ProtocolNamespace | Major/Minor | SchemaID | Priority |
+|---|---|---|---|---|
+| 0 | `urn:din:70121:2012:MsgDef` | 2 / 0 | **1** | **1** |
+| 1 | `urn:iso:15118:2:2013:MsgDef` | 2 / 0 | **2** | **2** |
+
+The SECC selects one — debug confirms the mapping (`"#SchemaID == 1,SECC has selected DIN70121!"` /
+`"#SchemaID == 2,SECC has selected ISO15118!"`) and the matching DIN/ISO state machine runs.
+**DIN is offered as preferred (priority 1), ISO 15118-2 as fallback (priority 2).**
+
+**4. `SessionSetupReq` — EVCCID.** ISO builder @ `0x0145AE`: thunk `0x080890AE` returns the global
+EVCC struct; **EVCCID length = 6** (`[r4+0x1408]`); **6 bytes** copied into `[r4+0x1400..0x1405]`
+and EXI-encoded. Those 6 bytes are the **same MAC** used in SLAC and printed by `MAC:%02x-…`
+(`0x00238C` calls the same thunk). The DIN path shares the SessionSetup encoder (`bl 0x8033EA6`).
+
+**MAC source [H]:** the value is **runtime, not a fixed constant** — held in the global EVCC/SLAC
+struct and populated from the **QCA7005 modem** (its PIB MAC). No hardcoded OUI and no
+STM32-UID-derived MAC found (`0x1FFF7A10` etc. unreferenced). The exact SPI MAC-read MME is not yet
+traced, nor is the SDP security-flag trigger (DIN-vs-ISO / cert availability) — both §8.8.
+
+> **Method note:** strings/peripherals in this image are referenced **PC-relative (ADR T1/T3, LDR
+> literal T1/T2)** into inline rodata tables — *not* movw/movt immediates. The `code_xrefs` helper in
+> `analyze27/34.py` drops these (LDR-literal mask doesn't clear the U bit; no LDR T1/ADR T1), so its
+> negative xref results are unreliable. Corrected scanner in `hs5.py`+ (§7).
+
 ---
 
 ## 6. What this means for an open-source firmware
@@ -418,6 +467,10 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 - `analyze28.py` — reusable **capstone Thumb-2 disassembler** for any decoded region
   (`python3 analyze28.py firmware.bin <start_hex> <len_hex> [base_hex]`; needs
   `nix-shell -p python3 python3Packages.capstone`).
+- `hs1.py … hs14.py` — **CCS2-handshake trail (§5.9)**: corrected Thumb xref scanner (movw/movt,
+  LDR-literal T1/T2 **with the U-bit**, ADR T1/T2 — fixes the `analyze27/34` helper, which drops all
+  forward pool loads), then appHandshake / SessionSetup / SDP / SLAC disassembly. Run with
+  `nix-shell -p python3 python3Packages.capstone --run 'python3 hsN.py firmware.bin'`.
 - `REPORT.md` — this document.
 
 ## 8. Open questions / next steps
@@ -430,3 +483,4 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[H]**), CAN init/filter config, and protocol timeouts (1/4/5/6/8 s). **Remaining:** exact TIM2 prescaler / RTOS tick period + the numeric tick-constants behind the second-valued timeouts; CAN1/CAN2→CHAdeMO/GB/T assignment (needs pin map, item 4); confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
 6. **QCA7005 firmware** — **RESOLVED: not in this update.** Modem boots from external SPI flash; the MCU is only a SLAC/PLC host (§5.3). For open firmware, use the redistributable Qualcomm blob (open-plc-utils / `qca_spi` ecosystem).
 7. **RTOS identity** — locate the scheduler/task code to name the RTOS.
+8. **EVCC identity details (§5.9)** — EVCCID = the adapter's **6-byte PLC MAC** (confirmed: SLAC EVHost-MAC, `MAC:` prints, and `SessionSetupReq` all use the same global-struct bytes via thunk `0x080890AE`). **Remaining:** (a) trace the exact **QCA7005 MAC-read MME** over SPI1 that populates the global EVCC/SLAC struct at init (the MAC value is runtime/per-unit, not a fixed constant — no OUI or STM32-UID derivation found); (b) the **SDP security-flag trigger** — when `0x10` (TLS) vs `0x00` (no TLS) is requested (`0x000900`), i.e. its dependence on DIN-vs-ISO mode / contract-cert availability.
