@@ -439,9 +439,15 @@ traced, nor is the SDP security-flag trigger (DIN-vs-ISO / cert availability) �
 - `<UPG>_<MAC>.LST` — update-result marker, observed content `OK` (`%s_%s.LST`, f+0x02ff4f; §5.6).
 - `<MAC>` = `9CF6DD923FBF` = the unit's PLC MAC = EVCCID (§5.9).
 
-**LOGS.BIN format [C, empirical — `analyze37.py`]:** records `u32 ts_ms | u16 len | u8 type | u8 ck |
-payload[len]`; type 4 = NUL-terminated text line, type 0/1 = raw Ethernet frame (HomePlug `0x88E1`,
-variable length, 49–491 B observed). Ring buffer in **4 KB flash pages** separated by erased `0xFF`
+**LOGS.BIN format [C, empirical — `analyze37.py` / `analyze40.py`]:** records `u32 ts | u16 len | u8 type |
+u8 ck | payload[len]`; type 4 = NUL-terminated text line, type 0/1 = raw Ethernet frame (HomePlug
+`0x88E1`, variable length, 49–491 B observed); **type 2/3 = DIN70121 V2G EXI** (V2GTP `01 fe 80 01` +
+u32 len + EXI body; t3 = EVCC→EVSE req, t2 = EVSE→EVCC res), **type 5 = EXI shutdown / SessionStop**
+(4-byte prefix + V2GTP), **type 6 = 512 B CHAdeMO CAN blocks** (16-byte sub-records
+`u32 ts_ms | u32 idfield | 8B data`, `idfield = 0x1fff{chan}{msgnum}`, CAN ID = `0x100+msgnum`,
+`chan` ∈ {`f9`,`fa`,`ff`} = direction/bus). The record-level `ts` is the **same seconds counter** as the
+`at N` in text lines (≈ `INFO.TXT RTC`), *not* milliseconds despite the parser label; the CAN
+sub-record `ts` is session-relative ms. Ring buffer in **4 KB flash pages** separated by erased `0xFF`
 gaps; spans multiple boots **and firmware versions**. `ck` is not payload sum/xor/any common CRC8
 (unresolved; immaterial).
 
@@ -484,6 +490,25 @@ H102 exchange (`EV MaximumBatteryVoltage[435]`, `EV TargetBatteryVoltage[410]`, 
 `AvailableOutputVoltage[464]` / `50 A`), cable-check / precharge / relay states, ending in
 vehicle-side `EVEmergencyShutDown==1` + `H102.BatteryVoltageDeviationError` /
 `ChargingSystemError = GBT_STATE_OCCURRENCE`.
+
+**Post-charge dump — the just-finished session IS captured, and it aborts (`analyze40.py`):** a second
+dump pulled after a real charge (device powered off post-charge, stick inserted → `RESET[0] at 83500` +
+`UPGRADE:[594112]C009` updater check, export at `RTC:83711`) **contains that session**. A text-line diff
+misses it — every charge attempt logs identical wording — so sessions must be keyed by the **EXI
+SessionID** embedded after the `80 9a 01/02` header: the new session is `0x1091f536` (ts 83400) vs the
+previous dump's last `0x10910256` (ts 83246), corroborated by distinct `GET_AD_CPD` (1.751 vs 1.743) and
+cable-check voltage (51 V vs 253 V). This empirically confirms the export mechanism above (current run
+up to the export instant). **The charge again ends at `charging_tm[0]minutes`** — the raw CAN/EXI show
+why: car H100 max battery 435 V / H102 battery 410 V (`9a 01`); adapter-as-EVSE H108 advertises 464 V /
+50 A, threshold 435 V (`d0 01`/`32`/`b3 01`); after switch-K + cable check the **output voltage is only
+51 V** (prior session 253 V) and the car requests just **2 A** (H102 byte0=`02`), then H102 error byte5
+flips `0x80→0x88`: `BatteryVoltageDeviationError` flood → `ChargingSystemError` →
+`EVEmergencyShutDown==1` → 16× t5 PowerDelivery-stop / SessionStop exchanges → close A+/unlock.
+**Root cause: the EVSE output never ramps to the car's battery voltage (≈51 V vs 410 V), so the CHAdeMO
+EV flags a battery-voltage deviation and emergency-stops within seconds — every logged session aborts
+at 0 minutes.** No new protocol behavior vs §5.2/§5.8; the value is the raw-frame confirmation plus the
+lower-voltage data point. (H102 layout confirmed from raw frames: byte0 = charging-current request,
+byte1–2 = battery voltage, byte5 = error flags.)
 
 **Device provenance [C strings · H maker]:** vendor **Orientrise disavows this unit as a clone**
 (user contact, 2026-11-18). The firmware's own nameplate carries a different mark —
@@ -572,6 +597,10 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   CATL/CAMA symbols, INFO.TXT/UPGRADE templates), `analyze39` = **log↔firmware match proof**
   (verbatim literals + printf-template regex matching + shared-typo fingerprints; `%s%s` catch-alls
   excluded). Run: `nix-shell -p python3 --run 'python3 analyze39.py firmware.bin EVCC_…_LOGS.BIN'`.
+- `analyze40.py` — **raw car↔charger decoder (§5.10)**: keys LOGS.BIN EXI records by **SessionID**
+  (separates charge attempts that share identical text wording), prints the DIN70121 EXI sequence
+  (t2/t3 req/res, t5 shutdown) and decodes the t6 **CHAdeMO CAN** sub-records (H100–H112, both
+  directions). Run: `nix-shell -p python3 --run 'python3 analyze40.py EVCC_…_LOGS.BIN'`.
 - `REPORT.md` — this document.
 
 ## 8. Open questions / next steps
