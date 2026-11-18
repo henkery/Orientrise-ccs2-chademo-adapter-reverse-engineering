@@ -415,9 +415,12 @@ STM32-UID-derived MAC found (`0x1FFF7A10` etc. unreferenced). The exact SPI MAC-
 traced, nor is the SDP security-flag trigger (DIN-vs-ISO / cert availability) — both §8.8.
 
 > **Method note:** strings/peripherals in this image are referenced **PC-relative (ADR T1/T3, LDR
-> literal T1/T2)** into inline rodata tables — *not* movw/movt immediates. The `code_xrefs` helper in
-> `analyze27/34.py` drops these (LDR-literal mask doesn't clear the U bit; no LDR T1/ADR T1), so its
-> negative xref results are unreliable. Corrected scanner in `hs5.py`+ (§7).
+> literal T1/T2)** into inline rodata tables — *not* movw/movt immediates. LDR-literal T2's U-bit is
+> **bit 7** (mask `0xFF7F`). `analyze27/34.py` decoded T2 correctly but omitted LDR T1/ADR; `hs3–hs13`
+> initially used an inverted mask (`0xFB7F`, U=bit10) that mirrored/dropped forward pool loads —
+> **fixed** (`1d26100`; `hs1/hs2` were always correct). A buggy-vs-fixed re-run of all nine scripts
+> gave byte-identical output, so the §5.9 conclusions are unaffected (they rest on disassembly + movw
+> + ADR). Reference scanner: `corrected_xref.py` (§7).
 
 ---
 
@@ -467,10 +470,13 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 - `analyze28.py` — reusable **capstone Thumb-2 disassembler** for any decoded region
   (`python3 analyze28.py firmware.bin <start_hex> <len_hex> [base_hex]`; needs
   `nix-shell -p python3 python3Packages.capstone`).
-- `hs1.py … hs14.py` — **CCS2-handshake trail (§5.9)**: corrected Thumb xref scanner (movw/movt,
-  LDR-literal T1/T2 **with the U-bit**, ADR T1/T2 — fixes the `analyze27/34` helper, which drops all
-  forward pool loads), then appHandshake / SessionSetup / SDP / SLAC disassembly. Run with
+- `hs1.py … hs14.py` — **CCS2-handshake trail (§5.9)**: Thumb xref scanner (movw/movt, LDR-literal
+  T1/T2, ADR T1/T3) + appHandshake / SessionSetup / SDP / SLAC disassembly. `hs3–hs13` originally had
+  an inverted LDR-literal T2 U-bit (bit10 instead of bit7) that dropped forward pool loads — **fixed**
+  (`1d26100`); a buggy-vs-fixed re-run confirmed the §5.9 results are unchanged. Run with
   `nix-shell -p python3 python3Packages.capstone --run 'python3 hsN.py firmware.bin'`.
+- `corrected_xref.py` / `verify_enc.py` — corrected reference xref scanner (movw/movt + mov-imm +
+  LDR T1/T2 correct-U + ADR T1/T3) and the capstone proof that LDR-literal T2 U=bit7 (§5.9 method note).
 - `REPORT.md` — this document.
 
 ## 8. Open questions / next steps
