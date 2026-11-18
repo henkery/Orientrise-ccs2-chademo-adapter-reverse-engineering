@@ -426,6 +426,64 @@ traced, nor is the SDP security-flag trigger (DIN-vs-ISO / cert availability) �
 > gave byte-identical output, so the §5.9 conclusions are unaffected (they rest on disassembly + movw
 > + ADR). Reference scanner: `corrected_xref.py` (§7).
 
+### 5.10 USB log stick — firmware-match proof & device provenance  [C unless noted]
+
+**Files the device writes to the stick** (observed on the user's unit after boot + charging sessions,
+2026-11-18; FAT stick, label `0013-AF1F` — label irrelevant, §5.6):
+
+- `EVCC_<MAC>_INFO.TXT` — nameplate: `HW :1.0`, `SW :02.01.C009[250303]`, `SER:202406180463`,
+  `RTC:83501`. Templates f+0x02feee…0x02ff3e (`EVCC_%s_INFO.TXT`, `HW :%u.%u`,
+  `SW :%c%c%c%c%c.%c%c%c%c[%02x%02x%02x]`, `SER:`, `RTC:%u`). Serial reads as date-code
+  **2024-06-18, unit #0463**; `[250303]` = build date, matches the header (§2.2).
+- `EVCC_<MAC>_LOGS.BIN` — 128 KB log export (`EVCC_%s_LOGS.BIN`, f+0x03003e).
+- `<UPG>_<MAC>.LST` — update-result marker, observed content `OK` (`%s_%s.LST`, f+0x02ff4f; §5.6).
+- `<MAC>` = `9CF6DD923FBF` = the unit's PLC MAC = EVCCID (§5.9).
+
+**LOGS.BIN format [C, empirical — `analyze37.py`]:** records `u32 ts_ms | u16 len | u8 type | u8 ck |
+payload[len]`; type 4 = NUL-terminated text line, type 0/1 = raw Ethernet frame (HomePlug `0x88E1`,
+variable length, 49–491 B observed). Ring buffer in **4 KB flash pages** separated by erased `0xFF`
+gaps; spans multiple boots **and firmware versions**. `ck` is not payload sum/xor/any common CRC8
+(unresolved; immaterial).
+
+**Proof the device runs THIS image (`analyze39.py`):** of **147 distinct text lines, 105 specifically
+match C009** — **12 verbatim literals** (`system init` f+0x02f686, `Passive reset!!!` f+0x030e4e,
+`EVController4.EVEmergencyShutDown==1,should goto bms_shutdown` f+0x018966, `#SLAC: Matching failed`
+f+0x001c62, …) + **93 rendered format templates** (`UPGRADE:[%u]%c…20%02X-…` f+0x030d72,
+`MAC:%02x-…` f+0x002646, `EVCC%u.%u[…]` f+0x002604, `LINKED_EVSE[…] %udB,T:%u` f+0x0025c2,
+`CP DUTY is '%c'[…],PP=%u,KEY_LOCK=%u`, `RESET[%u] at %u`, `DEEP SLEEP[%u] at %u`, CHAdeMO stm
+messages). **Shared unique misspellings** are the forensic clincher: `authoried` (fw ×12 / log ×5),
+`swithc` (×4/×5), `GET_AD_CPD` (×2/×5), `SET_CSS2`. Generic `%s%s` logger-wrapper matches are
+excluded from the count (they match anything).
+
+**The log captured the C002→C009 upgrade itself:** `EVCC1.0[02.01.C002]` sessions →
+`UPGRADE:[594112]02.01.C009 2025-03-03 09:39:39` → `EVCC1.0[02.01.C009]`. The **42 non-matching lines
+are pre-upgrade C002 wording** — lowercase `dlink signal=0` / `Wait for dlink signal->0` /
+`MATCHED D_LINK CLOSED BY APP`, `Power up`, `DEEP SLEEP at N` (no bracket), `LINKED_EVSE_…`
+(underscores), `CP DUTY is not 5%[…]`, old `17case`/`18 case` CHAdeMO text, `V2G TCP CONNECTED` —
+plus the **modem runtime version** `EVCC[01.00.T008]` (QCA7005 fw reported at boot, not an app
+string). Each C002-specific core was verified **absent from C009 while its C009 replacement is
+present** (`D_LINK` ×19, `system init`, `DEEP SLEEP[%u] at %u`, bracketed `LINKED_EVSE`,
+`p->ress_vol`-extended 17/18-case). **Conclusion: same software, version delta — not a different
+device.**
+
+**Runtime corroboration of §5.2/§5.8/§5.9:** full CCS2→CHAdeMO sessions logged — DIN70121 selected
+(`SchemaID == 1`), SLAC matched EVSE `DC:44:27:1F:30:79` / `DC:44:27:1F:00:10` (28–31 dB), CHAdeMO
+H102 exchange (`EV MaximumBatteryVoltage[435]`, `EV TargetBatteryVoltage[410]`, EVSE
+`AvailableOutputVoltage[464]` / `50 A`), cable-check / precharge / relay states, ending in
+vehicle-side `EVEmergencyShutDown==1` + `H102.BatteryVoltageDeviationError` /
+`ChargingSystemError = GBT_STATE_OCCURRENCE`.
+
+**Device provenance [C strings · H maker]:** vendor **Orientrise disavows this unit as a clone**
+(user contact, 2026-11-18). The firmware's own nameplate carries a different mark —
+`$$KM-CCS2CHAdeMO-1` / `$$CCS2GBT` (§2.2) — plus an ID block at f+0x090df0:
+`F$K$N$T$2005$TY$KM-CCS2CHAdeMO-1` and `F$K$N$T$2005$VR$CAMA000000002.01…C009`, followed by a
+function-pointer table. BMS/AC symbols are **CATL/CAMA-specific** (`EVCC_CATL_CHARGE_FORBID`,
+`EVCC_CATL_BMS_Msg_MaxErrTime`, `EV_CAMA_ALLOW_AC_START/STOP/PERMIT`). Modem confirmed **QCA7005**,
+fw string `MAC-QCA7005-1.1.0.727-02-20130826-FINAL` (f+0x002596). **The MAC OUI is not a maker ID:**
+`9C:F6:DD` (unit) and `DC:44:27` (EVSE) both register to **IEEE Registration Authority** in the
+authoritative IEEE `oui.txt` — reference/default PIB MACs (a third-party "Annapurna Labs" hit is
+stale/wrong). Maker identity beyond the **"KM"** mark unresolved → §8.9.
+
 ---
 
 ## 6. What this means for an open-source firmware
@@ -496,6 +554,12 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   and `analyze_boot.py` (vector-table sanity → reset disasm → XOR-key / `$$`-magic / `XIE22.00` /
   `FLASH_KEYR` / app-launch hunt). Never unlocks/erases/writes. Tools via `nix-shell` (openocd 0.12.0,
   stm32flash 0.7, dfu-util 0.11). Procedure + safety: `acq/README.md`.
+- `analyze37.py … analyze39.py` — **USB log-stick trail (§5.10)**: `analyze37` = `EVCC_<MAC>_LOGS.BIN`
+  record parser (multi-segment 4 KB ring buffer; text lines + HomePlug frame/MAC summary),
+  `analyze38` = firmware identification-string hunt (`$$KM-…` nameplate, QCA7005 fw string,
+  CATL/CAMA symbols, INFO.TXT/UPGRADE templates), `analyze39` = **log↔firmware match proof**
+  (verbatim literals + printf-template regex matching + shared-typo fingerprints; `%s%s` catch-alls
+  excluded). Run: `nix-shell -p python3 --run 'python3 analyze39.py firmware.bin EVCC_…_LOGS.BIN'`.
 - `REPORT.md` — this document.
 
 ## 8. Open questions / next steps
@@ -509,3 +573,4 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 6. **QCA7005 firmware** — **RESOLVED: not in this update.** Modem boots from external SPI flash; the MCU is only a SLAC/PLC host (§5.3). For open firmware, use the redistributable Qualcomm blob (open-plc-utils / `qca_spi` ecosystem).
 7. **RTOS identity** — locate the scheduler/task code to name the RTOS.
 8. **EVCC identity details (§5.9)** — EVCCID = the adapter's **6-byte PLC MAC** (confirmed: SLAC EVHost-MAC, `MAC:` prints, and `SessionSetupReq` all use the same global-struct bytes via thunk `0x080890AE`). **Remaining:** (a) trace the exact **QCA7005 MAC-read MME** over SPI1 that populates the global EVCC/SLAC struct at init (the MAC value is runtime/per-unit, not a fixed constant — no OUI or STM32-UID derivation found); (b) the **SDP security-flag trigger** — when `0x10` (TLS) vs `0x00` (no TLS) is requested (`0x000900`), i.e. its dependence on DIN-vs-ISO mode / contract-cert availability.
+9. **Device provenance (§5.10)** — vendor **disavows the unit as a clone**; firmware nameplate = **`KM-CCS2CHAdeMO-1`** / `CCS2GBT` with CATL/CAMA BMS code. Identify the **"KM" OEM**: web search was unavailable (2026-11-18, retry); decode the ID-block fields `F$K$N$T$2005$TY/VR$…` (f+0x090df0); check enclosure/label markings and the `SER:202406180463` date-code convention against other units. The USB log **proves the unit runs C009 = `firmware.bin`** (§5.10), so all RE findings apply to this hardware regardless of brand. MAC OUIs are IEEE-RA reference values — not a maker fingerprint.
