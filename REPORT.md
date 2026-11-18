@@ -115,9 +115,11 @@ cannot be fully excluded without `DBGMCU_IDCODE` / flash-size register reads.
 - **Confirmed via the absolute pointer table in `.rodata`** (§4): the decoded payload maps to
   `address = 0x08020000 + file_offset`. Resolving 231 table pointers against candidate bases gives
   **166/231 landing on real strings at base `0x08020000`** (vs 0–27 for any other base).
-- So: file `0x000`→`0x08020000`, **Reset_Handler (file `0x400`)→`0x08020400`**, image end
+- So: file `0x000`→`0x08020000`, **app code start (file `0x400`)→`0x08020400`**, image end
   (file `0x914C4`)→`0x080B14C4`. The `0x000–0x400` header+prefix occupy `0x08020000–0x08020400`;
-  the vector table is placed there by the bootloader decrypting the prefix (§4.1).
+  the vector table is placed there by the bootloader decrypting the prefix (§4.1). **Note:** file
+  `0x400` is a 10-byte entry *header*, not code — the actual Reset_Handler is at file `0x40A`
+  (`0x0802040A`); the reset vector in the decrypted prefix targets it (§5.12).
 - `0x08020000 − 0x08000000 = 0x20000` ⇒ **128 KB bootloader** at `0x08000000–0x08020000`.
 
 ---
@@ -150,15 +152,18 @@ bootloader before it jumps to the app. **[H]** (consistent with the confirmed li
   | offset | bytes | interpretation |
   |---|---|---|
   | `0x3EA` | `58 49 45 32 32 2E 30 30` | `"XIE22.00"` — format/version tag |
-  | `0x3F2` | `C0 10` | `0x10C0` (u16) |
-  | `0x3F4` | `09 00 00 00` | `9` (u32) |
-  | `0x3F8` | `00…00` | reserved |
-  | `0x3FE` | `BE 2D` | `0x2DBE` (u16, likely a checksum; no CRC16 variant over the image matches) |
+  | `0x3F2` | `C0 10 09 00` | **u32 app-code length** = `0x000910C0` = 594112 = **filesize − 0x404** |
+  | `0x3F6` | `00…00` | reserved (zero) |
+  | `0x3FE` | `BE 2D` | `0x2DBE` (u16 check value; not a standard CRC16 — §5.12) |
 
-  **C013's footer differs in the two variable fields** — `0x3F2` = `08 22` (`0x2208`), `0x3FE` =
-  `A8 0B` (`0x0BA8`) — while `"XIE22.00"` (`0x3EA`) and the `9` (`0x3F4`) are **constant across
-  revisions**. So the footer carries per-image metadata (length/checksum/version), not a fixed key;
-  the prefix **stream-cipher key** is the constant bootloader secret (§5.6).
+  **The `0x3F2` field is a u32 LENGTH, not "u16 `0x10C0` + u32 `9`"** (the `09` at `0x3F4` is just its
+  high byte): it equals **filesize − 0x404** in *both* revisions — C009 `0x000910C0` = 594112, C013
+  `0x00092208` = 598536 — i.e. the code payload `[0x400, end−4)`. This is exactly the number printed in
+  the boot log `UPGRADE:[594112]…` (§5.10). **C013's footer differs only in this length and the `0x3FE`
+  u16** (`A8 0B` = `0x0BA8`); `"XIE22.00"` is constant. So the footer carries per-image length + a check
+  value, not a fixed key; the prefix **stream-cipher key** is the constant bootloader secret (§5.6).
+  The `0x3FE` u16, the first-4-bytes at `0x400`, and the last-4-bytes trailer are **not** standard
+  CRC16/CRC32/Adler32/XOR/sum of the code or prefix (decoded or raw) — see §5.12 (`analyze44/47/49/50`).
 
 - **Contents [H]:** almost certainly the Cortex-M **vector table + secure init** (there is no vector
   table anywhere in the clear). The **decryption key/routine is in the bootloader**, not this image,
@@ -595,6 +600,45 @@ matches `EVCCx.y` accordingly.
 undumped bootloader are the real compatibility gates (§5.6) — dump `boot.bin` via `acq/` (§5.7) before
 flashing.
 
+### 5.12 Bootloader → app entry contract (service-firmware basis)  [C structure · H launch details]
+
+Traced from the clear code at file `0x400` (`analyze45/46`, capstone) on **both** C009 and C013:
+
+- **File `0x400` is NOT code — it is a 10-byte entry header.** The first halfword `0xF866` is an
+  invalid Thumb-2 start. Layout:
+  - `0x400–0x403` (4 B): **per-build value** — C009 `66 F8 18 4D` (`0x4D18F866`), C013 `5C 32 70 4D`
+    (`0x4D70325C`). Not a standard CRC32/CRC16/Adler32/XOR/sum of the code or prefix (decoded or raw;
+    `analyze47/49/50`). **[H]** a per-image **IV/nonce** for the prefix stream cipher (the prefix
+    ciphertext differs in **913/914 bytes** between revisions ⇒ per-image keystream, not a fixed one)
+    or a custom check value.
+  - `0x404–0x409` (6 B): **constant** `02 20 09 00 02 08` across revisions (u16s `0x2002 / 0x0009 /
+    0x0802` — plausibly SP-high / count / base-high metadata). **[H]**
+- **Reset_Handler is at file `0x40A` (`0x0802040A`)** — the reset vector in the decrypted prefix
+  targets it (it cannot target `0x400`, which is not executable). Sequence:
+  `cpsid i; cpsid f; ldr r0,[pc,#0x3c]; ldr r0,[r0]; msr MSP,r0; msr PSP,r0; bl SystemInit;`
+  zero-fill `.bss` (SRAM `0xC000` words @`0x20000000`, CCM `0x4000` words @`0x10000000` — §3.3);
+  `ldr r0,[pc,#0xc]; bx r0`. ARM **scatter-load / relocation** helpers follow at `0x45E`.
+- **Two literal-pool words are bootloader-filled placeholders** (identical in C009 & C013, and not
+  valid addresses as stored): `0x44C` = `0x0000BBC3` (MSP source, double-dereferenced) and `0x450` =
+  `0x00550802` (the `bx` entry target). **[H, strong]** the bootloader patches these at install (e.g.
+  `0x44C`→`0x08020000` so the app re-reads `vector[0]`=SP; `0x450`→the real entry), or the app reads SP
+  from the bootloader via the `0x00000000`→flash alias. Either way **the bootloader modifies the app
+  image at fixed offsets `0x44C`/`0x450`** — a service firmware must keep a compatible startup stub there.
+- **Integrity fields unresolved (bootloader-side):** first-4-bytes `0x400`, last-4-bytes trailer
+  (C009 `00 00 9F 00`, C013 `00 00 D6 10`), and footer u16 `0x3FE` match **no** standard
+  CRC16/CRC32/Adler32/XOR/sum over code or prefix, decoded or raw, incl. sector-padded regions
+  (`analyze44/47/49/50`). Whether they check the **code** (would block a rewrite) or only the
+  **prefix** (reusable) is the key open question → §8.2b.
+
+**Service-firmware consequence (non-invasive bootloader dump):** the encrypted prefix + footer can be
+**reused verbatim** from a stock UPG — the bootloader then decrypts the *stock* vector table (reset →
+file `0x40A`) and applies its usual checks/patching. Keeping file `0x000–0x45E` (header + prefix +
+footer + entry header + startup stub) byte-for-byte stock and replacing only the application code the
+stub jumps to is the lowest-risk way to get a **vendor-bootable** service image that reads
+`0x08000000–0x08020000` out to USB and can re-flash a stock `MAIN_…UPG` to back out. The remaining
+unknowns (code-checksum coverage + the exact patched entry address) are precisely what a **read-only
+bootloader dump** (`acq/`, §5.7) resolves; until then a from-scratch service UPG carries brick risk.
+
 ---
 
 ## 6. What this means for an open-source firmware
@@ -626,14 +670,18 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 > EXI/SLAC/CHAdeMO state machines and bring-up, but **not a drop-in** for this F427/F429 `.UPG` platform
 > — our RE remains the basis. It also confirms the bootloader-centric update model (§5.6) on that OEM HW.
 
-> **Minimal service firmware — feasibility (2026-11-18):** a bare-metal STM32F427/F429 firmware that
-> **boots + includes the flasher + dumps the bootloader** is buildable from §5.6 (the flash-writer
-> algorithm is fully decoded; USBH MSC + FatFs are open in STM32CubeF4). The gate is *launch*, not code:
-> the vendor bootloader's app-launch convention + prefix key are unknown (§4.1 / §8.2b), so a
-> vendor-bootable `.UPG` cannot be crafted yet. **Sequence: dump the bootloader first** (read-only `acq/`
-> kit, §5.7 / §7), **then build** — SWD-flash the service firmware at `0x08000000` (reversible, `boot.bin`
-> backed up) or package a compatible `.UPG` once the prefix key is recovered. The dump itself needs no
-> custom firmware (`dump_image` / `stm32flash -r` / `dfu-util -U` at RDP0).
+> **Minimal service firmware — feasibility (2026-11-18, updated with §5.12):** a bare-metal
+> STM32F427/F429 firmware that **boots + includes the flasher + dumps the bootloader** is buildable from
+> §5.6 (the flash-writer algorithm is fully decoded; USBH MSC + FatFs are open in STM32CubeF4). The
+> **entry contract is now mapped (§5.12):** reset vector → file `0x40A`; the encrypted prefix + footer +
+> startup stub (file `0x000–0x45E`) can be **reused verbatim** from a stock UPG so the bootloader decrypts
+> the stock vector table and applies its usual checks/patching — **no prefix key needed**. The remaining
+> gates are (a) whether the bootloader verifies a **code** checksum (first-4-bytes / trailer — not a
+> standard CRC, coverage unknown) and (b) the exact entry address it patches into literal `0x450`. Both
+> are resolved by a **read-only bootloader dump** (`acq/`, §5.7). **Sequence: dump the bootloader first**
+> (non-destructive at any RDP level), **then build** the service `.UPG` with confidence; a from-scratch
+> service UPG attempted *before* the dump carries brick risk. The dump itself needs no custom firmware
+> (`dump_image` / `stm32flash -r` / `dfu-util -U` at RDP0).
 
 ---
 
@@ -693,6 +741,16 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   charge itself logs no records, so the bracketing phases carry the evidence). H102 layout: byte0 = current
   request [A], bytes1–2 = battery voltage [V], byte5 = error flags (0x80 VoltageDeviation, 0x08
   CurrentDeviation). Run: `nix-shell -p python3 --run 'python3 analyze43.py EVCC_…_LOGS.BIN <SessionIDhex> [--all]'`.
+- `analyze44.py … analyze50.py` — **bootloader→app entry-contract trail (§5.12)**: `analyze44` =
+  prefix-footer reinterpretation (u32 length = filesize−0x404, confirmed both revisions) + C009/C013
+  prefix-ciphertext compare (913/914 bytes differ ⇒ per-image keystream); `analyze45/46` = capstone
+  entry disasm (file `0x400` = 10-byte header, Reset_Handler at `0x40A`, MSP/PSP + `.bss` zero-fill +
+  scatter-load; `46` skips the `msr` halfwords capstone rejects to reveal true alignment);
+  `analyze47/49/50` = integrity-field hunts (first-4-bytes `0x400`, last-4 trailer, footer u16 `0x3FE`)
+  across CRC16/CRC32/Adler32/XOR/sum, decoded+raw, code+prefix, sector-padded — **no standard match**;
+  `analyze48` = UPG-string xref scan (update strings are reached via `.rodata` pointer tables, so direct
+  ADR xrefs are 0 — use `analyze19–24` for the update module). Run:
+  `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze46.py firmware.bin'`.
 - `REPORT.md` — this document.
 
 ## 8. Open questions / next steps
@@ -700,7 +758,8 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 1. **Exact MCU part** — narrowed to **STM32F427/F429, 1 MB flash** (flash-writer’s 12-sector table, §5.6) + 192 KB SRAM + 64 KB CCM. Easiest: **read the MCU top marking** (e.g. `STM32F427VGT6`: V=LQFP100 / Z=LQFP144, G=1 MB) — this also gives the package needed for SWD pin numbers (§5.7). Else confirm via `DBGMCU_IDCODE` (`0xE0042000`, read by the app) / flash-size reg (`0x1FFF7A22`).
 2. **App link base** — **CONFIRMED `0x08020000`** via the `.rodata` pointer table (§3.4). Remaining: obtain `BOOT_CCS2CHADEMO_1.UPG` to see how the prefix/vector table is decrypted & placed, and to recover the prefix keystream/key.
 2b. **Bootloader / update orchestration (bricking-critical)** — **SEARCHED, NOT FOUND (2026-11-17).** The bootloader is a separate factory component at `0x08000000–0x08020000` (128 KB, sectors 0–4). It is **not in the RAR** (only `MAIN_…UPG`), **not elsewhere in the project**, and **not embedded in the app** — no real vector table; the lone `0x8F652` candidate is a misaligned `.rodata` pointer-table false positive (`analyze25/26`). **Not publicly downloadable:** vendor **Orientrise** (No. 355 Longjin Rd, Changzhou, Jiangsu) ships firmware **contact-only** — `support@orientrise.net` / `sales@orientrise.net`, phone/WhatsApp/WeChat `+86 181 0150 7071`; free firmware on request matched to vehicle/region, **no self-service portal and no `BOOT_…UPG` published**. The nearest open project **`uhi22/ccs32clara` / `osexpert/ccs32clara-chademo`** (Dongguan **Longood** OEM + rebrands EV-Boy / Akyga AK-SC-E18 / EVniculus / Autonlaturit) **explicitly lists Orientrise as NOT compatible** (Longood = STM32F407 + plain `My407ccs2chademo.bin`; Orientrise = F427/F429 + `.UPG`/XOR/encrypted prefix) and does **not** include its own OEM bootloader either — but its README independently corroborates §5.6: *"Firmware update logic is inside the bootloader, so this is not affected by the firmware."* **Acquisition paths:** (a) **email the vendor** for `BOOT_CCS2CHADEMO_1.UPG`; (b) **SWD dump** of `0x08000000` len `0x20000` — **bricking-safe procedure in §5.7** (ESP32-S3 CMSIS-DAP or ST-Link): reading is non-destructive at any RDP level, only an RDP 1→0 *unlock* erases — **never unlock**; probe the first 8 bytes to learn the level first. Once obtained, confirm: who reads USB first, the XOR/prefix decode + any whole-image verify, and any USB/SWD recovery mode. **Kit built (2026-11-18):** path (b) is implemented as the read-only, probe-gated **`acq/` kit** (§5.7 / §7) — SWD (ESP32-S3 CMSIS-DAP + OpenOCD) primary, UART/DFU system-bootloader fallbacks, `analyze_boot.py` triage; software-verified (command names + analyzer smoke-tested), awaiting a bench `boot.bin` dump. **Dump first, then build** the service firmware (§6).
-3. **The prefix block** (`0x58–0x400`) — **characterized** (§4.1): stream-cipher ciphertext (914 B) + plaintext footer `XIE22.00` / `0x10C0` / `9` / `0x2DBE`. Key/routine lives in the bootloader, not this image. *(The `0x8C400–0x8E600` block is mbedTLS AES/SHA-256 tables, not encrypted data.)*
+3. **The prefix block** (`0x58–0x400`) — **characterized** (§4.1): stream-cipher ciphertext (914 B) + plaintext footer `XIE22.00` / **u32 length = filesize−0x404** / u16 check `0x2DBE` (§4.1 corrected — the old "`0x10C0` + `9`" reading was the length's low/high halves). Ciphertext differs 913/914 B between C009/C013 ⇒ **per-image keystream (IV/nonce)**, key/routine in the bootloader. *(The `0x8C400–0x8E600` block is mbedTLS AES/SHA-256 tables, not encrypted data.)*
+3b. **Bootloader→app entry contract — MAPPED (§5.12, 2026-11-18).** Reset vector → file `0x40A`; file `0x400` = 10-byte header (4-byte per-build value + 6 constant bytes); startup sets MSP/PSP via bootloader-filled literals `0x44C`/`0x450`, zero-fills `.bss`, scatter-loads. **Remaining:** (a) do the first-4-bytes / trailer / footer-u16 check the **code** or only the **prefix** (no standard CRC match — `analyze47/49/50`)? (b) the exact entry address patched into literal `0x450`. Both answered by the read-only `boot.bin` dump (§5.7 / item 2b) — then a vendor-bootable service `.UPG` is craftable by reusing the stock prefix + startup stub (§6).
 4. **Pin map** — disassemble the GPIO init table (`0x67756…`) to map relays, e-lock, CP/PP ADC, QCA7005 SPI pins, CAN pins.
 5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[H]**), CAN init/filter config, and protocol timeouts (1/4/5/6/8 s). **Remaining:** exact TIM2 prescaler / RTOS tick period + the numeric tick-constants behind the second-valued timeouts; CAN1/CAN2→CHAdeMO/GB/T assignment (needs pin map, item 4); confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
 6. **QCA7005 firmware** — **RESOLVED: not in this update.** Modem boots from external SPI flash; the MCU is only a SLAC/PLC host (§5.3). For open firmware, use the redistributable Qualcomm blob (open-plc-utils / `qca_spi` ecosystem).
