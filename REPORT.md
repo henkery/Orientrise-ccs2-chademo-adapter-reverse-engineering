@@ -445,6 +445,18 @@ variable length, 49–491 B observed). Ring buffer in **4 KB flash pages** separ
 gaps; spans multiple boots **and firmware versions**. `ck` is not payload sum/xor/any common CRC8
 (unresolved; immaterial).
 
+**Export mechanism [C — code + observed]:** the `usbdisk` export (f+0x02fd62) builds
+`EVCC_%s_LOGS.BIN`, `f_open`s it, then writer `0x080505d2` **walks the persistent flash page-chain
+live**: get-first-page `0x0805053c` reads the **head page index** from a log-control struct, follows
+next-page `0x080508dc`, validates each page's **128-byte header** (`0x080889de`), and writes each
+valid **4 KB page** to the file (walk cap `0xdc` = 220 pages). So the dump = **all retained history
+(previous boots, even previous firmware versions) + the current run up to the export instant** — not
+a RAM snapshot of running state, and not frozen at the last boot. Evidence: C002 records survive the
+C009 app update (the update writes sectors 5–9, leaving the log region untouched); the last record
+`DEEP SLEEP[0] at 83488` sits only ~13 s before `INFO.TXT RTC:83501` (written at export). Bounded
+page-chain ring (exported window 128 KB = 32 pages); oldest pages are recycled once full. Practical
+upshot: a log pulled after a charge session **does** capture that session — no reboot needed first.
+
 **Proof the device runs THIS image (`analyze39.py`):** of **147 distinct text lines, 105 specifically
 match C009** — **12 verbatim literals** (`system init` f+0x02f686, `Passive reset!!!` f+0x030e4e,
 `EVController4.EVEmergencyShutDown==1,should goto bms_shutdown` f+0x018966, `#SLAC: Matching failed`
