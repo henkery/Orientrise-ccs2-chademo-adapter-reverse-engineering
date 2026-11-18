@@ -661,6 +661,20 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 - `analyze41.py` — **firmware revision diff (§5.11)**: C009 vs C013 header / unique-string add-remove /
   common-offset-shift / byte-change-region (flash-sector mapped) / prefix-footer / `F$K$N$T$2005`
   ID-block comparison. Run: `nix-shell -p python3 --run 'python3 analyze41.py firmware.bin decoded_c013.bin'`.
+- `analyze42.py` — **ring-buffer epoch/session mapper (§5.10)**: the LOGS.BIN `ts` counter overlaps across
+  firmware upgrades, so true chronology is **file-offset (write) order**, not `ts`. Raw-scans version
+  banners (`EVCC1.0[02.01.Cxxx]` / `EVCC[01.00.Txxx]`), `UPGRADE:[size]ver date` and `RESET` markers to
+  delimit firmware epochs, walks records tagging each with its epoch + SessionID, and prints an event
+  timeline (banners / SLAC / SessionSetup / CHAdeMO state milestones / errors) plus per-session offset/ts
+  ranges. `--tail OFFSET` dumps a region record-by-record (e.g. the newest firmware-install tail). Use to
+  attribute a charge session to the firmware that actually ran it. Run:
+  `nix-shell -p python3 --run 'python3 analyze42.py EVCC_…_LOGS.BIN [--tail 0x23000]'`.
+- `analyze43.py` — **per-session CAN timeline (§5.10)**: decodes the t6 CHAdeMO H-messages for a single
+  SessionID in time order — H100 maxV / H101 / H102 charge status / H108–H109 EV status / H110 EVSE status —
+  to expose the cable-check → precharge → charge → shutdown voltage/current/error evolution (the steady-state
+  charge itself logs no records, so the bracketing phases carry the evidence). H102 layout: byte0 = current
+  request [A], bytes1–2 = battery voltage [V], byte5 = error flags (0x80 VoltageDeviation, 0x08
+  CurrentDeviation). Run: `nix-shell -p python3 --run 'python3 analyze43.py EVCC_…_LOGS.BIN <SessionIDhex> [--all]'`.
 - `REPORT.md` — this document.
 
 ## 8. Open questions / next steps
