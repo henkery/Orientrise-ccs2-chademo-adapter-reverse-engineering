@@ -257,6 +257,10 @@ reuses PA13/14 or sleeps); physical pin numbers are package-dependent (read the 
 ⚠️ **Bench only:** HV side disconnected & capacitors discharged; SWD is in the 3.3 V MCU domain — keep clear
 of the up-to-1000 V power section.
 
+> **Implemented (2026-11-18):** the read-only, probe-gated **`acq/` kit** (§7) — `swd_dump.sh` / `swd_dump.tcl`
+> (ESP32-S3 CMSIS-DAP + OpenOCD), UART (`stm32flash`) / USB-DFU (`dfu-util`) system-bootloader fallbacks,
+> and `analyze_boot.py` triage. Never unlocks/erases/writes; refuses to dump on RDP1/2. See `acq/README.md`.
+
 ### 5.8 CAN bus deep-dive — identifiers, baud rates, timing  [C/H]
 
 The adapter drives **two independent vehicle-side CAN buses** (STM32 bxCAN **CAN1** `0x40006400`,
@@ -453,6 +457,15 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 > EXI/SLAC/CHAdeMO state machines and bring-up, but **not a drop-in** for this F427/F429 `.UPG` platform
 > — our RE remains the basis. It also confirms the bootloader-centric update model (§5.6) on that OEM HW.
 
+> **Minimal service firmware — feasibility (2026-11-18):** a bare-metal STM32F427/F429 firmware that
+> **boots + includes the flasher + dumps the bootloader** is buildable from §5.6 (the flash-writer
+> algorithm is fully decoded; USBH MSC + FatFs are open in STM32CubeF4). The gate is *launch*, not code:
+> the vendor bootloader's app-launch convention + prefix key are unknown (§4.1 / §8.2b), so a
+> vendor-bootable `.UPG` cannot be crafted yet. **Sequence: dump the bootloader first** (read-only `acq/`
+> kit, §5.7 / §7), **then build** — SWD-flash the service firmware at `0x08000000` (reversible, `boot.bin`
+> backed up) or package a compatible `.UPG` once the prefix key is recovered. The dump itself needs no
+> custom firmware (`dump_image` / `stm32flash -r` / `dfu-util -U` at RDP0).
+
 ---
 
 ## 7. Artifacts produced (in `re/`)
@@ -477,13 +490,19 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   `nix-shell -p python3 python3Packages.capstone --run 'python3 hsN.py firmware.bin'`.
 - `corrected_xref.py` / `verify_enc.py` — corrected reference xref scanner (movw/movt + mov-imm +
   LDR T1/T2 correct-U + ADR T1/T3) and the capstone proof that LDR-literal T2 U=bit7 (§5.9 method note).
+- `acq/` — **non-destructive bootloader/flash acquisition kit (§5.7, §8.2b)**: read-only, probe-gated SWD
+  dump (`swd_dump.sh` / `swd_dump.tcl`, ESP32-S3 CMSIS-DAP + OpenOCD; refuses to dump on RDP1/2), UART
+  (`uart_dump.sh`, `stm32flash -r`) / USB-DFU (`dfu_dump.sh`, `dfu-util -U`) system-bootloader fallbacks,
+  and `analyze_boot.py` (vector-table sanity → reset disasm → XOR-key / `$$`-magic / `XIE22.00` /
+  `FLASH_KEYR` / app-launch hunt). Never unlocks/erases/writes. Tools via `nix-shell` (openocd 0.12.0,
+  stm32flash 0.7, dfu-util 0.11). Procedure + safety: `acq/README.md`.
 - `REPORT.md` — this document.
 
 ## 8. Open questions / next steps
 
 1. **Exact MCU part** — narrowed to **STM32F427/F429, 1 MB flash** (flash-writer’s 12-sector table, §5.6) + 192 KB SRAM + 64 KB CCM. Easiest: **read the MCU top marking** (e.g. `STM32F427VGT6`: V=LQFP100 / Z=LQFP144, G=1 MB) — this also gives the package needed for SWD pin numbers (§5.7). Else confirm via `DBGMCU_IDCODE` (`0xE0042000`, read by the app) / flash-size reg (`0x1FFF7A22`).
 2. **App link base** — **CONFIRMED `0x08020000`** via the `.rodata` pointer table (§3.4). Remaining: obtain `BOOT_CCS2CHADEMO_1.UPG` to see how the prefix/vector table is decrypted & placed, and to recover the prefix keystream/key.
-2b. **Bootloader / update orchestration (bricking-critical)** — **SEARCHED, NOT FOUND (2026-11-17).** The bootloader is a separate factory component at `0x08000000–0x08020000` (128 KB, sectors 0–4). It is **not in the RAR** (only `MAIN_…UPG`), **not elsewhere in the project**, and **not embedded in the app** — no real vector table; the lone `0x8F652` candidate is a misaligned `.rodata` pointer-table false positive (`analyze25/26`). **Not publicly downloadable:** vendor **Orientrise** (No. 355 Longjin Rd, Changzhou, Jiangsu) ships firmware **contact-only** — `support@orientrise.net` / `sales@orientrise.net`, phone/WhatsApp/WeChat `+86 181 0150 7071`; free firmware on request matched to vehicle/region, **no self-service portal and no `BOOT_…UPG` published**. The nearest open project **`uhi22/ccs32clara` / `osexpert/ccs32clara-chademo`** (Dongguan **Longood** OEM + rebrands EV-Boy / Akyga AK-SC-E18 / EVniculus / Autonlaturit) **explicitly lists Orientrise as NOT compatible** (Longood = STM32F407 + plain `My407ccs2chademo.bin`; Orientrise = F427/F429 + `.UPG`/XOR/encrypted prefix) and does **not** include its own OEM bootloader either — but its README independently corroborates §5.6: *"Firmware update logic is inside the bootloader, so this is not affected by the firmware."* **Acquisition paths:** (a) **email the vendor** for `BOOT_CCS2CHADEMO_1.UPG`; (b) **SWD dump** of `0x08000000` len `0x20000` — **bricking-safe procedure in §5.7** (ESP32-S3 CMSIS-DAP or ST-Link): reading is non-destructive at any RDP level, only an RDP 1→0 *unlock* erases — **never unlock**; probe the first 8 bytes to learn the level first. Once obtained, confirm: who reads USB first, the XOR/prefix decode + any whole-image verify, and any USB/SWD recovery mode.
+2b. **Bootloader / update orchestration (bricking-critical)** — **SEARCHED, NOT FOUND (2026-11-17).** The bootloader is a separate factory component at `0x08000000–0x08020000` (128 KB, sectors 0–4). It is **not in the RAR** (only `MAIN_…UPG`), **not elsewhere in the project**, and **not embedded in the app** — no real vector table; the lone `0x8F652` candidate is a misaligned `.rodata` pointer-table false positive (`analyze25/26`). **Not publicly downloadable:** vendor **Orientrise** (No. 355 Longjin Rd, Changzhou, Jiangsu) ships firmware **contact-only** — `support@orientrise.net` / `sales@orientrise.net`, phone/WhatsApp/WeChat `+86 181 0150 7071`; free firmware on request matched to vehicle/region, **no self-service portal and no `BOOT_…UPG` published**. The nearest open project **`uhi22/ccs32clara` / `osexpert/ccs32clara-chademo`** (Dongguan **Longood** OEM + rebrands EV-Boy / Akyga AK-SC-E18 / EVniculus / Autonlaturit) **explicitly lists Orientrise as NOT compatible** (Longood = STM32F407 + plain `My407ccs2chademo.bin`; Orientrise = F427/F429 + `.UPG`/XOR/encrypted prefix) and does **not** include its own OEM bootloader either — but its README independently corroborates §5.6: *"Firmware update logic is inside the bootloader, so this is not affected by the firmware."* **Acquisition paths:** (a) **email the vendor** for `BOOT_CCS2CHADEMO_1.UPG`; (b) **SWD dump** of `0x08000000` len `0x20000` — **bricking-safe procedure in §5.7** (ESP32-S3 CMSIS-DAP or ST-Link): reading is non-destructive at any RDP level, only an RDP 1→0 *unlock* erases — **never unlock**; probe the first 8 bytes to learn the level first. Once obtained, confirm: who reads USB first, the XOR/prefix decode + any whole-image verify, and any USB/SWD recovery mode. **Kit built (2026-11-18):** path (b) is implemented as the read-only, probe-gated **`acq/` kit** (§5.7 / §7) — SWD (ESP32-S3 CMSIS-DAP + OpenOCD) primary, UART/DFU system-bootloader fallbacks, `analyze_boot.py` triage; software-verified (command names + analyzer smoke-tested), awaiting a bench `boot.bin` dump. **Dump first, then build** the service firmware (§6).
 3. **The prefix block** (`0x58–0x400`) — **characterized** (§4.1): stream-cipher ciphertext (914 B) + plaintext footer `XIE22.00` / `0x10C0` / `9` / `0x2DBE`. Key/routine lives in the bootloader, not this image. *(The `0x8C400–0x8E600` block is mbedTLS AES/SHA-256 tables, not encrypted data.)*
 4. **Pin map** — disassemble the GPIO init table (`0x67756…`) to map relays, e-lock, CP/PP ADC, QCA7005 SPI pins, CAN pins.
 5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[H]**), CAN init/filter config, and protocol timeouts (1/4/5/6/8 s). **Remaining:** exact TIM2 prescaler / RTOS tick period + the numeric tick-constants behind the second-valued timeouts; CAN1/CAN2→CHAdeMO/GB/T assignment (needs pin map, item 4); confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
