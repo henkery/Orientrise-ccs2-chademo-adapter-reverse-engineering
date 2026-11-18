@@ -3,9 +3,11 @@
 
 The log is a 4KB-page ring buffer; ts is a per-epoch counter that overlaps across
 firmware upgrades, so chronology must come from file-offset (write) order, not ts.
-Version banners (EVCC1.0[02.01.Cxxx]) and UPGRADE:[size]ver date strings delimit
-epochs. This script:
-  1. raw-scans banners / UPGRADE / RESET markers with offsets (true write order)
+Version banners (EVCCx.y[02.01.Cxxx], e.g. EVCC1.0 C009 / EVCC2.9 C013) and
+UPGRADE:[size]ver date strings delimit epochs. This script:
+  1. raw-scans banners / UPGRADE / RESET markers with offsets (true write order);
+     version-bearing markers form epoch boundaries (the record walk can desync in
+     the ring buffer, so epochs are attributed by marker offset, not parsed banners)
   2. walks records in file order, tagging each with its epoch + SessionID
   3. prints a compact event timeline (banners, SLAC, SessionSetup, CHAdeMO state
      milestones, errors, shutdown) and a per-session summary
@@ -14,7 +16,7 @@ epochs. This script:
 Read-only.
 Usage: nix-shell -p python3 --run 'python3 analyze42.py <LOGS.BIN> [--tail 0x23000]'
 """
-import sys, struct, re, collections
+import sys, struct, re, collections, bisect
 
 path = sys.argv[1]
 data = open(path, 'rb').read()
@@ -26,11 +28,24 @@ if '--tail' in sys.argv:
 # ---- 1. raw epoch markers in write order ----
 print("=== EPOCH MARKERS (raw scan, file-offset = write order) ===")
 marks = []
-for m in re.finditer(rb'EVCC1\.0\[02\.01\.C\d{3}\]|EVCC\[01\.00\.T\d{3}\]|UPGRADE:\[\d+\][^\x00]{0,40}|RESET\[\d+\] at \d+', data):
+for m in re.finditer(rb'EVCC\d+\.\d+\[02\.01\.C\d{3}\]|EVCC\[01\.00\.T\d{3}\]|UPGRADE:\[\d+\][^\x00]{0,40}|RESET\[\d+\] at \d+', data):
     s = m.group().decode('latin1', 'replace')
     marks.append((m.start(), s))
 for off, s in marks:
     print(f"  f+0x{off:06x}: {s}")
+
+# epoch boundaries from version-bearing markers (banners + UPGRADE), in write order
+boundaries = []
+for off, s in marks:
+    mv = re.search(r'(C\d{3}|T\d{3})', s)
+    if mv:
+        boundaries.append((off, mv.group(1)))
+boundaries.sort()
+boffs = [b[0] for b in boundaries]
+
+def epoch_at(off):
+    i = bisect.bisect_right(boffs, off) - 1
+    return boundaries[i][1] if i >= 0 else '?'
 
 # ---- record walk ----
 def walk():
@@ -60,15 +75,12 @@ def exi(p):
     return body, sid
 
 # ---- 2/3. epoch-tagged event timeline ----
-epoch = '?'
 print("\n=== EVENT TIMELINE (file order; epoch tagged) ===")
 sess = collections.OrderedDict()
 for off, ts, typ, p in walk():
+    epoch = epoch_at(off)
     if typ == 4 and p.endswith(b'\0'):
         t = p.rstrip(b'\0').decode('latin1')
-        mb = re.search(r'EVCC1\.0\[02\.01\.(C\d{3})\]|EVCC\[01\.00\.(T\d{3})\]', t)
-        if mb:
-            epoch = mb.group(1) or mb.group(2)
         key = ('UPGRADE' in t or 'RESET[' in t or 'Power up' in t or 'system init' in t
                or 'Passive reset' in t or 'EVCC' in t or '#SLAC' in t or '#SDP' in t
                or '#TCP' in t or 'stm :' in t or 'stm:' in t or 'Error' in t or 'error' in t
@@ -88,14 +100,14 @@ for off, ts, typ, p in walk():
             elif h == b'\x80\x40':
                 print(f"  f+0x{off:06x} [{ts:>7}] {epoch:5s} t{typ}: SessionSetupRes {body.hex(' ')}")
             if sid:
-                sess.setdefault(sid, {'epoch': epoch, 'offs': [], 'ts': [], 'n': 0})
+                sess.setdefault(sid, {'offs': [], 'ts': [], 'n': 0})
                 sess[sid]['offs'].append(off)
                 sess[sid]['ts'].append(ts)
                 sess[sid]['n'] += 1
 
 print("\n=== SESSIONS BY SessionID (file-offset range = chronology) ===")
 for sid, d in sess.items():
-    print(f"  SessionID {sid}: epoch={d['epoch']} n={d['n']} "
+    print(f"  SessionID {sid}: epoch={epoch_at(min(d['offs']))} n={d['n']} "
           f"f+0x{min(d['offs']):06x}..0x{max(d['offs']):06x} ts {min(d['ts'])}..{max(d['ts'])}")
 
 # ---- 4. verbatim tail dump ----

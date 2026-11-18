@@ -571,8 +571,26 @@ timeout**; **CurrentDemand periodic current limiting** (`every n minute adjusts 
 an **incremental refinement, not a rewrite** (the ~481 KB "changed" byte region is mostly code shifted
 by ~2.5 KB of insertions).
 
-**Relevance:** the new precharge-to-target-voltage / inner-contactor / current-limit logic targets
-exactly the **0-minute voltage-mismatch abort** documented in §5.10 — C013 may fix the failing charge.
+**Charging behaviour — the voltage-mismatch abort is fixed (confirmed on post-update charge logs).**
+The §5.10 failure is the CCS2↔CHAdeMO *engagement* mismatch (prior art: `osexpert/ccs32clara-chademo`,
+§8.2b): a CCS2 EVSE is a current source, but a CHAdeMO car expects the charger to ramp/regulate its
+output to the battery voltage *before* the contactors mate, then deliver a fast current ramp. **C009**
+closed the precharge relay as soon as output ≈ measured residual voltage (`17case … Precharge voltage
+OK … outvol≈ress_vol`) without waiting for the EVSE to reach target, so output never regulated up to the
+battery: the car held itself to ~1–2 A and raised H102 `VoltageDeviation`+`CurrentDeviation` →
+`ChargingSystemError` → `EVEmergencyShutDown` (0-min abort) or a brief trickle then EVSE shutdown.
+**C013** bridges the engagement: state 17 now **stalls precharge** (`Precharge,wait out[%lu]reach
+ress_vol…`) until the EVSE output actually ramps to the car-side residual/battery voltage, then sequences
+`wait CLOSE inner contactor` → PowerDelivery-finish; the H108/H109 enable timeout 8→18 s and CAN 15 s
+timeout give the EVSE time to ramp, and CurrentDemand `setpara_maxevsecurrent` periodically raises the
+current ceiling. Post-update logs show the EVSE output ramping to battery voltage before relay close, the
+car's current request ramping normally (tens of amps, not 1–2 A), EVSE voltage tracking the rising battery
+toward target, and **sustained charging at real power with no deviation flood / emergency abort**. A
+precharge-timeout path remains (`PreChargeRes t>=…tout`): if the EVSE never answers PreCharge (output
+stuck near 0 V) C013 still aborts that attempt, but recovers on retry. C013 also bumps the boot banner
+`EVCC1.0[…]` → **`EVCC2.9[02.01.C013]`** (the `2.9` is the `HW:` version now in INFO.TXT); `analyze42.py`
+matches `EVCCx.y` accordingly.
+
 **Caution:** clone unit; the fixed **prefix stream-cipher key** + any version/hardware check in the
 undumped bootloader are the real compatibility gates (§5.6) — dump `boot.bin` via `acq/` (§5.7) before
 flashing.
