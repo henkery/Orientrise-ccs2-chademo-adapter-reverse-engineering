@@ -12,7 +12,8 @@
 
 The `.UPG` is a **2-byte-XOR-obfuscated** image of the **main ARM application** for an
 **STM32F4 (Cortex-M4)** based CCS2→CHAdeMO (and CCS2→GB/T) EV charging adapter. It is **not
-encrypted with a real cipher** — a trivial repeating XOR (`2B 23`) protects the whole file. Once
+encrypted with a real cipher** — a trivial repeating 2-byte XOR protects the whole file, and the
+key is **self-described in the first two bytes** (C009 = `2B 23`, C013 = `25 A8`; §2.1). Once
 decoded it is a plain ARM Thumb-2 firmware image with a readable ASCII header and thousands of
 debug strings.
 
@@ -29,14 +30,30 @@ Stack: an RTOS + TCP/IP + **mbedTLS** (X.509/PKI for ISO 15118 contract certific
 
 ## 2. Update container format  [C]
 
-### 2.1 Obfuscation
-The **entire file** is XORed with a repeating 2-byte key:
+### 2.1 Obfuscation — self-describing 2-byte XOR key
+The **entire file** is XORed with a repeating 2-byte key, and **the key is carried in the first two
+raw bytes** — so it can differ per revision without any hardcoded secret in the updater/bootloader:
 
 ```
-key = 2B 23        plain[i] = cipher[i] XOR key[i mod 2]
+key[0] = raw[0]        key[1] = raw[0] XOR raw[1]
+plain[i] = cipher[i] XOR key[i mod 2]    (payload from offset 2; offset 2 uses key[0])
 ```
 
-How it was found:
+Equivalently: a 2-byte plaintext key header `[key0, key0^key1]` followed by the XOR-obfuscated
+payload (`$$DATA…` header + encrypted prefix + app). Verified on the authentic raw UPGs of two
+revisions — the derived key reproduces each known-good decoded image **byte-for-byte**:
+
+| revision | raw[0:2] | key[0]=raw[0] | key[1]=raw[0]^raw[1] | key |
+|---|---|---|---|---|
+| C009 | `2B 08` | `2B` | `2B^08 = 23` | `2B 23` |
+| C013 | `25 8D` | `25` | `25^8D = A8` | `25 A8` |
+
+`decode_upg.py` auto-derives the key from `raw[0:2]` (no hardcoded key). The outer XOR key changing
+between revisions is therefore **normal and not a compatibility barrier** — the decoder reads it from
+each image. The fixed secret that actually gates compatibility is the **prefix stream-cipher key** in
+the bootloader (§4.1 / §5.6).
+
+How the 2-byte period was originally found (C009):
 - Full-file autocorrelation peaks at every **even** shift → 2-byte period.
 - Header known-plaintext (`MAIN_CCS2CHADEMO_1` at offset `0x0C`) yields the key directly.
 - Decoding makes `0x00` the most common byte and produces valid ARM code + readable strings.
@@ -45,7 +62,8 @@ How it was found:
 > the most common odd-position plaintext byte is `0x46` (Thumb `MOV` high-register opcode), not `0x00`.
 
 ### 2.2 Decoded header (first `0x58` bytes)
-ASCII lines, each `$$<field>\r\n`, preceded by a 2-byte prefix (`00 2B`):
+ASCII lines, each `$$<field>\r\n`, preceded by a 2-byte prefix `00 <key[0]>` (`00 2B` for C009,
+`00 25` for C013 — the second byte is the XOR key's first byte, §2.1):
 
 | field | value | meaning |
 |---|---|---|
@@ -137,6 +155,11 @@ bootloader before it jumps to the app. **[H]** (consistent with the confirmed li
   | `0x3F8` | `00…00` | reserved |
   | `0x3FE` | `BE 2D` | `0x2DBE` (u16, likely a checksum; no CRC16 variant over the image matches) |
 
+  **C013's footer differs in the two variable fields** — `0x3F2` = `08 22` (`0x2208`), `0x3FE` =
+  `A8 0B` (`0x0BA8`) — while `"XIE22.00"` (`0x3EA`) and the `9` (`0x3F4`) are **constant across
+  revisions**. So the footer carries per-image metadata (length/checksum/version), not a fixed key;
+  the prefix **stream-cipher key** is the constant bootloader secret (§5.6).
+
 - **Contents [H]:** almost certainly the Cortex-M **vector table + secure init** (there is no vector
   table anywhere in the clear). The **decryption key/routine is in the bootloader**, not this image,
   so it cannot be decrypted from the `.UPG` alone. For an open firmware this is a non-issue: we
@@ -216,11 +239,17 @@ contains a complete `usbdisk` process:
 
 ⇒ 1 MB flash + 192 KB SRAM + 64 KB CCM ⇒ **STM32F427/F429 “G” (1 MB)** part **[H, needs DBGMCU]**.
 
-**Split of duties [H, strong]:** the **XOR key `2B 23` and the prefix stream-cipher key are NOT anywhere
-in this app** (no `movw 0x232B`, no key data, no `$$DATA`/`$$MAINARM` magic strings). So the app reads
-the UPG and writes it to flash **in its raw/obfuscated form**, then resets; the **bootloader performs the
-XOR-decode + prefix-decrypt (+ likely verify) and installs/launches the app**. The decode/decrypt keys
-live in the bootloader, which is **not** part of this update.
+**Split of duties [H, strong — refined 2026-11-18]:** the **outer XOR key is not a hardcoded secret
+anywhere** — it is **self-described in the UPG's first two bytes** (`key0=raw[0]`, `key1=raw[0]^raw[1]`,
+§2.1) and varies per revision (C009 `2B 23`, C013 `25 A8`). The app has no `movw 0x232B` / key constant
+because it doesn't need one: it reads the key from the image (it already parses the header for the
+`UPGRADE:[%u]…` version/date log). The **prefix stream-cipher key**, by contrast, **is** a fixed secret
+living in the **bootloader** (not in this app, not in the update). So the app reads the UPG and writes it
+to flash **in its raw/obfuscated form**, then resets; the **bootloader performs the prefix-decrypt
+(+ likely verify) and installs/launches the app** (the outer XOR-decode can be done by either side from
+the self-described key). **The outer-key change across revisions is therefore not a compatibility
+barrier; the prefix key + any version/hardware check are the real gates** — confirm via the bootloader
+dump (§5.7).
 
 **Bricking-safety read:**
 - **In-place self-update, no A/B / staging** (app+logs fill the 1 MB). App erases its own sectors 5–9.
@@ -521,6 +550,33 @@ fw string `MAC-QCA7005-1.1.0.727-02-20130826-FINAL` (f+0x002596). **The MAC OUI 
 authoritative IEEE `oui.txt` — reference/default PIB MACs (a third-party "Annapurna Labs" hit is
 stale/wrong). Maker identity beyond the **"KM"** mark unresolved → §8.9.
 
+### 5.11 C013 vs C009 — reseller update delta  [C strings · H behavior]
+
+A newer **C013** build (reseller-supplied 2026-11-18; `MAIN_CCS2CHADEMO_1[02.01.C013]…rar`,
+`analyze41.py`) vs the installed **C009** (from OEM Orientrise): build **2026-03-27 09:33:27** (vs
+2025-03-03), **+4424 B** (599564 vs 595140), same `KM-CCS2CHAdeMO-1` / `CCS2GBT` / `CAMA…2.01` model.
+Outer XOR key `25 A8` (self-described, §2.1); prefix footer `0x2208 / 9 / 0x0BA8` (§4.1). 2648 common
+strings, 96 added / 76 removed — but most "adds/removes" are offset-shift artifacts; **phrase counts**
+give the real deltas.
+
+**Genuinely new in C013 (absent in C009):** H108/H109 vehicle-enable timeout **8 s → 18 s**; precharge
+wait-to-`TargetBatteryVoltage` (`Precharge,wait out[%lu]reach ress_vol…`); **inner-contactor close
+wait**; configurable d2 contactor timeout (`8s (or %dseconds)`); explicit **CAN 15 s H100/H101/H102
+timeout**; **CurrentDemand periodic current limiting** (`every n minute adjusts current limintation`,
+`setpara_maxevsecurrent`) + telemetry `chaEVrCur/Vol, fwdCur/Vol, evseOutCur/Vol, maxCur, maxP`;
+16-case now logs `TargetBatteryVoltage`; cable-check switch `SET_CSS2` → `SET_CSS2(D2)`.
+
+**Already in C009 (not new):** states 31/32/50, `CurrentDemand phase` base, `bms_error_stop`,
+`get_evcc_hw_fault`, `notify_normal_shutdown`, `phase_cnt`, `EVEmergencyShutDown` handling — so C013 is
+an **incremental refinement, not a rewrite** (the ~481 KB "changed" byte region is mostly code shifted
+by ~2.5 KB of insertions).
+
+**Relevance:** the new precharge-to-target-voltage / inner-contactor / current-limit logic targets
+exactly the **0-minute voltage-mismatch abort** documented in §5.10 — C013 may fix the failing charge.
+**Caution:** clone unit; the fixed **prefix stream-cipher key** + any version/hardware check in the
+undumped bootloader are the real compatibility gates (§5.6) — dump `boot.bin` via `acq/` (§5.7) before
+flashing.
+
 ---
 
 ## 6. What this means for an open-source firmware
@@ -565,7 +621,8 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 
 ## 7. Artifacts produced (in `re/`)
 
-- `decode_upg.py` — reusable decoder (XOR + header + strings).
+- `decode_upg.py` — reusable decoder (**auto-derives the self-describing XOR key from `raw[0:2]`**, §2.1;
+  + header parse + string dump). Handles any revision (C009 `2B 23`, C013 `25 A8`, …).
 - `firmware.bin` — fully decoded image (595 140 B).
 - `strings.txt` — 2 724 unique strings ≥6 chars, with offsets.
 - `decoded23.bin` — same decoded image (analysis copy).
@@ -601,6 +658,9 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   (separates charge attempts that share identical text wording), prints the DIN70121 EXI sequence
   (t2/t3 req/res, t5 shutdown) and decodes the t6 **CHAdeMO CAN** sub-records (H100–H112, both
   directions). Run: `nix-shell -p python3 --run 'python3 analyze40.py EVCC_…_LOGS.BIN'`.
+- `analyze41.py` — **firmware revision diff (§5.11)**: C009 vs C013 header / unique-string add-remove /
+  common-offset-shift / byte-change-region (flash-sector mapped) / prefix-footer / `F$K$N$T$2005`
+  ID-block comparison. Run: `nix-shell -p python3 --run 'python3 analyze41.py firmware.bin decoded_c013.bin'`.
 - `REPORT.md` — this document.
 
 ## 8. Open questions / next steps
