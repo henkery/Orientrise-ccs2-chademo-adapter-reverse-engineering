@@ -154,7 +154,7 @@ bootloader before it jumps to the app. **[H]** (consistent with the confirmed li
   | `0x3EA` | `58 49 45 32 32 2E 30 30` | `"XIE22.00"` — format/version tag |
   | `0x3F2` | `C0 10 09 00` | **u32 app-code length** = `0x000910C0` = 594112 = **filesize − 0x404** |
   | `0x3F6` | `00…00` | reserved (zero) |
-  | `0x3FE` | `BE 2D` | `0x2DBE` (u16 check value; not a standard CRC16 — §5.12) |
+  | `0x3FE` | `BE 2D` | `0x2DBE` = **CRC16/MODBUS**(`dec[0x3EA:0x3FE]`) — cracked, §5.13 |
 
   **The `0x3F2` field is a u32 LENGTH, not "u16 `0x10C0` + u32 `9`"** (the `09` at `0x3F4` is just its
   high byte): it equals **filesize − 0x404** in *both* revisions — C009 `0x000910C0` = 594112, C013
@@ -162,8 +162,13 @@ bootloader before it jumps to the app. **[H]** (consistent with the confirmed li
   the boot log `UPGRADE:[594112]…` (§5.10). **C013's footer differs only in this length and the `0x3FE`
   u16** (`A8 0B` = `0x0BA8`); `"XIE22.00"` is constant. So the footer carries per-image length + a check
   value, not a fixed key; the prefix **stream-cipher key** is the constant bootloader secret (§5.6).
-  The `0x3FE` u16, the first-4-bytes at `0x400`, and the last-4-bytes trailer are **not** standard
-  CRC16/CRC32/Adler32/XOR/sum of the code or prefix (decoded or raw) — see §5.12 (`analyze44/47/49/50`).
+  **Integrity fields cracked (§5.13, `analyze52/54`):** the footer u16 `0x3FE` =
+  **CRC16/MODBUS**(`dec[0x3EA:0x3FE]`) and the trailer u16LE @`n−2` = **CRC16/MODBUS**(`dec[2:n−2]`),
+  with `dec[n−4:n−2] == 00 00` (key echo) — verified on **both** revisions. MODBUS = poly `0x8005`
+  reflected (`0xA001`), init `0xFFFF`, refin/refout true, xorout 0. The first-4-bytes at `0x400` are
+  **not** a CRC of any region — a per-image IV/nonce (§5.12). Both CRCs are recomputable, so a
+  patched/extended image can be re-sealed (`make_service_upg.py`, §5.13). The earlier "no standard CRC"
+  result (`analyze44/47/49/50`) missed MODBUS because it tested the wrong byte ranges / init values.
 
 - **Contents [H]:** almost certainly the Cortex-M **vector table + secure init** (there is no vector
   table anywhere in the clear). The **decryption key/routine is in the bootloader**, not this image,
@@ -231,6 +236,9 @@ contains a complete `usbdisk` process:
   with **read-back verify** → **lock**. Validates `sector<12`. It is stored at `0x080B10AC` (**inside
   the app's own sector 9**) and is called **indirectly via a function pointer** ⇒ it is **copied to and
   executed from SRAM** to self-flash. Uses a 12-entry sector size/start table (`0x9119E`/`0x911CE`).
+  **Caveat (§5.13):** its literal pools are **+2-byte packed** in the stored image (e.g. the unlock keys
+  sit at file `0x9118E`/`0x91192` but the LDR-literals reference `0x9118C`/`0x91190`), so it is **not
+  directly executable from the file bytes** — the pools are fixed up at runtime (encoded-overlay).
 - **Reboot**: `NVIC_SystemReset` (SCB_AIRCR `0xE000ED0C` ← `0x05FA0004`) present @`0x67C2E`.
 - Same module also **exports** `EVCC_%s_INFO.TXT` (HW/SW/SER/RTC) and `EVCC_%s_LOGS.BIN` to the stick.
 
@@ -260,8 +268,10 @@ dump (§5.7).
 - **In-place self-update, no A/B / staging** (app+logs fill the 1 MB). App erases its own sectors 5–9.
 - **Bootloader (sectors 0–4) is NOT touched by a MAIN update ⇒ it survives** a failed app update and is
   the **recovery anchor**. Whether it has a USB/SWD recovery mode is **unknown** (bootloader not in hand).
-- Integrity: **per-word read-back verify** in the writer; **no whole-image pre-write CRC/signature seen
-  in the app** (any such check would be bootloader-side).
+- Integrity: **per-word read-back verify** in the writer; **the app does NOT verify a whole-image
+  checksum** — no CRC32 routine exists in the app, and the UPG trailing bytes are CRC16/MODBUS
+  integrity *metadata* (§5.13), recomputable, not a gate the app enforces. Any whole-image verify or
+  signature check would be **bootloader-side** (boot-time), not in this updater.
 - The app can also flash **`BOOT_…UPG`** (bootloader self-update) — **riskier**, it overwrites the
   recovery anchor itself.
 
@@ -607,10 +617,10 @@ Traced from the clear code at file `0x400` (`analyze45/46`, capstone) on **both*
 - **File `0x400` is NOT code — it is a 10-byte entry header.** The first halfword `0xF866` is an
   invalid Thumb-2 start. Layout:
   - `0x400–0x403` (4 B): **per-build value** — C009 `66 F8 18 4D` (`0x4D18F866`), C013 `5C 32 70 4D`
-    (`0x4D70325C`). Not a standard CRC32/CRC16/Adler32/XOR/sum of the code or prefix (decoded or raw;
-    `analyze47/49/50`). **[H]** a per-image **IV/nonce** for the prefix stream cipher (the prefix
-    ciphertext differs in **913/914 bytes** between revisions ⇒ per-image keystream, not a fixed one)
-    or a custom check value.
+    (`0x4D70325C`). Not a CRC of any region — standard CRC32/CRC16/Adler32/XOR/sum (`analyze47/49/50`)
+    **and** packed-CRC16-pair / MODBUS-poly-CRC32 / subregion-CRC hypotheses (`analyze54`) all fail.
+    **[H]** a per-image **IV/nonce** for the prefix stream cipher (the prefix ciphertext differs in
+    **913/914 bytes** between revisions ⇒ per-image keystream, not a fixed one). Kept stock (§5.13).
   - `0x404–0x409` (6 B): **constant** `02 20 09 00 02 08` across revisions (u16s `0x2002 / 0x0009 /
     0x0802` — plausibly SP-high / count / base-high metadata). **[H]**
 - **Reset_Handler is at file `0x40A` (`0x0802040A`)** — the reset vector in the decrypted prefix
@@ -624,20 +634,118 @@ Traced from the clear code at file `0x400` (`analyze45/46`, capstone) on **both*
   `0x44C`→`0x08020000` so the app re-reads `vector[0]`=SP; `0x450`→the real entry), or the app reads SP
   from the bootloader via the `0x00000000`→flash alias. Either way **the bootloader modifies the app
   image at fixed offsets `0x44C`/`0x450`** — a service firmware must keep a compatible startup stub there.
-- **Integrity fields unresolved (bootloader-side):** first-4-bytes `0x400`, last-4-bytes trailer
-  (C009 `00 00 9F 00`, C013 `00 00 D6 10`), and footer u16 `0x3FE` match **no** standard
-  CRC16/CRC32/Adler32/XOR/sum over code or prefix, decoded or raw, incl. sector-padded regions
-  (`analyze44/47/49/50`). Whether they check the **code** (would block a rewrite) or only the
-  **prefix** (reusable) is the key open question → §8.2b.
+- **Integrity fields cracked (§5.13):** footer u16 `0x3FE` = CRC16/MODBUS(`dec[0x3EA:0x3FE]`);
+  last-4-bytes trailer = `00 00` key-echo + u16LE CRC16/MODBUS(`dec[2:n−2]`) (C009 `00 00 9F 00`,
+  C013 `00 00 D6 10`). Both recomputable ⇒ a rewritten/extended app can be re-sealed. The
+  first-4-bytes `0x400` remain a per-image IV/nonce (not a CRC). Whether the **bootloader** also
+  checks the code at boot (beyond these CRCs) is the remaining question → §8.2b / §5.13.
 
 **Service-firmware consequence (non-invasive bootloader dump):** the encrypted prefix + footer can be
 **reused verbatim** from a stock UPG — the bootloader then decrypts the *stock* vector table (reset →
 file `0x40A`) and applies its usual checks/patching. Keeping file `0x000–0x45E` (header + prefix +
 footer + entry header + startup stub) byte-for-byte stock and replacing only the application code the
 stub jumps to is the lowest-risk way to get a **vendor-bootable** service image that reads
-`0x08000000–0x08020000` out to USB and can re-flash a stock `MAIN_…UPG` to back out. The remaining
-unknowns (code-checksum coverage + the exact patched entry address) are precisely what a **read-only
-bootloader dump** (`acq/`, §5.7) resolves; until then a from-scratch service UPG carries brick risk.
+`0x08000000–0x08020000` out to USB and can re-flash a stock `MAIN_…UPG` to back out. **Implemented:**
+`make_service_upg.py` (§5.13) reuses the stock prefix/entry verbatim, applies app patches / appends a
+dump cave, and re-seals both MODBUS CRCs + the length field — `SERVICE.UPG` round-trips byte-identical
+to stock (safe recovery image); `SERVICE_DUMP.UPG` adds an experimental one-shot bootloader-dump hook.
+The remaining unknowns (the **encoded-overlay runtime model** — whether FatFs/flash-writer run in place
+or RAM-relocated — free RAM, FatFs re-entrancy, and the exact patched entry address) are precisely what
+a **read-only bootloader dump** (`acq/`, §5.7) resolves; until then the dump variant is bench-gated and
+carries brick risk (§5.13).
+
+### 5.13 UPG integrity cracked, encoded-overlay pack, and the service-UPG builder  [C fields · H runtime model]
+
+**(a) Integrity fields = CRC16/MODBUS (recomputable).** The trailing bytes are memory-integrity
+*metadata*, not a secret and not an app-enforced gate (`analyze51/52/54`, confirmed C009 **and** C013):
+
+| field | offset | value / coverage |
+|---|---|---|
+| length | u32LE `0x3F2` | `filesize − 0x404` (app-code byte count) |
+| footer CRC | u16LE `0x3FE` | **CRC16/MODBUS**(`dec[0x3EA:0x3FE]`) — over the 20-byte footer itself |
+| trailer | `dec[n−4:n]` | `00 00` (key echo) + u16LE **CRC16/MODBUS**(`dec[2:n−2]`) — over the whole body |
+| first4 | u32 `0x400` | per-image **IV/nonce**, *no* CRC relation — kept stock |
+
+MODBUS = poly `0x8005` reflected (`0xA001`), init `0xFFFF`, refin/refout true, xorout 0. The earlier
+"no standard CRC" hunts (`analyze44/47/49/50`) missed it by testing wrong ranges/inits; a **differential
+CRC attack** (`analyze52`: for same-length messages `CRC(m1)⊕CRC(m2)` cancels init/xorout) pinned the
+poly, then `analyze54` verified both fields explicitly. **The app updater does NOT verify a whole-image
+checksum** — there is no CRC32 routine in the app; the writer only does per-word flash read-back (§5.6).
+So the CRCs are recomputable and any boot-time whole-image check would be **bootloader-side**.
+
+**(b) Encoded-overlay: literal pools are +2-byte packed (mild anti-RE).** The app's literal pools are
+**halfword-swapped and shifted +2 bytes** relative to where the LDR-literals point (`analyze63/64`):
+- Flash writer: unlock keys `0x45670123`/`0xCDEF89AB` sit at file `0x9118E`/`0x91192`, but the
+  LDR-literals reference `0x9118C`/`0x91190`; FLASH base `0x40023C00` is at `0x9118A` while the code
+  loads `0x91188`.
+- FatFs pools likewise: stored `0xBCB82001` → swap16 → `0x2001BCB8` (a valid SRAM address).
+
+⇒ the flash writer (and pool-bearing code) is **not directly executable from the stored bytes**; the
+pools are fixed up at runtime. The `usbdisk` overlay (`0x02FF00–0x030300`) is separately **RAM-relocated**
+(its 32 BLs hit zero FatFs targets; its strings have zero static xrefs — `analyze57/58`). This is a light
+pack, not crypto: it defeats naive static constant-xref scanning, nothing more. **[H, hopeful]** the
+entry contract's scatter-load helpers (§5.12, file `0x45E`) decode/relocate these pools at startup, so the
+FatFs API runs **in place at `BASE+file_offset`** by the time the flash writer is called — but the runtime
+addresses, free RAM, and re-entrancy are **not statically provable** and must be confirmed on a bench dump.
+
+**(c) Flash-writer signature (hook anchor).** `flash_write(sector=r0, offset=r1, data=r2, len=r3)`;
+entry at file `0x910AC` (runtime `0x080B10AC`), prologue `push.w {r4-r11,lr}` (`E92D 4FF0`), then
+`0x910B0 mov r8,r2 / mov r7,r0`. FLASH base `0x40023C00`. App code ends runtime `0x080B14C0`; the
+**unused sector-9 tail** file `0x914C0..0xA0000` = **60 224 B** is cave space (no ≥256 B `0xFF`/`0x00`
+padding runs exist inside the app itself — `analyze65`).
+
+**(d) FatFs API anchors (NORMAL code, runtime = `BASE+offset`).** Identified via `f_mkfs`→`disk_write`
+callers and `validate` callers (`analyze60–67`):
+
+| function | file offset | note |
+|---|---|---|
+| `f_open` | `0x0363E0` | `FA_*` mode `&0x3f`, create tst `#0x1c`, FIL init |
+| `f_read` | `0x036584` | tests `FA_READ` bit0 |
+| `f_write` | `0x0366C8` | tests `FA_WRITE` bit1 |
+| `f_sync` | `0x03685A` | flush dirty buf + dir-entry **size**/cluster/time, `sync_fs` |
+| `f_close` | `0x0368E8` | calls `f_sync` then clears `fp->obj.fs` |
+| `f_lseek` | `0x035792` | |
+| `f_mkfs` | `0x036F20` | |
+| `find_volume` / `validate` | `0x0360F2` / `0x036368` | |
+| `move_window` | `0x035398` | |
+| `disk_read` / `disk_write` / `disk_ioctl` | `0x038ED8` / `0x038F28` / `0x038F80` | |
+| low-level read / write | `0x038D48` / `0x038DEE` | |
+
+`FIL` ≈ 552 B (`0x228`): `obj.fs@0`, `obj.id@4`(u16), `obj.attr@6`, `obj.sclust@8`, `obj.objsize@0xC`,
+`flag@0x10`, `err@0x11`, `fptr@0x14`, `clust@0x18`, `sect@0x1C`, `dir_sect@0x20`, `dir_ptr@0x24`,
+`buf@0x28[512]`. (`0x036A9C` is validate+clear **without** sync — *not* `f_close`; using it would leave a
+0-byte file. `0x0358C8` is a dir-traversal helper, `0x036A3C` is `f_open`-like — both ruled out.)
+
+**(e) `make_service_upg.py` — the builder.** Implements (a)–(d): derive key from `raw[0:2]`, XOR-decode,
+drop the 4-byte trailer, apply app patches (rejects any offset `<0x40A` to protect the entry shell),
+optionally append a cave (pad `0xFF` to the cave offset; reject overlap / beyond `0xA0000−4`), then
+re-pack length@`0x3F2`, footer CRC@`0x3FE`, trailer CRC@`n−2`, and re-XOR. Asserts `[0:0x3EA]`
+(key/header/prefix) and `[0x400:0x45E]` (entry header + startup) and first4 stay verbatim — the footer
+metadata `[0x3EA:0x400]` legitimately changes when the image grows. The prefix ciphertext is kept
+verbatim, so its per-image keystream is **not** needed. With no patches it re-emits a **byte-identical**
+UPG (`SERVICE.UPG`) — a round-trip proof of the format and a safe, bootable, stock-equivalent recovery
+image. `--verify-only` checks any UPG's CRCs.
+
+**(f) `SERVICE_DUMP.UPG` — experimental bootloader-dump cave.** `--dump-hook` patches the flash-writer
+entry `0x910AC` → `b.w` cave at file `0x92000` (runtime `0x080B2000`, in the unused sector-9 tail). The
+cave (hand-encoded Thumb, capstone-verified, pool-free `movw/movt/adr/bl`):
+`push.w {r0-r12,lr}`; one-shot guard `FLAG==MAGIC` (RAM `0x2003F234`); `f_open(&FIL,"0:/BOOT.BIN",0x0A)`
+(`FA_CREATE_ALWAYS|FA_WRITE`); on success `f_write(&FIL,0x08000000,0x20000,&BW)` then `f_close(&FIL)`
+(syncs the 131 072-byte size); `pop.w {r0-r12,lr}`; re-exec the original prologue `push.w {r4-r11,lr}`;
+`b.w 0x080B10B0` — so the **stock flash write still runs** (recovery path preserved). `FIL=0x2003F000`,
+`BW=0x2003F230`, `MAGIC=0x2003D00D`. Independent re-verification (`analyze66`): both MODBUS CRCs, length,
+key-echo, first4/entry/prefix preservation, cave-in-sector-9, hook target, and the full cave sequence all
+pass.
+
+**(g) Residual bench-verify gates (do NOT flash the dump variant blind).** The hook is only as good as
+the runtime model in (b): (1) **encoded-overlay** — confirm FatFs/flash-writer execute in place with
+decoded pools (vs RAM-relocated, which would move every address); (2) **free RAM** at `0x2003F000`
+(FIL+BW+FLAG ≈ 572 B) — the app RAM map is not statically known; (3) **FatFs re-entrancy** — opening a
+second `FIL` while the UPG file is open (FatFs is non-reentrant); (4) **stack headroom** (~256 B for the
+pushed frame + FatFs locals); (5) the hook fires on **any** `flash_write`, including a stock-recovery
+write, so a crash there bricks the recovery path. All five are resolved by a **read-only SWD dump**
+(`acq/`, §5.7) of the running app/bootloader — **dump first, then bench-test `SERVICE_DUMP.UPG`** with
+SWD recovery available. `SERVICE.UPG` (no hook) is safe to flash at any time as a stock-equivalent.
 
 ---
 
@@ -670,18 +778,21 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 > EXI/SLAC/CHAdeMO state machines and bring-up, but **not a drop-in** for this F427/F429 `.UPG` platform
 > — our RE remains the basis. It also confirms the bootloader-centric update model (§5.6) on that OEM HW.
 
-> **Minimal service firmware — feasibility (2026-11-18, updated with §5.12):** a bare-metal
+> **Minimal service firmware — feasibility (2026-11-18, updated with §5.12/§5.13):** a bare-metal
 > STM32F427/F429 firmware that **boots + includes the flasher + dumps the bootloader** is buildable from
 > §5.6 (the flash-writer algorithm is fully decoded; USBH MSC + FatFs are open in STM32CubeF4). The
-> **entry contract is now mapped (§5.12):** reset vector → file `0x40A`; the encrypted prefix + footer +
-> startup stub (file `0x000–0x45E`) can be **reused verbatim** from a stock UPG so the bootloader decrypts
-> the stock vector table and applies its usual checks/patching — **no prefix key needed**. The remaining
-> gates are (a) whether the bootloader verifies a **code** checksum (first-4-bytes / trailer — not a
-> standard CRC, coverage unknown) and (b) the exact entry address it patches into literal `0x450`. Both
-> are resolved by a **read-only bootloader dump** (`acq/`, §5.7). **Sequence: dump the bootloader first**
-> (non-destructive at any RDP level), **then build** the service `.UPG` with confidence; a from-scratch
-> service UPG attempted *before* the dump carries brick risk. The dump itself needs no custom firmware
-> (`dump_image` / `stm32flash -r` / `dfu-util -U` at RDP0).
+> **entry contract is mapped (§5.12)** and the **integrity fields cracked (§5.13):** reset vector → file
+> `0x40A`; the encrypted prefix + footer + startup stub (file `0x000–0x45E`) are **reused verbatim** from a
+> stock UPG so the bootloader decrypts the stock vector table — **no prefix key needed**; footer + trailer
+> are **CRC16/MODBUS**, recomputable, and the app does **not** verify a whole-image checksum.
+> `make_service_upg.py` already builds `SERVICE.UPG` (byte-identical stock round-trip, safe) and
+> `SERVICE_DUMP.UPG` (experimental dump cave). The remaining gates are (a) the **encoded-overlay runtime
+> model** (§5.13b — in-place vs RAM-relocated FatFs/flash-writer, free RAM, re-entrancy), (b) the exact
+> entry address patched into literal `0x450`, and (c) any **boot-time** code check the bootloader adds
+> beyond the CRCs. All are resolved by a **read-only bootloader dump** (`acq/`, §5.7). **Sequence: dump
+> the bootloader first** (non-destructive at any RDP level), **then bench-test** the dump variant; flashing
+> `SERVICE_DUMP.UPG` *before* the dump carries brick risk (§5.13g). The dump itself needs no custom
+> firmware (`dump_image` / `stm32flash -r` / `dfu-util -U` at RDP0).
 
 ---
 
@@ -751,6 +862,48 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   `analyze48` = UPG-string xref scan (update strings are reached via `.rodata` pointer tables, so direct
   ADR xrefs are 0 — use `analyze19–24` for the update module). Run:
   `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze46.py firmware.bin'`.
+- `analyze51.py … analyze54.py` — **integrity-field crack trail (§5.13a)**: `analyze51` = trailing-byte
+  semantics hunt (is there a checksum at all? first4 as build-timestamp, small-region CRC/sum/xor);
+  `analyze52` = **differential CRC attack** (`CRC(m1)⊕CRC(m2)` cancels init/xorout for same-length
+  messages ⇒ pin poly/reflection) + boundary-region hunt — **cracked footer + trailer as CRC16/MODBUS**;
+  `analyze53` = UPG-orchestration string xref via indirect `.rodata` pointer tables; `analyze54` =
+  explicit MODBUS verify on both revisions + exhaust first4@`0x400` hypotheses (packed CRC16 pairs /
+  MODBUS-poly CRC32 / subregion CRCs — none ⇒ IV/nonce). The reusable `modbus()` table impl lives here.
+- `analyze55.py … analyze58.py` — **usbdisk reference/overlay trail (§5.13b)**: `analyze55` = verify UPG
+  string offsets in-image + scan u32-pointer/PC-relative refs (no absolute pointers exist);
+  `analyze56` = structure inspection of the UPG-string cluster (interleaved Thumb function pointers =
+  process-descriptor blocks) + scatter-load region table; `analyze57` = full PC-relative disasm of the
+  usbdisk process @`0x03014E` (LDR-literal/ADR targets resolved → strings are base+offset referenced);
+  `analyze58` = disasm the usbdisk state-2 **update worker** @`0x04FDFE` + BL-callee summary — reveals the
+  overlay is **RAM-relocated** (static BLs miss FatFs), so trace via static targets in the normal cluster.
+- `analyze59.py … analyze60.py` — **hook-anchor + FatFs-cluster identification (§5.13c/d)**: `analyze59`
+  = full SRAM flash-writer disasm (file `0x91000–0x91200`: entry context, unlock/erase/program/verify,
+  sector-table refs) + `f_mkfs` xrefs to the `MSDOS5.0`/`NO NAME` cluster; `analyze60` = identify
+  `f_open/f_read/f_write/f_close` in the **normal** FatFs cluster anchored by `f_mkfs` (`0x037100`),
+  `disk_write=0x038F28` + read counterpart, list all static BL callers of `disk_read/disk_write`.
+- `analyze61.py … analyze65.py` — **FatFs API map + encoded-overlay discovery (§5.13b/d)**: `analyze61`
+  = map the normal FatFs object-file cluster (prologues) + assess the usbdisk-caller region as a hook
+  anchor; `analyze62` = anchor on the app's own `LOGS.BIN` writes (known-good `f_open/f_write` + FIL/path
+  pattern), confirm `f_open`; `analyze63` = flash-writer literal-pool sanity + `f_write/f_read` confirm +
+  **relocation check**; `analyze64` = `f_close/f_sync` hunt + **confirm the +2-byte pool shift is uniform**
+  (encoded-overlay) + cave-space scan; `analyze65` = `f_close` candidate + app geometry (exact app end
+  `0x080B14C0`, unused sector-9 tail `0x914C0..0xA0000` = 60 224 B for a cave).
+- `analyze66.py` — **independent service-UPG verifier (§5.13e/f)**: re-derive key, re-decode, recompute
+  both MODBUS CRCs + length + key-echo from scratch; check `SERVICE.UPG` byte-identical to stock; disasm
+  the hook site + cave; confirm cave-in-sector-9 and entry/first4/prefix preservation. Run:
+  `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze66.py SERVICE.UPG SERVICE_DUMP.UPG ../extracted/MAIN_CCS2CHADEMO_1.UPG firmware.bin'`.
+- `analyze67.py` — **`f_sync`/`f_close` finalizer identification (§5.13d)**: list all BL callers of
+  `validate(0x036368)`, bound enclosing functions by push-prologues, disasm the small ones — pinpoints
+  `f_sync=0x03685A` (flush dir-entry size) and `f_close=0x0368E8` (calls `f_sync` then clears `fp->obj.fs`),
+  ruling out the no-sync `0x036A9C`. Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze67.py firmware.bin'`.
+- `make_service_upg.py` — **service-UPG builder (§5.13e/f)**: implements the cracked format/integrity —
+  derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
+  prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
+  `--dump-hook` (experimental bootloader-dump cave), `--verify-only`. Emits `SERVICE.UPG` (safe,
+  stock-equivalent) and `SERVICE_DUMP.UPG` (experimental, bench-gated).
+- `SERVICE.UPG` / `SERVICE_DUMP.UPG` — built service images (§5.13e/f): `SERVICE.UPG` = byte-identical
+  stock round-trip (safe recovery); `SERVICE_DUMP.UPG` = stock + one-shot bootloader-dump cave (598 140 B,
+  valid CRCs, **bench-verify before flashing**).
 - `REPORT.md` — this document.
 
 ## 8. Open questions / next steps
@@ -759,7 +912,7 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 2. **App link base** — **CONFIRMED `0x08020000`** via the `.rodata` pointer table (§3.4). Remaining: obtain `BOOT_CCS2CHADEMO_1.UPG` to see how the prefix/vector table is decrypted & placed, and to recover the prefix keystream/key.
 2b. **Bootloader / update orchestration (bricking-critical)** — **SEARCHED, NOT FOUND (2026-11-17).** The bootloader is a separate factory component at `0x08000000–0x08020000` (128 KB, sectors 0–4). It is **not in the RAR** (only `MAIN_…UPG`), **not elsewhere in the project**, and **not embedded in the app** — no real vector table; the lone `0x8F652` candidate is a misaligned `.rodata` pointer-table false positive (`analyze25/26`). **Not publicly downloadable:** vendor **Orientrise** (No. 355 Longjin Rd, Changzhou, Jiangsu) ships firmware **contact-only** — `support@orientrise.net` / `sales@orientrise.net`, phone/WhatsApp/WeChat `+86 181 0150 7071`; free firmware on request matched to vehicle/region, **no self-service portal and no `BOOT_…UPG` published**. The nearest open project **`uhi22/ccs32clara` / `osexpert/ccs32clara-chademo`** (Dongguan **Longood** OEM + rebrands EV-Boy / Akyga AK-SC-E18 / EVniculus / Autonlaturit) **explicitly lists Orientrise as NOT compatible** (Longood = STM32F407 + plain `My407ccs2chademo.bin`; Orientrise = F427/F429 + `.UPG`/XOR/encrypted prefix) and does **not** include its own OEM bootloader either — but its README independently corroborates §5.6: *"Firmware update logic is inside the bootloader, so this is not affected by the firmware."* **Acquisition paths:** (a) **email the vendor** for `BOOT_CCS2CHADEMO_1.UPG`; (b) **SWD dump** of `0x08000000` len `0x20000` — **bricking-safe procedure in §5.7** (ESP32-S3 CMSIS-DAP or ST-Link): reading is non-destructive at any RDP level, only an RDP 1→0 *unlock* erases — **never unlock**; probe the first 8 bytes to learn the level first. Once obtained, confirm: who reads USB first, the XOR/prefix decode + any whole-image verify, and any USB/SWD recovery mode. **Kit built (2026-11-18):** path (b) is implemented as the read-only, probe-gated **`acq/` kit** (§5.7 / §7) — SWD (ESP32-S3 CMSIS-DAP + OpenOCD) primary, UART/DFU system-bootloader fallbacks, `analyze_boot.py` triage; software-verified (command names + analyzer smoke-tested), awaiting a bench `boot.bin` dump. **Dump first, then build** the service firmware (§6).
 3. **The prefix block** (`0x58–0x400`) — **characterized** (§4.1): stream-cipher ciphertext (914 B) + plaintext footer `XIE22.00` / **u32 length = filesize−0x404** / u16 check `0x2DBE` (§4.1 corrected — the old "`0x10C0` + `9`" reading was the length's low/high halves). Ciphertext differs 913/914 B between C009/C013 ⇒ **per-image keystream (IV/nonce)**, key/routine in the bootloader. *(The `0x8C400–0x8E600` block is mbedTLS AES/SHA-256 tables, not encrypted data.)*
-3b. **Bootloader→app entry contract — MAPPED (§5.12, 2026-11-18).** Reset vector → file `0x40A`; file `0x400` = 10-byte header (4-byte per-build value + 6 constant bytes); startup sets MSP/PSP via bootloader-filled literals `0x44C`/`0x450`, zero-fills `.bss`, scatter-loads. **Remaining:** (a) do the first-4-bytes / trailer / footer-u16 check the **code** or only the **prefix** (no standard CRC match — `analyze47/49/50`)? (b) the exact entry address patched into literal `0x450`. Both answered by the read-only `boot.bin` dump (§5.7 / item 2b) — then a vendor-bootable service `.UPG` is craftable by reusing the stock prefix + startup stub (§6).
+3b. **Bootloader→app entry contract — MAPPED; integrity CRACKED; service UPG BUILT (§5.12/§5.13).** Reset vector → file `0x40A`; file `0x400` = 10-byte header (4-byte IV/nonce + 6 constant bytes); startup sets MSP/PSP via bootloader-filled literals `0x44C`/`0x450`, zero-fills `.bss`, scatter-loads. Footer u16 + trailer = **CRC16/MODBUS** (recomputable, `analyze52/54`); the app does **not** verify a whole-image checksum. `make_service_upg.py` builds `SERVICE.UPG` (byte-identical stock round-trip, safe) + `SERVICE_DUMP.UPG` (experimental dump cave). **Remaining:** (a) the **encoded-overlay runtime model** (§5.13b) — do FatFs/flash-writer run in place with decoded pools, or RAM-relocated? plus free RAM / FatFs re-entrancy / stack headroom for the cave; (b) the exact entry address patched into literal `0x450`; (c) whether the **bootloader** adds a boot-time code check beyond the CRCs. All answered by the read-only `boot.bin`/app dump (§5.7 / item 2b) — **dump first, then bench-test the dump variant** (§5.13g).
 4. **Pin map** — disassemble the GPIO init table (`0x67756…`) to map relays, e-lock, CP/PP ADC, QCA7005 SPI pins, CAN pins.
 5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[H]**), CAN init/filter config, and protocol timeouts (1/4/5/6/8 s). **Remaining:** exact TIM2 prescaler / RTOS tick period + the numeric tick-constants behind the second-valued timeouts; CAN1/CAN2→CHAdeMO/GB/T assignment (needs pin map, item 4); confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
 6. **QCA7005 firmware** — **RESOLVED: not in this update.** Modem boots from external SPI flash; the MCU is only a SLAC/PLC host (§5.3). For open firmware, use the redistributable Qualcomm blob (open-plc-utils / `qca_spi` ecosystem).
