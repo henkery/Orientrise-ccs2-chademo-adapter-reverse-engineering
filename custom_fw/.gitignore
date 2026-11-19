@@ -1,0 +1,5 @@
+# build outputs (regenerate with: bash build.sh)
+app.elf
+app.map
+app.bin
+app_padded.bin

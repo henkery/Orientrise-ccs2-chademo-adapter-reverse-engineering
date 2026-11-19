@@ -1845,6 +1845,22 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   §5.13i), `--verify-only`. `build_dump_hook` is parameterized (dump base/len/path/magic); defaults
   reproduce the proven boot cave byte-for-byte. Emits `SERVICE.UPG` (safe, stock-equivalent),
   `SERVICE_DUMP.UPG` (bench-confirmed — produced `BOOT.BIN`), `SERVICE_DUMP_APP5.UPG` (§5.13i).
+- `make_custom_upg.py` — **whole-app custom-UPG wrapper (§5.19/§5.16)**: extends the cracked format to a
+  full app replacement (which `make_service_upg.py` cannot do — it preserves the stock entry shell
+  `[0x400:0x45E]`). Keeps stock `[0:0x3EA]` key/header/prefix + `[0x400:0x402]` entry bytes verbatim, sets
+  `[0x402:] =` the custom app binary (vectors+code linked at `0x08020000`), re-seals length `@0x3F2` +
+  both CRC16/MODBUS checksums, re-XORs. The boot installs `fw[0x402:]` verbatim and branches to the app
+  reset vector, so the app runs as linked. Verified: boot CRC-append residue = 0, app verbatim, and a
+  byte-identical round-trip when fed the stock app region. `STOCK.UPG app.bin -o CUSTOM.UPG`.
+- `custom_fw/` — **inert flashable custom-app skeleton (§5.19, build/flash/recovery pipeline proof)**:
+  `linker.ld` (FLASH `0x08020000` 640K / RAM `0x20000000` 192K / CCM 64K, `_estack=0x20030000`),
+  `startup.s` (vector table + self-bootstrapping Reset_Handler: MSP from `vector[0]`, `VTOR=0x08020000`,
+  copy `.data`, zero `.bss`+CCM, call `main` — the boot writes no MSP/VTOR, §5.15/§5.16), `main.c`
+  (**inert**: feeds IWDG + bumps a RAM `heartbeat` + idles; **no GPIO writes**, contactors stay open),
+  `build.sh` (`nix-shell -p gcc-arm-embedded` → `app.bin`, vectors verified, padded to sector 5),
+  `verify_pad.py`, `README.md` (safety + build/flash/recovery). `CUSTOM.UPG` built + verified (220 B code,
+  vectors `MSP=0x20030000`/`reset=0x08020041`, CRC residue 0). **Not a charge controller** — grow it via
+  §5.17/§5.18/§5.20/§5.21. Build outputs git-ignored; `CUSTOM.UPG` is a bench-flash candidate (untracked).
 - `SERVICE.UPG` / `SERVICE_DUMP.UPG` / `SERVICE_DUMP_APP5.UPG` — built service images (§5.13e/f/i):
   `SERVICE.UPG` = byte-identical stock round-trip (safe recovery); `SERVICE_DUMP.UPG` = stock + one-shot
   bootloader-dump cave on the in-place `f_close` anchor (598 156 B, valid CRCs, **bench-confirmed working**
