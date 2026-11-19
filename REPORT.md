@@ -351,6 +351,23 @@ write primitive (`0x08087AB0`) but **zero references** (unused output); the `led
 tick, not a separate LED block (LED drive pins not yet tied to a named driver). Re-derived from bytes by
 `analyze78.py`.
 
+**Drive-pin ACTIVE levels + SAFE boot state (`analyze86`).** Decoding each C013 drive primitive's BSRR
+logic (low16 = SET→HIGH, high16 = RESET→LOW) fixes the active level and the de-asserted **SAFE** level a
+custom app must drive at boot so every contactor stays open / no HV appears:
+
+| signal | pin(s) | active | SAFE (de-asserted) |
+|---|---|---|---|
+| CHAdeMO enable d1 / d2 | PE7 / PE8 | HIGH (`cmd<<7/8` SET) | **LOW** (disabled) |
+| BatteryPower (inner contactor) | PD8 | HIGH (`cmd<<8` SET) | **LOW** (open) |
+| PreChargeRELAY | PB10 + PB11 | HIGH (`cmd<<10/11` SET) | **LOW** (open) |
+| BatteryCharge | PC9 | LOW (`bics` inverted → RESET) | **HIGH** (charge off) |
+| e-lock motor | PD3 + PE4 | LOW (`bics` inverted → RESET) | **HIGH** (motor off) |
+
+The PreChargeRELAY reset masks use an address-bit trick (`lsls r2, r1, #0x10/0x11` with r1 = GPIOB base
+`0x40020400`, whose bit10 survives → `(1<<10/11)<<16`); the SET shift is the reliable pin indicator.
+`custom_fw/src/gpio.c` pre-loads these SAFE levels via BSRR while the pins are still reset-state inputs,
+then switches MODER to output — glitch-free, never driving an asserted level. Re-derived by `analyze86.py`.
+
 ### 5.6 Self-update mechanism — `usbdisk` process  [C machinery · H orchestration]
 
 **The USB/FAT32/UPG updater is (at least partly) IN THIS MAINARM APP**, not only a pre-boot. The app
@@ -1838,6 +1855,14 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   limit), output-current setpoint struct `0x20000780` (`[+0x44]→[+0x40]`), and the parsed H102 fields
   (`p[+0x1d8/1da/1dc]`). Corrects the §5.18 "time getter" mislabel (`0x08052770` = `get_hv`).
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze85.py'`.
+- `analyze86.py` — **power-stage GPIO active-level + safe-state decoder (§5.5c/§5.17, custom_fw)**:
+  complements analyze78/81 (which named the pins) by decoding each C013 drive primitive's BSRR
+  set/reset logic to fix the pin ACTIVE level, then deriving the SAFE (de-asserted) boot level the
+  custom firmware drives so every contactor stays open. active-HIGH (cmd→SET): CHAdeMO d1/d2 PE7/PE8,
+  BatteryPower PD8, PreChargeRELAY PB10/PB11 ⇒ SAFE=LOW; active-LOW (`bics` inverted cmd→RESET):
+  BatteryCharge PC9, e-lock PD3/PE4 ⇒ SAFE=HIGH. Notes the PreCharge reset-mask address-bit trick
+  (`lsls r2, r1, #0x10/0x11`, GPIOB base bit10 → `(1<<10/11)<<16`). Emits the `gpio_safe_init` table.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze86.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -1852,15 +1877,19 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   both CRC16/MODBUS checksums, re-XORs. The boot installs `fw[0x402:]` verbatim and branches to the app
   reset vector, so the app runs as linked. Verified: boot CRC-append residue = 0, app verbatim, and a
   byte-identical round-trip when fed the stock app region. `STOCK.UPG app.bin -o CUSTOM.UPG`.
-- `custom_fw/` — **inert flashable custom-app skeleton (§5.19, build/flash/recovery pipeline proof)**:
-  `linker.ld` (FLASH `0x08020000` 640K / RAM `0x20000000` 192K / CCM 64K, `_estack=0x20030000`),
-  `startup.s` (vector table + self-bootstrapping Reset_Handler: MSP from `vector[0]`, `VTOR=0x08020000`,
-  copy `.data`, zero `.bss`+CCM, call `main` — the boot writes no MSP/VTOR, §5.15/§5.16), `main.c`
-  (**inert**: feeds IWDG + bumps a RAM `heartbeat` + idles; **no GPIO writes**, contactors stay open),
-  `build.sh` (`nix-shell -p gcc-arm-embedded` → `app.bin`, vectors verified, padded to sector 5),
-  `verify_pad.py`, `README.md` (safety + build/flash/recovery). `CUSTOM.UPG` built + verified (220 B code,
-  vectors `MSP=0x20030000`/`reset=0x08020041`, CRC residue 0). **Not a charge controller** — grow it via
-  §5.17/§5.18/§5.20/§5.21. Build outputs git-ignored; `CUSTOM.UPG` is a bench-flash candidate (untracked).
+- `custom_fw/` — **flashable custom-app safe-bootstrap foundation (§5.19, build/flash/recovery pipeline
+  proof + charge-controller base)**: `linker.ld` (FLASH `0x08020000` 640K / RAM `0x20000000` 192K / CCM 64K,
+  `_estack=0x20030000`), `startup.s` (vector table + self-bootstrapping Reset_Handler: MSP from `vector[0]`,
+  `VTOR=0x08020000`, copy `.data`, zero `.bss`+CCM, call `main`; weak core/CAN1 IRQ19–22 handler aliases —
+  the boot writes no MSP/VTOR, §5.15/§5.16), `src/rcc.c` (restore SYSCLK 168 MHz HSE→PLL, APB1 42/APB2 84,
+  FLASH 5WS, PWR VOS scale1 — §5.8.1), `src/gpio.c` (`gpio_safe_init`: BSRR pre-load of SAFE/de-asserted
+  levels then MODER→output, glitch-free; contactors open, no HV — §5.5c, analyze86), `src/tick.c` (100 Hz
+  SysTick OS tick + 100 kHz TIM2 timebase — §5.20), `main.c` (rcc→gpio_safe→tick→`cpsie i`, then 100 Hz loop:
+  feed IWDG + bump RAM `heartbeat`; **no ASSERTED power-stage drive**), `build.sh`/`verify_pad.py`/`README.md`.
+  Built + verified (972 B code, vectors `MSP=0x20030000`/`reset=0x080201AD`, SysTick strong override +
+  CAN handlers at IRQ19–22 confirmed, CRC residue 0). Power-stage drive stays GATED behind a compile-time
+  safety flag until bench-validated; grow via §5.17/§5.18/§5.21. Build outputs git-ignored; `CUSTOM.UPG`
+  is a bench-flash candidate (untracked).
 - `SERVICE.UPG` / `SERVICE_DUMP.UPG` / `SERVICE_DUMP_APP5.UPG` — built service images (§5.13e/f/i):
   `SERVICE.UPG` = byte-identical stock round-trip (safe recovery); `SERVICE_DUMP.UPG` = stock + one-shot
   bootloader-dump cave on the in-place `f_close` anchor (598 156 B, valid CRCs, **bench-confirmed working**

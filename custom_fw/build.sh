@@ -11,7 +11,8 @@ cd "$(dirname "$0")"
 nix-shell -p gcc-arm-embedded python3 --run '
   set -euo pipefail
   arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb -O2 -ffreestanding -nostdlib \
-    -Wall -Wextra -T linker.ld startup.s main.c -o app.elf \
+    -Wall -Wextra -Isrc -ffunction-sections -fdata-sections \
+    -T linker.ld startup.s main.c src/rcc.c src/gpio.c src/tick.c -o app.elf \
     -Wl,-Map=app.map -Wl,--gc-sections -Wl,--build-id=none
   arm-none-eabi-objcopy -O binary app.elf app.bin
   echo "--- size ---"
