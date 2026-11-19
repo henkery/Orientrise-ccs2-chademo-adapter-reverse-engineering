@@ -1298,6 +1298,22 @@ can be approximate; the `p->state` values, code offsets, and the engagement-guar
 The GB/T `GBT stm` and ISO15118 `iso1_…` machines are separate controllers — `CurrentDemand phase,BCL 1s
 timeout` lives in the GBT stm; their full maps are pending.)*
 
+**custom_fw replica (inert shadow controller).** `custom_fw/src/charge_stm.c` reproduces the safe-charge
+sequence (states 13→14→15→16→17→18→19→20→30 + a stop/shutdown skeleton 31→32→33→34→35→50, error states
+300/450/600) as a **shadow** controller: it evaluates the guards/interlocks and *records* the power action
+each state would drive (`STM_ACT_*`, mirroring §5.5c) but **executes no GPIO** — the asserted drive is the
+last gated layer. The **state-17 engagement guard is byte-exact** (`charge_stm_engage_ok`): `flag==1 &&
+isolation==4 && outvol+10>=ress_vol && outvol-5<=ress_vol` (unsigned 32-bit on zero-extended halfwords,
+window `outvol ∈ [ress_vol−10, ress_vol+5]`) `&& dwell counter>=250`; state-17 wait counter times out at
+424. It is host-unit-tested (`custom_fw/test_charge_stm.c`, 47 checks: window bounds, dwell/isolation/flag
+thresholds, unsigned wrap, sequence walk/stall/engagement, interlocks, and the C009 mismatch never-engages
+case). **Interlocks:** whole-bus 1525-tick watchdog→450, per-message 100-tick, H102 byte4/5 fault→300,
+`emergency_flag`→40, bms/hw_fault→600, CurrentDemand requires isolation==3. **EVSE-side handshake inputs**
+(isolation / precharge_flag `[r6+0x23F]` / plug_in / cablecheck_fin / chgparam_ok / ev_contactor /
+precharge_relay) are parameterized and **safe-stubbed (0)** until the CCS2 PLC/DIN subsystem is built, so
+the machine holds in the early states and the engagement guard cannot pass. State/interlock/engage/action
+are published as SWD-readable `stm_*` globals; `outvol` is the measured `get_hv()/10`.
+
 #### Power-stage drive + HV ADC front-end (C013, `analyze81`)  [C]
 
 The state-machine actions drive the **same physical pins as C009** (§5.5c) — the board is hardware-
@@ -1969,8 +1985,8 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   both CRC16/MODBUS checksums, re-XORs. The boot installs `fw[0x402:]` verbatim and branches to the app
   reset vector, so the app runs as linked. Verified: boot CRC-append residue = 0, app verbatim, and a
   byte-identical round-trip when fed the stock app region. `STOCK.UPG app.bin -o CUSTOM.UPG`.
-- `custom_fw/` — **flashable custom-app safe-bootstrap + CAN1 message layer + HV measurement (§5.19,
-  build/flash/recovery pipeline proof + charge-controller base)**: `linker.ld` (FLASH `0x08020000` 640K / RAM `0x20000000` 192K /
+- `custom_fw/` — **flashable custom-app safe-bootstrap + CAN1 message layer + HV measurement + inert
+  charge state machine (§5.19, build/flash/recovery pipeline proof + charge-controller base)**: `linker.ld` (FLASH `0x08020000` 640K / RAM `0x20000000` 192K /
   CCM 64K, `_estack=0x20030000`), `startup.s` (vector table + self-bootstrapping Reset_Handler: MSP from
   `vector[0]`, `VTOR=0x08020000`, copy `.data`, zero `.bss`+CCM, call `main`; weak core/CAN1 IRQ19–22 handler
   aliases — the boot writes no MSP/VTOR, §5.15/§5.16), `src/rcc.c` (restore SYSCLK 168 MHz HSE→PLL, APB1 42/
@@ -1984,15 +2000,23 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   READ `0x03`, CS=PE11), `src/nv_cal.c` (read + validate the stock factory cal @`0xFE000`, magic + 16-word
   checksum), `src/adc.c` (ADC1 8×ch8 PB0 + ADC2 8×ch9 PB1 simultaneous `CCR=0x2A006`, DMA2 stream0
   `CR=0x5518`, TIM8 125 kHz, differential-accumulation `DMA2_Stream0_IRQHandler` IRQ56 → `live_raw`),
-  `src/hv.c` (`get_hv` interpolation + `outvol=get_hv()/10`, libgcc `__aeabi_ldivmod`); `main.c`
-  (rcc→gpio_safe→**hv**→can→chademo→tick→`cpsie i`, then 100 Hz loop: IWDG feed + `heartbeat` + publish
-  `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + periodic TX + can_service; **no ASSERTED power-stage
-  drive**), `build.sh`/`verify_pad.py`/`README.md`. Built + verified (4264 B code, vectors
+  `src/hv.c` (`get_hv` interpolation + `outvol=get_hv()/10`, libgcc `__aeabi_ldivmod`);
+  **inert charge state machine (§5.17, analyze80/analyze85)**: `src/charge_stm.c` (shadow controller —
+  safe-charge sequence 13→…→30 + stop/shutdown skeleton, **byte-exact state-17 engagement guard**
+  `charge_stm_engage_ok` [flag==1 && isolation==4 && outvol∈[ress_vol−10,ress_vol+5] unsigned && dwell≥250],
+  interlocks [whole-bus 1525→450, per-msg 100, H102 fault→300, emergency→40, bms/hw→600, CurrentDemand
+  isolation==3], records but does NOT execute `STM_ACT_*` power actions; EVSE-side handshake inputs
+  safe-stubbed until the CCS2 PLC/DIN layer; host-unit-tested `test_charge_stm.c` 47 checks); `main.c`
+  (rcc→gpio_safe→**hv**→can→chademo→**charge_stm**→tick→`cpsie i`, then 100 Hz loop: IWDG feed + `heartbeat`
+  + publish `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + **charge_stm_step** (publish `stm_state/
+  stm_interlock/stm_engage/stm_action`) + periodic TX + can_service; **no ASSERTED power-stage drive**),
+  `build.sh`/`verify_pad.py`/`README.md`. Built + verified (5444 B code, vectors
   `MSP=0x20030000`/`reset=0x080201AD`, SysTick + CAN1_RX0 + DMA2_Stream0 strong overrides at IRQ15/IRQ20/
-  IRQ56 confirmed, adc_init/spi4_init/hv_get_raw register writes + interpolation disasm-checked, CRC residue
-  0). `outvol` accuracy must be bench-verified vs a reference before the gated engagement/power layer.
-  Power-stage drive stays GATED behind a compile-time safety flag until bench-validated; grow via §5.17.
-  Build outputs git-ignored; `CUSTOM.UPG` is a bench-flash candidate (untracked).
+  IRQ56 confirmed, adc_init/spi4_init/hv_get_raw register writes + interpolation + engagement-guard compares
+  disasm-checked, charge_stm_step has no peripheral/GPIO stores, CRC residue 0). `outvol` accuracy must be
+  bench-verified vs a reference before the gated engagement/power layer.
+  Power-stage drive stays GATED behind a compile-time safety flag until bench-validated; grow via §5.21
+  H102 current control. Build outputs git-ignored; `CUSTOM.UPG` is a bench-flash candidate (untracked).
 - `SERVICE.UPG` / `SERVICE_DUMP.UPG` / `SERVICE_DUMP_APP5.UPG` — built service images (§5.13e/f/i):
   `SERVICE.UPG` = byte-identical stock round-trip (safe recovery); `SERVICE_DUMP.UPG` = stock + one-shot
   bootloader-dump cave on the in-place `f_close` anchor (598 156 B, valid CRCs, **bench-confirmed working**

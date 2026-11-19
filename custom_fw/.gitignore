@@ -3,3 +3,5 @@ app.elf
 app.map
 app.bin
 app_padded.bin
+# host unit-test binary (regenerate with the gcc command in README.md)
+test_charge_stm
