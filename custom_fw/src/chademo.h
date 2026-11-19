@@ -50,6 +50,10 @@ typedef struct {
 void chademo_init(void);
 void chademo_rx_process(uint32_t tick);   /* drain CAN RX ring, parse H100/H101/H102 */
 void chademo_tx_periodic(uint32_t tick);  /* every 10 ticks: build + send H108/H109 (standby) */
+/* Set the measured output voltage (volts) reported in H108 byte1-2 (stock 450 clamp). The
+ * status stays standby (0) — this is measurement reporting only, no charge enable. Lets a
+ * CAN bench read get_hv()/10 without SWD. Negative/invalid -> 0. */
+void chademo_set_outvol(int32_t volts);
 const chademo_vehicle_t *chademo_vehicle(void);
 /* 1 if any vehicle message received within the whole-bus watchdog window. */
 int  chademo_bus_fresh(uint32_t tick);

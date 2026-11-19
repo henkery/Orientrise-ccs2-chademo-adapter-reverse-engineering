@@ -10,6 +10,7 @@
 
 static chademo_vehicle_t veh;
 static uint32_t last_tx_tick;
+static uint16_t report_outvol;            /* measured output voltage (V) for H108 byte1-2 */
 
 static uint16_t rd_le16(const uint8_t *p)
 {
@@ -22,6 +23,12 @@ void chademo_init(void)
     uint8_t *p = (uint8_t *)&veh;
     for (unsigned i = 0; i < sizeof(veh); i++) p[i] = 0;
     last_tx_tick = 0;
+    report_outvol = 0;
+}
+
+void chademo_set_outvol(int32_t volts)
+{
+    report_outvol = (volts > 0) ? (uint16_t)volts : 0u;   /* 450 clamp applied in send_h108 */
 }
 
 const chademo_vehicle_t *chademo_vehicle(void)
@@ -94,9 +101,10 @@ void chademo_tx_periodic(uint32_t tick)
 {
     if ((tick - last_tx_tick) < CHADEMO_TX_PERIOD_TICKS) return;
     last_tx_tick = tick;
-    /* Standby reporting until the measurement + state-machine layers exist: status=0 (not
-     * charging), output=0. The stock builds set status 1 (H108) / 3 (H109) in CurrentDemand. */
-    send_h108(0, 0);
+    /* Standby status (0 = not charging) — no charge enable. H108 byte1-2 now carries the
+     * measured output voltage (get_hv()/10, 450-clamped) for CAN-bench validation; H109 stays
+     * zero. The stock builds set status 1 (H108) / 3 (H109) only in CurrentDemand. */
+    send_h108(0, report_outvol);
     send_h109(0, 0);
 }
 

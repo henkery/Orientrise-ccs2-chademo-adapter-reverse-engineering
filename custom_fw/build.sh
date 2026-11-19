@@ -12,7 +12,8 @@ nix-shell -p gcc-arm-embedded python3 --run '
   set -euo pipefail
   arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb -O2 -ffreestanding -nostdlib \
     -Wall -Wextra -Isrc -ffunction-sections -fdata-sections \
-    -T linker.ld startup.s main.c src/rcc.c src/gpio.c src/tick.c src/can.c src/chademo.c -o app.elf \
+    -T linker.ld startup.s main.c src/rcc.c src/gpio.c src/tick.c src/can.c src/chademo.c \
+    src/spi4.c src/nv_cal.c src/adc.c src/hv.c -o app.elf -lgcc \
     -Wl,-Map=app.map -Wl,--gc-sections -Wl,--build-id=none
   arm-none-eabi-objcopy -O binary app.elf app.bin
   echo "--- size ---"

@@ -1,12 +1,13 @@
-# custom_fw — safe-bootstrap + CAN1 message layer (Orientrise KM-CCS2CHAdeMO-1)
+# custom_fw — safe-bootstrap + CAN1 message layer + HV measurement (Orientrise KM-CCS2CHAdeMO-1)
 
 A **minimal, flashable, stock-reversible** custom application for the adapter
 (STM32F427/F429, Cortex-M4), being built up in incremental, independently-testable layers
 toward a safe CHAdeMO charge controller. It proves the full **build → wrap → flash → recover**
 pipeline end-to-end on the byte-derived memory layout (REPORT §5.19) and boot entry contract
-(§5.15/§5.16). **Current stage: SAFE BOOTSTRAP + CAN1 MESSAGE LAYER** — clocks + timebase +
-GPIO safe-state + CAN1 (500k) CHAdeMO RX/TX. It is **not yet a charge controller** and performs
-**no asserted power-stage drive** (CAN reporting only).
+(§5.15/§5.16). **Current stage: SAFE BOOTSTRAP + CAN1 MESSAGE LAYER + HV MEASUREMENT** — clocks +
+timebase + GPIO safe-state + CAN1 (500k) CHAdeMO RX/TX + the factory-calibrated HV measurement
+front-end (`get_hv` → `outvol`). It is **not yet a charge controller** and performs **no asserted
+power-stage drive** (measurement + CAN reporting only).
 
 ## Safety — read first
 
@@ -24,8 +25,15 @@ This foundation is **safe-by-construction** (contactors open, no HV):
 - **Timebase**: `tick_init` starts the 100 Hz SysTick OS tick + 100 kHz TIM2 counter (§5.20).
 - **CAN1 message layer**: `can_init` brings up bxCAN CAN1 at 500 kbit/s (PD0/PD1 AF9, BTR
   `0x00270006`, §5.8.2); `chademo` parses RX H100/H101/H102 and sends periodic H108/H109 with a
-  **standby status + zero output** (§5.18). This is **communication only** — it drives no power
-  pin. The CHAdeMO enables d1/d2 (PE7/PE8) stay LOW (safe), so the power stage remains disabled.
+  **standby status** (§5.18). H108 byte1-2 carries the measured `outvol` (450-clamped) for bench
+  readout; H109 stays zero. This is **communication only** — it drives no power pin. The CHAdeMO
+  enables d1/d2 (PE7/PE8) stay LOW (safe), so the power stage remains disabled.
+- **HV measurement**: `hv_init` brings up the factory-calibrated HV front-end (§5.21, `analyze88`) —
+  SPI4 reads the **stock factory cal from external flash** (untouched by app flashing), ADC1+ADC2
+  simultaneous (PB0/PB1) + TIM8-triggered DMA2 accumulate the differential `live_raw`, and `get_hv`
+  interpolates it to `outvol=get_hv()/10`. This is **measurement only** — it samples analog inputs
+  and drives no power pin. If no valid cal is found, `outvol` reports 0 (`hv_cal_ok=0`). **Bench-verify
+  `outvol` against a known reference before the gated engagement/power layer relies on it.**
 - **IWDG**: the loop feeds the watchdog key (`0x40003000`) — harmless whether or not the IWDG is
   enabled (keeps the app alive if the boot left it running; no-op otherwise).
 - A RAM `heartbeat` counter increments each 10 ms tick so you can confirm "the custom app is
@@ -41,13 +49,17 @@ current control, §5.5c GPIO map + active levels).
 | file | purpose |
 |---|---|
 | `linker.ld` | GNU ld script: FLASH `0x08020000` 640K (app sectors 5–9), RAM `0x20000000` 192K, CCM `0x10000000` 64K, `_estack=0x20030000` (§5.19) |
-| `startup.s` | vector table + self-bootstrapping `Reset_Handler`: MSP from `vector[0]`, `VTOR=0x08020000`, copy `.data`, zero `.bss`+CCM, call `main`; weak core + CAN1 (IRQ19–22) handler aliases (the boot writes no MSP/VTOR, §5.15/§5.16) |
+| `startup.s` | vector table + self-bootstrapping `Reset_Handler`: MSP from `vector[0]`, `VTOR=0x08020000`, copy `.data`, zero `.bss`+CCM, call `main`; weak core + CAN1 (IRQ19–22) + DMA2_Stream0 (IRQ56) handler aliases (the boot writes no MSP/VTOR, §5.15/§5.16) |
 | `src/rcc.c/.h` | `rcc_init`: restore SYSCLK 168 MHz (HSE→PLL, APB1 42 / APB2 84 MHz, FLASH 5WS, PWR VOS scale1 — §5.8.1) |
 | `src/gpio.c/.h` | `gpio_safe_init`: drive all power pins to SAFE/de-asserted levels, glitch-free (BSRR pre-load then MODER→output — §5.5c, `analyze86`); pin map + active levels |
 | `src/tick.c/.h` | `tick_init`: 100 Hz SysTick OS tick (`SysTick_Handler`) + 100 kHz TIM2 counter; `tick_get`/`tick_micros`/`tick_delay_ms` (§5.20) |
 | `src/can.c/.h` | bxCAN CAN1 transport: 500k (BTR `0x00270006`), MCR `0x4D`, PD0/PD1 AF9, bank-0 mask filter accept `0x100..0x103`, FIFO0-pending RX ISR (`CAN1_RX0_IRQHandler`)→ring, polled TX, bus-off recovery (§5.8.2) |
-| `src/chademo.c/.h` | CHAdeMO message layer: RX H100/H101/H102 parse (byte→field per `analyze87`), periodic H108/H109 standby TX, per-message + whole-bus watchdog timestamps (§5.18) |
-| `main.c` | rcc→gpio_safe→can→chademo→tick→`cpsie i`, then 100 Hz loop (feed IWDG + `heartbeat` + RX parse + periodic TX + can_service); no asserted power drive |
+| `src/chademo.c/.h` | CHAdeMO message layer: RX H100/H101/H102 parse (byte→field per `analyze87`), periodic H108/H109 standby TX (H108 byte1-2 = measured `outvol`, 450-clamped), per-message + whole-bus watchdog timestamps (§5.18) |
+| `src/spi4.c/.h` | SPI4 external-flash read transport: `CR1=0x344` (mode0/master//2/8bit/MSB), CS=PE11, SCK/MISO/MOSI=PE12/13/14 AF5; READ `0x03` + 24-bit addr (§5.21, `analyze88`) |
+| `src/nv_cal.c/.h` | read + validate the stock factory HV cal record from SPI4 offset `0xFE000` (magic `0x41444A67`, 16-word additive checksum); exposes `raw_hi/raw_lo/eng_hi/eng_lo` (§5.21) |
+| `src/adc.c/.h` | HV ADC front-end: ADC1 8×ch8 (PB0) + ADC2 8×ch9 (PB1) regular-simultaneous (`CCR=0x2A006`), DMA2 stream0 circular (`CR=0x5518`), TIM8 125 kHz trigger; `DMA2_Stream0_IRQHandler` (IRQ56) accumulates the PB0−PB1 differential over 3125 events → `live_raw` (§5.21) |
+| `src/hv.c/.h` | `hv_init` (spi4+nv_cal+adc); `get_hv` two-point interpolation `eng_lo+(live_raw−raw_lo)(eng_hi−eng_lo)/(raw_hi−raw_lo)`; `outvol=get_hv()/10` (§5.21) |
+| `main.c` | rcc→gpio_safe→hv→can→chademo→tick→`cpsie i`, then 100 Hz loop (feed IWDG + `heartbeat` + publish `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + periodic TX + can_service); no asserted power drive |
 | `build.sh` | builds via `nix-shell -p gcc-arm-embedded python3` → `app.elf`/`app.bin`, verifies vectors, pads to sector 5 |
 | `verify_pad.py` | checks `vector[0]==0x20030000`, `vector[1]` is an in-app Thumb address; pads `app.bin` → `app_padded.bin` (128 KB, `0xFF` tail) |
 
@@ -62,8 +74,10 @@ bash build.sh
 Produces `app.bin` (vectors + code, linked at `0x08020000`) and `app_padded.bin` (128 KB =
 sector 5, matching the ground-truth `app5.bin` dump). Expected vectors:
 `MSP=0x20030000`, `reset=0x080201AD` (handler `0x080201AC`, Thumb bit set). The SysTick vector
-(offset `0x3C`) must point to `tick.c`'s strong `SysTick_Handler`, and the CAN1_RX0 vector
-(IRQ20, offset `0x90`) to `can.c`'s strong `CAN1_RX0_IRQHandler` (both override the weak aliases).
+(offset `0x3C`) must point to `tick.c`'s strong `SysTick_Handler`, the CAN1_RX0 vector
+(IRQ20, offset `0x90`) to `can.c`'s strong `CAN1_RX0_IRQHandler`, and the DMA2_Stream0 vector
+(IRQ56, offset `0x120`) to `adc.c`'s strong `DMA2_Stream0_IRQHandler` (all override the weak aliases).
+`hv.c`'s 64-bit `get_hv` division links `__aeabi_ldivmod` from libgcc (`-lgcc` in `build.sh`).
 
 ## Wrap into a bootable UPG
 
@@ -92,9 +106,15 @@ byte-identical round-trip when fed the stock app region.
 3. The app runs the 100 Hz loop feeding the IWDG. Confirm it runs over SWD: halt and read
    `&heartbeat` (incrementing at 100 Hz) or check `PC` is in the `main` loop. On a CAN bench
    (500k, e.g. an ESP32-S3/Arduino-Mega CAN node or analyzer on PD0/PD1) you should see periodic
-   **H108 (0x108) / H109 (0x109)** frames every 100 ms with standby status + zero output, and the
-   app parses injected H100/H101/H102. **No contactor should click and no HV should appear** — if
-   anything energises, stop immediately.
+   **H108 (0x108) / H109 (0x109)** frames every 100 ms with standby status, and the app parses
+   injected H100/H101/H102. **No contactor should click and no HV should appear** — if anything
+   energises, stop immediately.
+4. **Verify the HV measurement** (still no power drive): read `&hv_cal_ok` over SWD — `1` means the
+   stock factory cal was read from external SPI flash; `0` means absent/invalid (`outvol` reports 0).
+   With a known safe voltage applied to the HV sense input (PB0/PB1 divider), compare `&hv_outvol`
+   (volts) — or H108 byte1-2 (450-clamped) on the CAN bench — against a reference meter. `&hv_adc_raw`
+   is the raw differential accumulation. **`outvol` must match the reference before the gated
+   engagement/power layer is allowed to use it.**
 
 ## Recovery (bricking-safe)
 
@@ -113,18 +133,22 @@ that mass-erases). See REPORT §5.19.
 
 Built up in incremental, independently-testable layers; power-stage drive stays GATED last.
 
-**Done (safe bootstrap + CAN1 message layer):**
+**Done (safe bootstrap + CAN1 message layer + HV measurement):**
 - Clocks — `rcc_init` restores SYSCLK 168 MHz (§5.8.1).
 - §5.20 — 100 Hz SysTick OS tick + 100 kHz TIM2 timebase (`src/tick.c`).
 - §5.5c — GPIO **safe-state** init (`src/gpio.c`, active levels via `analyze86`): all power pins
   de-asserted, contactors open. (Asserted drive is a later, gated layer.)
 - §5.8.2/§5.18 — CAN1 transport (`src/can.c`, 500k) + CHAdeMO message layer (`src/chademo.c`):
-  RX H100/H101/H102 parse (byte→field via `analyze87`), periodic H108/H109 **standby** TX (zero
-  output until measurement exists), per-message + whole-bus watchdog timestamps.
+  RX H100/H101/H102 parse (byte→field via `analyze87`), periodic H108/H109 **standby** TX (H108
+  byte1-2 = measured `outvol`, 450-clamped), per-message + whole-bus watchdog timestamps.
+- §5.21 — `get_hv` **HV measurement**, faithful replica via `analyze88` (`src/spi4.c`/`nv_cal.c`/
+  `adc.c`/`hv.c`): SPI4 reads the **stock factory cal from external flash** (offset `0xFE000`,
+  magic + 16-word checksum — untouched by app flashing, so no bench cal needed), ADC1+ADC2
+  simultaneous (PB0/PB1) + TIM8-triggered DMA2 accumulate the differential `live_raw` (3125
+  events), `get_hv` interpolates → `outvol=get_hv()/10`. **Measurement only, no power drive.**
+  Bench-verify `outvol` against a reference before the gated engagement/power layer relies on it.
 
 **Remaining layers:**
-- §5.21 — `get_hv` measurement (Vrefint-calibrated ADC → NV two-point cal → `outvol=get_hv()/10`).
-  Note: the custom app lacks the factory NV cal data — needs bench calibration or reading stock cal.
 - §5.17 — CHAdeMO charge state machine + state-17 voltage-engagement guard
   (`outvol ∈ [ress_vol−10, ress_vol+5]`) + safety interlocks + CAN watchdogs.
 - §5.21 — H102 vehicle-request → output-current control law (`setpara(4)`, struct `0x20000780`).

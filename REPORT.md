@@ -1544,6 +1544,55 @@ PreChargeRELAY (`0x08088498`, PB10/PB11). The isolation getter `0x0805206C` read
 {`+0` valid, `+1` level (bit1 = warning), `+2` mode}; state-30 requires isolation `==3`, the engagement
 guard `==4` (§5.17).
 
+**D-addendum — full measurement front-end + factory-cal source (`analyze88`, custom_fw HV layer).**
+The complete acquisition chain is now byte-derived, and it corrects three points in the sketch above:
+
+- **Factory cal lives in an EXTERNAL 2 MB SPI flash, not internal flash.** The NV read core
+  `0x08088CFE` (mutex-wrapped by `0x08088F44`) is a standard SPI-flash **READ `0x03`**: it loads
+  **SPI4 `0x40013400`**, range-checks `[src, src+len) < 0x200000` (2 MB), asserts **CS = PE11**
+  (active-low, `GPIOE_BSRR = 0x08000000`), sends `0x03` + 24-bit address MSB-first, clocks out `len`
+  bytes with dummy `0x00` writes (polling TXE), then deasserts CS (`BSRR = 0x800`). **`0xFE000` is the
+  flash OFFSET of the cal record** (not an "erased sentinel"). SPI4 init `0x08088C38`: `CR1 = 0x344`
+  (CPOL=0/CPHA=0 mode 0, master, BR=/2 → 42 MHz, 8-bit, MSB-first, SSM+SSI, SPE), `CR2 = 0`;
+  SCK=PE12 / MISO=PE13 / MOSI=PE14 (AF5). App flashing writes only internal sectors 5–9, so this
+  external NV region is **preserved** — a custom app reads the stock factory cal directly (no bench
+  calibration required).
+- **Checksum is over 16 WORDS (0x40 bytes), not 0x10 bytes.** The checksum fn `0x0805236A` loops
+  `r1 = 0x10` times with `ldm r2!,{r3}` (a **word** per step) ⇒ additive sum of `words[0..15]`
+  (offsets `0x00..0x3F`) compared to `word[+0x40]`. Validation (lazy-init `0x0805231E`):
+  `word[+0x3C] == 0x41444A67`, `word[+0x38] != 0`, checksum match. `get_hv` fields confirmed:
+  `raw_hi=+0x0C, raw_lo=+0x10, eng_hi=+0x14, eng_lo=+0x18` (32-bit signed).
+- **`get_hv`'s `live_raw` is NOT Vrefint-calibrated.** The Vrefint factors / calibrated-read
+  `0x0808883A` feed the **separate** power-stage monitor `0x080524FC` (thresholds 8000/10500). The
+  `get_hv` path uses the raw accumulated differential below, directly.
+
+**ADC front-end (init `0x08088584`), all register values byte-derived:**
+
+| block | config |
+|---|---|
+| ADC1 `0x40012000` | `CR1=0x800` (discontinuous, 1 conv/trigger), `CR2=0x1E000001` (ADON + EXTSEL=14 **TIM8_TRGO** + rising edge), `SMPR1=0x04924924` `SMPR2=0x24924924` (84-cycle sample), `SQR1/2/3=0x00742108/0x10842108/0x10842108` = **8× channel 8 (PB0)** |
+| ADC2 `0x40012100` | same CR1/CR2/SMPR, `SQR1/2/3=0x0074A529/0x1294A529/0x1294A529` = **8× channel 9 (PB1)** |
+| ADC common `0x40012300` | `CCR=0x2A006`: **MULTI=6** regular-simultaneous ADC1+ADC2, **DMA mode 2** (32-bit CDR), **ADCPRE=/6** (84/6 = 14 MHz ADC clock) |
+| DMA2 stream0 ch0 | `CR=0x5518` (circular, 32-bit, MINC, TCIE+HTIE), `NDTR=16`, `PAR=ADC_CDR (0x40012308)`, `M0AR=0x20022640`, enabled last |
+| TIM8 `0x40010400` | `PSC=0`, `ARR=0x53F` (1343), `CR2=0x20` (TRGO=update), `CR1=0x95` ⇒ 168 MHz/1344 = **125 kHz** conversion trigger |
+
+**DSP (DMA ISR `0x080886BC` + accumulator `0x08088748`).** On HTIF0 the ISR processes buffer words
+0..7, on TCIF0 words 8..15 (8 dual-samples per half; each CDR word = ADC1 low16 | ADC2 high16). Per
+half it computes **`diff = sum(ADC1 low16) − sum(ADC2 high16)`** (the **PB0 − PB1 differential**),
+accumulates into cal `+0x2C`, and counts cal `+8`. After **3125 (`0xC35`) half-buffer events =
+25000 differential samples (~200 ms)** it publishes the accumulated sum as **`live_raw`
+(`0x200008B0`)** and resets. The publish is a **tail-branch `b.w 0x08052764`** (`set_live_raw`),
+*not* a `bl` — which is why a BL-xref scan of the setter finds no callers. `get_hv` then interpolates
+`live_raw` against the factory `raw_lo/raw_hi` (same accumulated-differential scale) → `outvol`.
+
+**custom_fw HV layer (faithful replica, INERT).** `src/spi4.c` (SPI4 init + READ `0x03`),
+`src/nv_cal.c` (read + validate the stock cal record), `src/adc.c` (ADC1+ADC2/DMA2/TIM8 verbatim +
+the differential-accumulation `DMA2_Stream0_IRQHandler`, IRQ56), `src/hv.c` (`get_hv` +
+`outvol=get_hv()/10`). The result is published as SWD-readable globals (`hv_outvol/hv_raw/hv_adc_raw/
+hv_cal_ok`) and in H108 byte1-2 (450-clamped) for CAN-bench validation. **No power-stage drive**;
+`outvol` accuracy must be bench-verified against a reference before the gated engagement/power layer.
+Re-derived from C013 bytes by `analyze88.py`.
+
 **E — vehicle-request → output-current control law.** The adapter parses the vehicle's **H102** request
 into the stm context: `p[+0x1d8]` = status byte, `p[+0x1da]` = **TargetBatteryVoltage** (halfword),
 `p[+0x1dc]` = **ChargingCurrentRequest** (byte). The control flow:
@@ -1894,6 +1943,18 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   `p+0x1da` (LE), byte3=ChargingCurrentRequest `p+0x1dc`, byte4/5=fault `p+0x1dd/1de`. Reconciles the
   §5.10 tentative "byte0=current request" reading (parse places it at byte3). Backs `custom_fw/src/chademo.c`.
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze87.py'`.
+- `analyze88.py` — **HV measurement-chain decoder (§5.21 D-addendum, custom_fw HV layer)**: decodes the
+  C013 factory-calibrated HV front-end from bytes — SPI4 init `0x08088C38` (`CR1=0x344`) + NV read core
+  `0x08088CFE` (external 2 MB SPI-flash READ `0x03`, CS=PE11, cal record @`0xFE000`); NV cal lazy-init
+  `0x0805231E` validation (magic `0x41444A67`@`+0x3C`, `[+0x38]!=0`, **16-word** additive checksum vs
+  `+0x40`) + `get_hv` `0x08052770` field offsets/interpolation; ADC init `0x08088584` (ADC1 8×ch8 PB0 +
+  ADC2 8×ch9 PB1 regular-simultaneous `CCR=0x2A006`, DMA2 stream0 `CR=0x5518` NDTR=16, TIM8 125 kHz
+  trigger); DMA ISR `0x080886BC` + accumulator `0x08088748` (PB0−PB1 differential sum, 3125 events =
+  25000 samples → `live_raw`, published via tail-branch `b.w set_live_raw`). Corrects the §5.21 sketch:
+  cal is in **external SPI flash** (not internal), checksum is 16 **words** (not 0x10 bytes), and
+  `get_hv`'s `live_raw` is **not** Vrefint-calibrated (that feeds the separate power-stage monitor).
+  Backs `custom_fw/src/{spi4,nv_cal,adc,hv}.c`.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze88.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -1908,8 +1969,8 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   both CRC16/MODBUS checksums, re-XORs. The boot installs `fw[0x402:]` verbatim and branches to the app
   reset vector, so the app runs as linked. Verified: boot CRC-append residue = 0, app verbatim, and a
   byte-identical round-trip when fed the stock app region. `STOCK.UPG app.bin -o CUSTOM.UPG`.
-- `custom_fw/` — **flashable custom-app safe-bootstrap + CAN1 message layer (§5.19, build/flash/recovery
-  pipeline proof + charge-controller base)**: `linker.ld` (FLASH `0x08020000` 640K / RAM `0x20000000` 192K /
+- `custom_fw/` — **flashable custom-app safe-bootstrap + CAN1 message layer + HV measurement (§5.19,
+  build/flash/recovery pipeline proof + charge-controller base)**: `linker.ld` (FLASH `0x08020000` 640K / RAM `0x20000000` 192K /
   CCM 64K, `_estack=0x20030000`), `startup.s` (vector table + self-bootstrapping Reset_Handler: MSP from
   `vector[0]`, `VTOR=0x08020000`, copy `.data`, zero `.bss`+CCM, call `main`; weak core/CAN1 IRQ19–22 handler
   aliases — the boot writes no MSP/VTOR, §5.15/§5.16), `src/rcc.c` (restore SYSCLK 168 MHz HSE→PLL, APB1 42/
@@ -1918,13 +1979,20 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   (100 Hz SysTick OS tick + 100 kHz TIM2 timebase — §5.20), `src/can.c` (bxCAN CAN1 500k BTR `0x00270006`,
   MCR `0x4D`, PD0/PD1 AF9, bank-0 mask filter accept `0x100..0x103`, FIFO0-pending RX ISR→ring, polled TX,
   bus-off recovery — §5.8.2), `src/chademo.c` (H100/H101/H102 RX parse per analyze87 + periodic H108/H109
-  standby TX, per-message + whole-bus watchdog timestamps — §5.18), `main.c` (rcc→gpio_safe→can→chademo→tick→
-  `cpsie i`, then 100 Hz loop: IWDG feed + `heartbeat` + RX parse + periodic TX + can_service; **no ASSERTED
-  power-stage drive**), `build.sh`/`verify_pad.py`/`README.md`. Built + verified (2024 B code, vectors
-  `MSP=0x20030000`/`reset=0x080201AD`, SysTick + CAN1_RX0 strong overrides at IRQ15/IRQ20 confirmed,
-  can_init register writes disasm-checked, CRC residue 0). Power-stage drive stays GATED behind a compile-time
-  safety flag until bench-validated; grow via §5.17/§5.21. Build outputs git-ignored; `CUSTOM.UPG` is a
-  bench-flash candidate (untracked).
+  standby TX with measured outvol in H108 byte1-2, per-message + whole-bus watchdog timestamps — §5.18),
+  **HV measurement layer (§5.21 D-addendum, analyze88)**: `src/spi4.c` (SPI4 `CR1=0x344` + external-flash
+  READ `0x03`, CS=PE11), `src/nv_cal.c` (read + validate the stock factory cal @`0xFE000`, magic + 16-word
+  checksum), `src/adc.c` (ADC1 8×ch8 PB0 + ADC2 8×ch9 PB1 simultaneous `CCR=0x2A006`, DMA2 stream0
+  `CR=0x5518`, TIM8 125 kHz, differential-accumulation `DMA2_Stream0_IRQHandler` IRQ56 → `live_raw`),
+  `src/hv.c` (`get_hv` interpolation + `outvol=get_hv()/10`, libgcc `__aeabi_ldivmod`); `main.c`
+  (rcc→gpio_safe→**hv**→can→chademo→tick→`cpsie i`, then 100 Hz loop: IWDG feed + `heartbeat` + publish
+  `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + periodic TX + can_service; **no ASSERTED power-stage
+  drive**), `build.sh`/`verify_pad.py`/`README.md`. Built + verified (4264 B code, vectors
+  `MSP=0x20030000`/`reset=0x080201AD`, SysTick + CAN1_RX0 + DMA2_Stream0 strong overrides at IRQ15/IRQ20/
+  IRQ56 confirmed, adc_init/spi4_init/hv_get_raw register writes + interpolation disasm-checked, CRC residue
+  0). `outvol` accuracy must be bench-verified vs a reference before the gated engagement/power layer.
+  Power-stage drive stays GATED behind a compile-time safety flag until bench-validated; grow via §5.17.
+  Build outputs git-ignored; `CUSTOM.UPG` is a bench-flash candidate (untracked).
 - `SERVICE.UPG` / `SERVICE_DUMP.UPG` / `SERVICE_DUMP_APP5.UPG` — built service images (§5.13e/f/i):
   `SERVICE.UPG` = byte-identical stock round-trip (safe recovery); `SERVICE_DUMP.UPG` = stock + one-shot
   bootloader-dump cave on the in-place `f_close` anchor (598 156 B, valid CRCs, **bench-confirmed working**
