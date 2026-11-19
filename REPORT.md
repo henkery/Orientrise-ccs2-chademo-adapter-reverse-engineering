@@ -248,9 +248,12 @@ because it looked for the product name, not the internal symbol.
 
 ### 5.5 Analog / power control  [C]
 - **CP** states A–F + duty-cycle read (`CP DUTY is '%c'…`), **PP** (proximity), `KEY_LOCK`.
+  **ADC-channel→signal map RESOLVED + NAMED (§5.5b, `analyze77`): CP DC level = PA0/ADC3_IN0 (`AD_CPD`),
+  PP = PA2/ADC3_IN2 (`AD_PP`); CP PWM duty/freq = TIM4_CH1 input-capture on PD12 (not ADC).**
 - Connector **e-lock**, **precharge**, **welding detection**, **insulation/isolation**,
   contactor/relay drive (`precharge_relay failed!terminate`), emergency/timeout shutdown.
-- **TIM2** used heavily (16 refs) ⇒ likely CP PWM capture/compare. **CAN1/CAN2** ⇒ CHAdeMO + GB/T BMS.
+- **CP PWM capture = TIM4_CH1/PD12** (input-capture, slave-reset period measurement, §5.5b) — the earlier
+  "TIM2 ⇒ CP PWM" guess was wrong; TIM2 is a busy-delay timer (§8.5). **CAN1/CAN2** ⇒ CHAdeMO + GB/T BMS.
 
 ### 5.5a GPIO pin map — DECODED (`analyze74`)  [C]
 **RESOLVED (§8.4).** The board GPIO init @ runtime `0x08087010` (f+`0x67412`) writes a literal pool of
@@ -266,14 +269,51 @@ parser was found by hunting LDR loads whose pool *location* falls in the table, 
 | **USART1** | PA9 TX / PA10 RX | AF7 |
 | **USB OTG FS** | PA11 DM / PA12 DP | AF10 |
 | **CAN1** | PD0 RX / PD1 TX | AF9 |
-| **TIM4_CH1** | PD12 | AF2 |
-| **ADC analog inputs** | PA0/PA1/PA2, PB0/PB1, PC2 | — |
+| **TIM4_CH1 — CP PWM input-capture** | PD12 | AF2 |
+| **ADC analog inputs** (named §5.5b) | PA0=`AD_CPD`(CP), PA1=`+24V`, PA2=`AD_PP`(PP), PB0/PB1=`HV` diff, PC2=`AD_BAT` | — |
 
 GPIO outputs (relay / e-lock / LED / contactor drive, exact signal names pending): PA4; PB10/PB11/PB14/PB15;
 PC5/PC9; PD3/PD8/PD11; PE4/PE7/PE8/PE11/PE15. PA13/PA14 left as inputs (SWD not claimed by the app).
 **CAN2 has no AF9 pins in this init** (PB5/PB6/PB12/PB13 left as inputs) ⇒ its GPIO is configured elsewhere
 or the board wires only CAN1 — **CAN1/CAN2→CHAdeMO/GB/T assignment still pending** (§8.5). Full per-pin
 mode/AF/pull/open-drain/initial-level table: `analyze74.py`.
+
+### 5.5b ADC channel→signal map — DECODED + NAMED (`analyze77`)  [C]
+**RESOLVED (§8.4).** The analog front-end is named by the firmware's own **"Hardware Information"**
+diagnostic dumper @`0x0804E92C` (f+`0x2ED2E`): it calls each ADC getter and prints the result against a
+label string (f+`0x2F0FA`–`0x2F1AE`), so the channel→signal binding is read straight from the firmware,
+not guessed. The ADC init @`0x08087B7E` (f+`0x67F80`) sets up **ADC1+ADC2 in dual regular-simultaneous
+mode** (`ADC_CCR=0x0002A006`, MULTI=6) and **ADC3 independent**, all triggered by **TIM8_TRGO**
+(CR2 EXTSEL=1110, EXTEN=rising); DMA2_Stream0_CH0 reads the packed `ADC_CDR` (ADC2<<16|ADC1) → buffer
+`0x200225E8`, DMA2_Stream1_CH2 reads `ADC3_DR` → `0x20022628` (both circular, NDTR=16). Regular sequences
+(SQR1/2/3): **ADC1 = 8× ch8 (PB0)**, **ADC2 = 8× ch9 (PB1)**, **ADC3 SQ1..8 = [1,2,1,2,1,12,1,0] =
+PA1,PA2,PA1,PA2,PA1,PC2,PA1,PA0**. The DMA half/full-transfer ISRs (`0x08087CA8` / `0x08087D56`) accumulate
+into a context struct @SRAM `0x20000988`; scaled getters bind each field to a pin (full-scale = samples×4095):
+
+| signal (dumper label) | pin / channel | getter | scaling | meaning |
+|---|---|---|---|---|
+| **`AD_CPD`** | **PA0 / ADC3_IN0** | `0x08087E64` | Σ8·PA0 ×3300/32760 | **CP (Control Pilot) DC voltage level** (state A–F) |
+| **`AD_PP`** | **PA2 / ADC3_IN2** | `0x08087E3C` | Σ16·PA2 ×3300/65520 | **PP (Proximity Pilot) voltage** |
+| `AD_BAT` | PC2 / ADC3_IN12 | `0x08087E50` | Σ8·PC2 ×6600/32760 | battery voltage (6.6 V FS ⇒ 2:1 divider) |
+| `+24V` | PA1 / ADC3_IN1 | `0x08087E26` | duty-reconstructed | +24 V rail monitor |
+| `HV` | **PB0−PB1** (ADC1_IN8 − ADC2_IN9) | `0x08051D38` | Σ(PB0−PB1), 3125-event avg → `0x20000878` | **DC-link high voltage** (differential isolated sense) |
+
+**CP is split across two peripherals:** its **DC level** (for state detection) is the ADC channel PA0
+(`AD_CPD`); its **PWM duty/frequency** are **not ADC** — they are **TIM4_CH1 input-capture on PD12 (AF2)**
+(init `0x08088078`: CCMR1 CC1S=01 input on TI1, SMCR=0x54 slave-reset-on-TI1FP1 ⇒ period measurement,
+PSC=83/ARR=1110 ≈ 1 kHz, DIER=CC1IE+CC2IE). The capture ISR `0x080880BA` reads CCR1/CCR2 + GPIOD bit12,
+validates period ≈ 950±100 ticks (1 kHz), computes duty×1000 and feeds a **16-entry sorted-insertion median
+filter** (`0x0808818A`, buffer `0x20022688` → ctx `0x200009C0`): `CP_DUTY`=get[8] (`0x08088144`),
+`CP_FREQ`=get[6] (`0x08088158`). The duty is decoded to **available current by the IEC 61851-1 law**
+(`0x08051E02`): valid 8–97 % (`ac cpduty_err! not nominal(8%-97%)!`); <10 %→6 A; 10–85 %→`(6·d+50)/100`
+= 0.6·d A; 85–96 %→`(25·d−15950)/100` = 2.5·(d−64) A; 96–97 %→80 A; else 0. A companion classifier
+(`0x08051E70`) maps duty to the **state char** printed in `#SLAC: CP DUTY is '%c'[%.1u][%u],PP=%u`:
+`'5'` (3–7 % = the **DIN/ISO 5 % digital-communication mode**, `CP_ST_DUTY_5` checked by SessionSetupRes /
+PaymentSelectionRes / ContractAuthenticationRes), `'M'` (7.5–97 % nominal PWM), `'0'` (0 %), `'1'` (100 %),
+`'N'` (invalid). `CP_ST` getter `0x08051EDC` returns `'E'` (no duty) / `'B'`/`'C'` (duty + PD11 level).
+**PP state** (`PP_ST`, getter `0x08051DBC`) = an `AD_PP` voltage **window detector** `0x08051D7A`
+(2146/2296 mV thresholds, debounce 4 → flag `0x2000087C`). The remaining dumper rows are `KEY_LOCK`
+(connector e-lock, `0x08087AEE`) and `PLC LINK`/`INT` (QCA7005). Re-derived from bytes by `analyze77.py`.
 
 ### 5.6 Self-update mechanism — `usbdisk` process  [C machinery · H orchestration]
 
@@ -1348,6 +1388,17 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   = the ISO 15118 PnC root-certificate configuration (flash parser `0x08050E14` ← config block
   `0x001F8010`, magic `0xCEA155E1`; counted by config init `0x08050B94`). Run:
   `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze76.py'`.
+- `analyze77.py` — **ADC-channel→CP/PP signal mapper (§5.5a/§5.5b/§8.4)**: names which ADC channels/pins
+  carry CP and PP (and the other analog measurements), re-derived from `firmware.bin` bytes (no hardcoded
+  conclusions). Locates the firmware "Hardware Information" dumper label strings (`AD_PP`/`AD_CPD`/`AD_BAT`/
+  `CP_DUTY`/`CP_FREQ`/`CP_ST`/`PP_ST`/`+24V`/`HV`, f+`0x2F0FA`–`0x2F1AE`), pairs each dumper BL getter with
+  its ADR label, constant-tracks the ADC init (`0x08087B7E`) SQR1/2/3 + CCR + DMA writes to decode the
+  regular sequences (ADC1=8×ch8/PB0, ADC2=8×ch9/PB1, ADC3=[1,2,1,2,1,12,1,0]) and result buffers
+  (`0x200225E8`/`0x20022628`), and decodes the mV getters' scale to bind each ADCctx field (`0x20000988`) to
+  a pin. Confirms **CP DC level = PA0/ADC3_IN0 (`AD_CPD`)**, **PP = PA2/ADC3_IN2 (`AD_PP`)**, PC2=`AD_BAT`,
+  PA1=`+24V`, PB0−PB1=`HV`; CP PWM duty/freq = TIM4_CH1/PD12 input-capture (median filter `0x20022688`),
+  duty→current by the IEC 61851-1 law (`0x08051E02`), duty→state-char `{'0','1','5','M','N'}` (`'5'`=5%
+  digital mode). Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze77.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -1383,13 +1434,18 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 2b. **Bootloader / update orchestration (bricking-critical)** — **ACQUIRED via the dump cave (2026-11-19, §5.14);** software search had found nothing (2026-11-17). The bootloader is a separate factory component at `0x08000000–0x08020000` (128 KB, sectors 0–4). It is **not in the RAR** (only `MAIN_…UPG`), **not elsewhere in the project**, and **not embedded in the app** — no real vector table; the lone `0x8F652` candidate is a misaligned `.rodata` pointer-table false positive (`analyze25/26`). **Not publicly downloadable:** vendor **Orientrise** (No. 355 Longjin Rd, Changzhou, Jiangsu) ships firmware **contact-only** — `support@orientrise.net` / `sales@orientrise.net`, phone/WhatsApp/WeChat `+86 181 0150 7071`; free firmware on request matched to vehicle/region, **no self-service portal and no `BOOT_…UPG` published**. The nearest open project **`uhi22/ccs32clara` / `osexpert/ccs32clara-chademo`** (Dongguan **Longood** OEM + rebrands EV-Boy / Akyga AK-SC-E18 / EVniculus / Autonlaturit) **explicitly lists Orientrise as NOT compatible** (Longood = STM32F407 + plain `My407ccs2chademo.bin`; Orientrise = F427/F429 + `.UPG`/XOR/encrypted prefix) and does **not** include its own OEM bootloader either — but its README independently corroborates §5.6: *"Firmware update logic is inside the bootloader, so this is not affected by the firmware."* **Acquisition paths:** (a) **email the vendor** for `BOOT_CCS2CHADEMO_1.UPG`; (b) **SWD dump** of `0x08000000` len `0x20000` — **bricking-safe procedure in §5.7** (ESP32-S3 CMSIS-DAP or ST-Link): reading is non-destructive at any RDP level, only an RDP 1→0 *unlock* erases — **never unlock**; probe the first 8 bytes to learn the level first. Once obtained, confirm: who reads USB first, the XOR/prefix decode + any whole-image verify, and any USB/SWD recovery mode. **Kit built (2026-11-18):** path (b) is implemented as the read-only, probe-gated **`acq/` kit** (§5.7 / §7) — SWD (ESP32-S3 CMSIS-DAP + OpenOCD) primary, UART/DFU system-bootloader fallbacks, `analyze_boot.py` triage; software-verified (command names + analyzer smoke-tested). **`boot.bin` acquired 2026-11-19 via the §5.13f dump cave** (no SWD hardware needed) → `acq/dump/boot.bin`, RDP0, triaged in §5.14. **Update orchestration now traced (§5.15):** external-SPI storage pool (`0x100000`+) → serial/XMODEM intake → XOR + CRC16/MODBUS decode in-pool → component parse → verbatim SPI→internal-flash install → config rebuild → reset. Install transform **confirmed by the sector-5 dump (§5.16)**: strip `0x402`-byte header, copy `fw[0x402:]` verbatim — **no prefix-decrypt**.
 3. **The prefix block** (`0x58–0x400`) — **RESOLVED: discarded header field (§5.16).** 914 B high-entropy (7.815 after XOR) + plaintext footer `XIE22.00` / **u32 length = filesize−0x404** / u16 CRC `0x2DBE`. The running-app dump proves the boot strips `0x402` bytes and installs `fw[0x402:]` verbatim, so the prefix (< `0x402`) is **never installed or decrypted** — there is **no prefix cipher** (the per-revision difference is per-image header content; the boot's split-table routine is CRC16/MODBUS integrity, §5.15). The footer length/CRC are recomputable. *(The `0x8C400–0x8E600` block is mbedTLS AES/SHA-256 tables, not encrypted data.)*
 3b. **Bootloader→app entry contract — RESOLVED (§5.16); integrity CRACKED; service UPG BUILT (§5.12/§5.13).** Reset vector → file `0x40A`→`0x08020008`; file `0x400` = 10-byte entry header (2 discarded bytes + 8-byte vector SP+reset, **not** an IV); startup self-bootstraps MSP/PSP from its own `vector[0]`, zero-fills `.bss`+CCM, scatter-loads — **no boot-patched literals** (§5.16 corrects the `0x44C`/`0x450` claim). Footer u16 + trailer = **CRC16/MODBUS** (recomputable, `analyze52/54`); the app does **not** verify a whole-image checksum. `make_service_upg.py` builds `SERVICE.UPG` (byte-identical stock round-trip, safe) + `SERVICE_DUMP.UPG` (bench-confirmed dump cave on the in-place `f_close` anchor). **Runtime model established (§5.13b):** the bootloader decodes the image on first boot after an upgrade and the scatterload relocates **data only** ⇒ FatFs runs in place; the free-RAM scratch gap is derived from `.bss` end `0x20024D18`. The corrected cave is **bench-CONFIRMED working** (§5.13h): it produced `BOOT.BIN` (`0x20000` B) — the bootloader is acquired (`acq/dump/boot.bin`, §5.14) and the runtime-model gate is closed. **All resolved:** (a) entry = `0x08020054` (stock pool `APP5+0x50`, no patch, §5.16); (b) **boot-time code check — RESOLVED (§5.15):** CRC16/MODBUS residue during decode + config-block additive checksum/magic `0x55AA55AA`, no whole-image hash/signature; (c) deeper bootloader RE — **traced (§5.15)** + install transform **confirmed (§5.16):** app-jump, orchestration + SPI storage model, UPG components, XMODEM-1K, verify; **no prefix-decrypt** (prefix discarded, verbatim install).
-4. **Pin map — RESOLVED (§5.5a, `analyze74`).** The board GPIO init @`0x08087010` (f+`0x67412`) writes
+4. **Pin map — RESOLVED (§5.5a, `analyze74`); ADC-channel→CP/PP map RESOLVED + NAMED (§5.5b, `analyze77`).**
+   The board GPIO init @`0x08087010` (f+`0x67412`) writes
    standard STM32F4 GPIO register values from a literal pool at f+`0x67756` (the earlier "custom packed
    format" guess was wrong — it is just MODER/OTYPER/OSPEEDR/PUPDR/ODR/AFR constants), then locks all pins
    via the helper @`0x08087340`. Decoded: **SPI1/QCA7005 = PA5/6/7 (AF5)**, **SPI4/flash = PE12/13/14 (AF5)**,
-   **USART1 = PA9/10 (AF7)**, **USB FS = PA11/12 (AF10)**, **CAN1 = PD0/PD1 (AF9)**, TIM4_CH1 = PD12 (AF2),
-   ADC analog = PA0/1/2 + PB0/1 + PC2; GPIOA–E used (no F–K). **Remaining:** name the individual GPIO-output
-   signals (relay/e-lock/LED/contactor) and the ADC-channel→CP/PP mapping; CAN2 GPIO (no AF9 pins in this
+   **USART1 = PA9/10 (AF7)**, **USB FS = PA11/12 (AF10)**, **CAN1 = PD0/PD1 (AF9)**, TIM4_CH1 = PD12 (AF2,
+   **CP PWM input-capture**); GPIOA–E used (no F–K). **ADC signals named** by the firmware "Hardware
+   Information" dumper (`0x0804E92C`): **CP DC level = PA0/ADC3_IN0 (`AD_CPD`)**, **PP = PA2/ADC3_IN2
+   (`AD_PP`)**, PC2 = `AD_BAT` (battery, 2:1 divider), PA1 = `+24V` rail, **PB0−PB1 (ADC1+ADC2 dual
+   simultaneous) = `HV` DC-link voltage**; CP PWM duty/freq = TIM4_CH1/PD12 capture (not ADC), decoded to
+   current by the IEC 61851-1 law (§5.5b). **Remaining:** name the individual GPIO-output
+   signals (relay/e-lock/LED/contactor); CAN2 GPIO (no AF9 pins in this
    init — configured elsewhere or CAN1-only board).
 5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[H]**), CAN init/filter config + driver mailbox-FIFO layer (§5.8.2), and protocol timeouts (1/4/5/6/8 s). **RTOS tick = 100 Hz / 10 ms RESOLVED** (§5.1/§5.8.5). **Remaining:** exact TIM2 busy-delay prescaler + the numeric tick-constants behind the second-valued timeouts; CAN1/CAN2→CHAdeMO/GB/T assignment (**CAN1 pins now confirmed PD0/PD1, §5.5a**; CAN2 GPIO absent from the board init — trace its separate GPIO setup or confirm a CAN1-only board); confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
 6. **QCA7005 firmware** — **RESOLVED: not in this update.** Modem boots from external SPI flash; the MCU is only a SLAC/PLC host (§5.3). For open firmware, use the redistributable Qualcomm blob (open-plc-utils / `qca_spi` ecosystem).
