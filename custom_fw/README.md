@@ -221,4 +221,9 @@ Built up in incremental, independently-testable layers; power-stage drive stays 
   EVSE-side measurements (max/available current + range-code factors, voltage limit) currently safe-stubbed.
 - §5.5c — **asserted** power-stage drive (PB10/PB11 precharge, PD8 inner contactor, PC9 charge,
   PE7/PE8 d1/d2, PD3/PE4 e-lock) — **LAST**, behind a compile-time safety flag, drive **only** once
-  the controller is bench-validated.
+  the controller is bench-validated. **Actuation architecture (§5.21 F, `analyze90`):** the adapter has
+  **no local PWM/DAC current actuation** — it is a protocol bridge + contactor controller. The current
+  setpoint (`EVTargetCurrentValue`) is commanded to the upstream CCS2 EVSE via the DIN70121
+  `CurrentDemandReq` PLC message (the EVSE regulates the DC output); the power path is switched by the
+  contactor GPIO above; CHAdeMO H108/H109 report the EVSE output measurements back to the vehicle. So the
+  asserted "drive" = contactor GPIO sequencing + the CCS2 `CurrentDemandReq` message, not a PWM/DAC register.

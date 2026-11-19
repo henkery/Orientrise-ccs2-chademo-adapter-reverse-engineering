@@ -1664,6 +1664,39 @@ max, target voltage `min(target, limit)`, guarded by isolation + the §5.17 volt
 has the information needed for a safe charge. Re-derived from C013 bytes by `analyze85.py` (sketch) and
 `analyze89.py` (byte-exact setpoint law).
 
+**F — output-current actuation chain: no local PWM/DAC; the setpoint is a CCS2 EVSE command (`analyze90`).**
+Tracing how the state-30 setpoint reaches the power path shows the adapter is a **protocol bridge +
+contactor controller, not a power regulator** — there is **no PWM/DAC peripheral write** anywhere in the
+setpoint/output path (the power GPIO are contactors/relays, §5.5c):
+
+- **Setpoint → telemetry.** State-30 (`0x08044DC8`) copies `ctx 0x20000780+0x16` (current) / `+0x1c`
+  (target voltage) into output buffers with `status=3` and logs them via `0x080514da` with format
+  `0x080A9388` = `"CHAdeMO stm :30 case ,EVTargetCurrentValue[%lu]!EVTargetVoltageValue[%lu].outcur[%lu],outvol[%lu]"`.
+  So `+0x16`/`+0x1c` are the **EVTargetCurrentValue / EVTargetVoltageValue** — DIN70121-style EV target
+  quantities, not a hardware register.
+- **Setpoint → upstream EVSE (the actual actuation).** The EVTargetCurrent/Voltage are commanded to the
+  upstream **CCS2 EVSE via the DIN70121 `CurrentDemandReq`** PLC message (EXI over QCA7005). The
+  `CurrentDemandReq`/`CurrentDemandRes` handlers are present (log strings `0x0802DFBB`/`0x08035253` TX,
+  `0x0802EE48`/`0x080340D8` RX). The builder reads the shared context **via pointer** — there is no
+  LDR-literal `0x20000780` load in the CCS2/DIN region `0x0802D000–0x08038000` (and the log-string xrefs
+  use a table, not immediate loads). The EVSE then regulates the actual DC output. Full decode belongs to
+  the EVSE-side subsystem layer.
+- **EVSE output → vehicle (CHAdeMO H108/H109 report).** The output frames report the **EVSE-side
+  measurements**, not the setpoint:
+  - **H108 (`0x108`)** value compute `0x0803C95C`: `EVSE_raw[0x3D08] × converter(byte[0x3D0A]) / 1000`,
+    **clamped to `0x1C2` (450)** → `p[+0x212]` (status `p[+0x210]=1`); tail-branch `0x0804EA4C`. Build+send
+    `0x0803CB36`: mutex `ctx+0x68` (`0x200007E8`), pack `p[+0x210..0x219]` → 8-byte buffer `p[+0x25C]`,
+    **CAN ID `0x108` → `ctx+0x60`**, send via **fn-ptr `p[+0x270]` (`blx`)**.
+  - **H109 (`0x109`)** value compute `0x0803C9B8`: `EVSE_raw[0x3D14]/[0x3D18]` (current) + `get_hv`
+    (`0x08052770`)/10 (voltage), state-dependent zeroing when `outvol==0` → `p[+0x220..0x226]`. Build+send
+    `0x0803CBDC`: pack `p[+0x220..0x226]` → buffer, CAN ID `0x109`, send via fn-ptr.
+  - These four functions are called every 10 ticks from the state-30 exit path (`0x080450B2`).
+
+**Net for the gated drive layer:** the inert `current_ctrl` shadow setpoint is the correct replica — the
+asserted "current drive" is realized by the **CCS2 `CurrentDemandReq` PLC message** (EVSE-side subsystem)
+plus **contactor GPIO sequencing** (§5.5c), *not* a local PWM/DAC register. Re-derived from C013 bytes by
+`analyze90.py`.
+
 ---
 
 ## 6. What this means for an open-source firmware
@@ -2010,6 +2043,19 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   and the `[+0x44]→[+0x40]` copy was not confirmed — the real law is inline in state-30. Backs
   `custom_fw/src/current_ctrl.c` (inert shadow setpoint) + `test_current_ctrl.c`.
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze89.py'`.
+- `analyze90.py` — **output-current actuation-chain decoder (§5.21 F)**: traces how the state-30 setpoint
+  reaches the power path. Confirms **no local PWM/DAC actuation** (no peripheral writes in the setpoint/
+  output path; power GPIO are contactors, §5.5c) — the adapter is a protocol bridge + contactor controller.
+  Decodes: setpoint→telemetry (`0x08044DC8`, log `0x080A9388` "EVTargetCurrentValue/EVTargetVoltageValue");
+  the **CCS2 DIN70121 `CurrentDemandReq`** upstream-EVSE command path (log strings `0x0802DFBB`/`0x08035253`
+  TX, `0x0802EE48`/`0x080340D8` RX; builder reads the shared ctx via pointer — no LDR-literal `0x20000780`
+  load in the CCS2/DIN region); and the **CHAdeMO H108/H109 report** chain that sends EVSE-side measurements
+  (not the setpoint) to the vehicle — H108 value `0x0803C95C` (`EVSE_raw[0x3D08]`/1000, **450 clamp** →
+  `p[+0x212]`), build+send `0x0803CB36` (CAN ID `0x108`→`ctx+0x60`, fn-ptr `p[+0x270]`); H109 value
+  `0x0803C9B8` (`EVSE_raw[0x3D14]/[0x3D18]` + `get_hv`/10 → `p[+0x220..0x226]`), build+send `0x0803CBDC`;
+  called every 10 ticks from state-30 exit `0x080450B2`. Establishes that the asserted "current drive" is
+  the CCS2 `CurrentDemandReq` PLC message + contactor GPIO sequencing, not a PWM/DAC register.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze90.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
