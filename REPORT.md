@@ -516,11 +516,20 @@ MAC** from a global SLAC struct (`[r5+6]`) into the EVHost-MAC field (`[r5+0x18]
 (`movw sb,#0x3b0e`), V2GTP payload type **0x9000**. The request payload is 2 bytes
 **{security, transport}**: security = **`0x10` (TLS) or `0x00` (no TLS)**, selected by a mode flag
 @ `0x000900` (`tst r0,#0xff` → `0x10`/`0x00`) and stored `[r4+0x22]`; transport = TCP.
-**Trigger traced (`analyze72`):** `r0` is the return of accessor `0x08051074`, which reads a config
-struct @SRAM `0x200189EC` (word +`0x20`, byte +`0x24` packed at bit 24); the tested **low byte
-(`0x20018A0C`) = 0 ⇒ TLS, nonzero ⇒ no TLS**. That config block is filled by a parser copying from
-`0x001F8010` and testing V2G message-type codes `0x8101/0x8105/0x8107/0x8108/0x810D` ⇒ the flag tracks
-the supported protocol/message set (DIN-vs-ISO / PnC capability), not a per-session value.
+**Trigger RESOLVED + NAMED — PnC root-certificate count (`analyze76`):** `r0` is the return of accessor
+`0x08051074`, which reads a config struct @SRAM `0x200189EC` (word +`0x20`, byte +`0x24` packed at bit
+24); the tested **low byte (`0x20018A0C`) = 0 ⇒ TLS, nonzero ⇒ no TLS**. That byte is named by the
+firmware's own diagnostic dumper `0x0804EB5C` (**"Show Certification Status"**, f+`0x2F2CA`): it is the
+**"Root certs" count** — config[+`0x20`] = number of configured **Root-CA certificate** entries (vendor
+V2G msg-code **`0x8101`**, ≤5), with config[+`0x21`] = "Pri_root cert" (`0x8102`), [+`0x22`] = "Oem cert"
+(`0x8105`), [+`0x23`] = "Contract certs" (`0x8109`, 32-byte payload). Flash parser `0x08050E14` copies the
+msg-`0x8101` entries from the PnC certificate config block @`0x001F8010` (header @`0x001F8000`, magic
+`0xCEA155E1`, ver 1) into a 5-slot array; config init `0x08050B94` counts the populated slots
+(`strb r8,[cfg+0x20]`). So the trigger is the **ISO 15118 PnC root-certificate configuration** (a
+service-config property) — *not* the DIN-vs-ISO appHandshake SchemaID choice (that is the separate
+`0x013F50` selection below) and *not* a per-session value. (The earlier msg-code list
+`0x8101/0x8105/0x8107/0x8108/0x810D` was wrong: the parser tests `0x8101`–`0x8109`; `0x810D` does not
+exist — it conflated the parser with the `0x8106/07/08` builder.)
 **500 ms** per attempt (`0x1f4`), **50 retries** (`0x32`). The SECC's offered security is checked
 (`0x10`/`0x30`); `"NO TLS"` is logged and TLS (mbedTLS) is used for ISO 15118 PnC — cf. the error
 `"EVSE only supports PnC, but no TLS!"`.
@@ -1329,6 +1338,16 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   `0x6064/65/6A/08/09`) and the call chain (builder → `mme-send` `0x080888CE`; validator `0x08088ADA`;
   poll `0x08088B1E`/retry `0x08088C74`; MAC → SRAM `0x200227E6`). Run:
   `nix-shell -p python3 --run 'python3 analyze75.py'`.
+- `analyze76.py` — **SDP security-trigger decoder (§5.9/§8.8b)**: names the config byte that selects TLS
+  vs no-TLS in the CCS2 SDP request. Re-derives the naming from `firmware.bin` bytes (no hardcoded
+  conclusions): locates the PnC certificate diagnostic strings ("Show Certification Status" / "Root
+  certs" / "Pri_root cert" / "Oem cert" / "Contract certs", f+`0x2F2CA`–`0x2F332`), scans the
+  config-parser MOVW msg-code loads (`0x8101`–`0x8109`), and disassembles the SDP `tst/beq` decision
+  (`0x080204FA`) + accessor `0x08051074` to confirm **security byte = config[+`0x20`] = "Root certs"
+  count (msg `0x8101`, ≤5)** and **TLS (`0x10`) iff Root-cert count == 0, else no-TLS (`0x00`)**. Trigger
+  = the ISO 15118 PnC root-certificate configuration (flash parser `0x08050E14` ← config block
+  `0x001F8010`, magic `0xCEA155E1`; counted by config init `0x08050B94`). Run:
+  `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze76.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -1378,5 +1397,5 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
    internal-symbol debug string `OSRdyTbl` (uC/OS-II ready table). Tick = **100 Hz / 10 ms** (stat dump
    `÷100`); customized TCB accessors + `OSTaskCreateExt`-style wrapper @`0x08088D76`; named tasks
    `tcpip_process` (4 KB stack, prio 10) / `led_process` / `PDS_PROCESS` / `iso1_function_res_process`.
-8. **EVCC identity details (§5.9)** — EVCCID = the adapter's **6-byte PLC MAC** (confirmed: SLAC EVHost-MAC, `MAC:` prints, and `SessionSetupReq` all use the same global-struct bytes via thunk `0x080890AE`, which indexes a 48-byte-entry array @SRAM `0x2002390C`, pointer at `+0x2C`). **(a) MAC-read MMTYPE RESOLVED** (`analyze75`): chain SLAC banner → `0x0802156C` → `0x08088C10` (mutex + PC5 reset) → `0x08088B94` (QCA7005 SPI signature `0xAA55`@reg`0x1A00`) → `0x08088A0E` (SPI reg init `0x1200=0xC5B`/`0xC00=0x447`/`0xD00=0x41`); then the MAC-read MME = **vendor-specific MMTYPE `0xA000` (REQ) / `0xA001` (CNF)**, MMV `0`, EtherType `0x88E1`, payload param `0xB000` + op `'R'`(`0x52`, Read). Builder `0x08088B48` (12-byte header template `0x080AEC84`, dest = QCA7005 **default** MAC `00:B0:52:00:00:01`; EtherType via `movw #0xE188`+`strh`), validator `0x08088ADA` (CNF `0xA001`, done-marker `0x55`), poll `0x08088B1E` / retry `0x08088C74`; 6-byte MAC → SRAM `0x200227E6` (accessor `0x08088CAC`). SLAC `CM_*` MMTYPEs also decoded: `0x6064/65` `CM_SLAC_PARM`, `0x606A` `CM_START_ATTEN_CHAR`, `0x6008/09` `CM_SET_KEY` (decoder `0x080214D6`). **(b) SDP security trigger RESOLVED mechanism:** security = (config byte @SRAM `0x20018A0C` == 0) ? TLS : no-TLS, via accessor `0x08051074` (config struct `0x200189EC`); the block is parsed from `0x001F8010` against V2G msg codes `0x8101/0x8105/0x8107/0x8108/0x810D`. **Remaining:** name which msg-code/cert condition sets that byte (DIN-vs-ISO / PnC).
+8. **EVCC identity details (§5.9)** — EVCCID = the adapter's **6-byte PLC MAC** (confirmed: SLAC EVHost-MAC, `MAC:` prints, and `SessionSetupReq` all use the same global-struct bytes via thunk `0x080890AE`, which indexes a 48-byte-entry array @SRAM `0x2002390C`, pointer at `+0x2C`). **(a) MAC-read MMTYPE RESOLVED** (`analyze75`): chain SLAC banner → `0x0802156C` → `0x08088C10` (mutex + PC5 reset) → `0x08088B94` (QCA7005 SPI signature `0xAA55`@reg`0x1A00`) → `0x08088A0E` (SPI reg init `0x1200=0xC5B`/`0xC00=0x447`/`0xD00=0x41`); then the MAC-read MME = **vendor-specific MMTYPE `0xA000` (REQ) / `0xA001` (CNF)**, MMV `0`, EtherType `0x88E1`, payload param `0xB000` + op `'R'`(`0x52`, Read). Builder `0x08088B48` (12-byte header template `0x080AEC84`, dest = QCA7005 **default** MAC `00:B0:52:00:00:01`; EtherType via `movw #0xE188`+`strh`), validator `0x08088ADA` (CNF `0xA001`, done-marker `0x55`), poll `0x08088B1E` / retry `0x08088C74`; 6-byte MAC → SRAM `0x200227E6` (accessor `0x08088CAC`). SLAC `CM_*` MMTYPEs also decoded: `0x6064/65` `CM_SLAC_PARM`, `0x606A` `CM_START_ATTEN_CHAR`, `0x6008/09` `CM_SET_KEY` (decoder `0x080214D6`). **(b) SDP security trigger RESOLVED + NAMED (`analyze76`):** security = (config byte @SRAM `0x20018A0C` == 0) ? TLS : no-TLS, via accessor `0x08051074` (config struct `0x200189EC`). The byte is the **"Root certs" count** — named by the firmware diagnostic dumper `0x0804EB5C` ("Show Certification Status", f+`0x2F2CA`): config[+`0x20`] = Root certs (msg-code `0x8101`, ≤5), [+`0x21`] = Pri_root cert (`0x8102`), [+`0x22`] = Oem cert (`0x8105`), [+`0x23`] = Contract certs (`0x8109`, 32 B). Flash parser `0x08050E14` copies msg-`0x8101` entries from the PnC cert config block @`0x001F8010` (magic `0xCEA155E1`) into a 5-slot array; config init `0x08050B94` counts them. **Trigger = the ISO 15118 PnC root-certificate configuration** (TLS iff Root-cert count == 0), a service-config property — not DIN-vs-ISO and not per-session. The msg-code set is `0x8101`–`0x8109` (the earlier `0x810D` was a conflation of two functions; no such code).
 9. **Device provenance (§5.10)** — vendor **disavows the unit as a clone**; firmware nameplate = **`KM-CCS2CHAdeMO-1`** / `CCS2GBT` with CATL/CAMA BMS code. Identify the **"KM" OEM**: web search was unavailable (2026-11-18, retry); decode the ID-block fields `F$K$N$T$2005$TY/VR$…` (f+0x090df0); check enclosure/label markings and the `SER:202406180463` date-code convention against other units. The USB log **proves the unit runs C009 = `firmware.bin`** (§5.10), so all RE findings apply to this hardware regardless of brand. MAC OUIs are IEEE-RA reference values — not a maker fingerprint.
