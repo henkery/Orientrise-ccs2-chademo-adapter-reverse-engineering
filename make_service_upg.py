@@ -8,24 +8,30 @@ Implements the cracked UPG format / integrity mechanics (REPORT §4.1, §5.12):
   footer    u16LE @0x3FE = CRC16/MODBUS(dec[0x3EA:0x3FE])
   trailer   u16LE @n-2   = CRC16/MODBUS(dec[2:n-2]);  dec[n-4:n-2] == 00 00 (key echo)
   length    u32LE @0x3F2 = filesize - 0x404  (app-code byte count)
-  first4    u32   @0x400 = per-image IV/nonce — KEPT STOCK (no CRC relation)
-  entry     file[0x000:0x45E] reused verbatim (bootloader patches MSP/PSP at install)
+  first4    u32   @0x400 = 2 discarded bytes + SP low halfword (NOT an IV, §5.16) — KEPT STOCK
+  entry     file[0x000:0x45E] reused verbatim (boot strips 0x402 header + installs fw[0x402:] verbatim; no patch, §5.16)
 
-The prefix ciphertext [58:3EA] is kept verbatim, so its per-image keystream is NOT
-needed; both CRCs are recomputed over the (possibly patched) decoded bytes.
+The prefix [58:3EA] is a DISCARDED header field (inside the stripped 0x402 header, §5.16) —
+no cipher; kept verbatim here, both CRCs recomputed over the (possibly patched) decoded bytes.
 
 Default (no patches) re-emits a byte-identical UPG — a round-trip proof of the format.
---dump-hook appends an EXPERIMENTAL bootloader-dump cave (see build_dump_hook) anchored
-on the in-place FatFs f_close entry: on the first close after boot it dumps boot flash
-0x08000000..0x08020000 to "0:/BOOT.BIN", then re-executes f_close's original prologue so
-every real close (incl. the stock update/recovery path) still completes. Gated on bench
-verification — free-RAM safety / FatFs re-entrancy / stack headroom must be confirmed on
-a bench dump before relying on it (REPORT §5.13).
+--dump-hook appends a bootloader-dump cave (see build_dump_hook) anchored on the in-place
+FatFs f_close entry: on the first close after boot it dumps boot flash 0x08000000..0x08020000
+to "0:/BOOT.BIN", then re-executes f_close's original prologue so every real close (incl. the
+stock update/recovery path) still completes. Bench-confirmed working (REPORT §5.13f/h).
+--dump-app5 is the same cave retargeted to the RUNNING APP's sector 5: it dumps
+0x08020000..0x08040000 (0x20000 B) to "0:/APP5.BIN" (distinct one-shot magic 0x2003D005).
+That captures the running app's first 128 KB (vector SP+reset, Reset_Handler/startup, in-place
+code) as ground-truth plaintext. Bench result (REPORT §5.16, analyze70): APP5[x]==fw[x+0x402]
+for all 128 KB (100%, 0 patches) => boot strips a 0x402-byte header and installs fw[0x402:]
+VERBATIM — no prefix cipher, no boot patch. Read-only: the cave only reads flash and writes
+USB; it never programs flash, so stock recovery is intact.
 
 Usage:
   python3 make_service_upg.py STOCK.UPG -o SERVICE.UPG
   python3 make_service_upg.py STOCK.UPG -o SERVICE.UPG --patch 0x910ac:B570...
   python3 make_service_upg.py STOCK.UPG -o SERVICE_DUMP.UPG --dump-hook
+  python3 make_service_upg.py STOCK.UPG -o SERVICE_DUMP_APP5.UPG --dump-app5
 """
 import sys, struct, argparse
 
@@ -169,11 +175,16 @@ def pushw(regs, lr):  # regs bitmask r0..r12
 def popw(regs, lr):
     return struct.pack('<HH', 0xE8BD, ((1 if lr else 0) << 14) | regs)
 
-def build_dump_hook(stock_dec):
+def build_dump_hook(stock_dec, dump_base=BOOT_BASE, dump_len=BOOT_LEN,
+                    path=b'0:/BOOT.BIN\x00', magic=MAGIC):
     """Return (patches, append) for the in-place f_close dump hook.
 
     stock_dec: decoded stock image, used to copy f_close's original 4-byte prologue
     verbatim into the cave's tail so the real close resumes unchanged at f_close+4.
+    dump_base/dump_len: flash range to dump (default = boot sector 0, 0x08000000+0x20000).
+    path: NUL-terminated USB output filename. magic: one-shot RAM guard (distinct per
+    variant so co-resident flags can't suppress a dump). Defaults reproduce the
+    bench-confirmed BOOT.BIN cave byte-for-byte.
     """
     orig = bytes(stock_dec[F_CLOSE:F_CLOSE + 4])    # push {r3,r4,r5,lr}; mov r4,r0
     cave = bytearray(); ca = BASE + CAVE_OFF
@@ -181,10 +192,10 @@ def build_dump_hook(stock_dec):
     emit(pushw(0x1FFF, True))                       # push.w {r0-r12,lr}
     emit(movw(0, FLAG & 0xFFFF)); emit(movt(0, FLAG >> 16))
     emit(ldr_imm(1, 0))                             # ldr r1,[r0]  (flag)
-    emit(movw(2, MAGIC & 0xFFFF)); emit(movt(2, MAGIC >> 16))
+    emit(movw(2, magic & 0xFFFF)); emit(movt(2, magic >> 16))
     emit(cmp_reg(1, 2))
     beq_fin = ca + len(cave); emit(b'\x00\xd0')     # beq fin (already dumped)
-    # f_open(&FIL, "0:/BOOT.BIN", FA_CREATE_ALWAYS|FA_WRITE = 0x0A)
+    # f_open(&FIL, path, FA_CREATE_ALWAYS|FA_WRITE = 0x0A)
     emit(movw(0, FIL & 0xFFFF)); emit(movt(0, FIL >> 16))
     adr_pos = ca + len(cave); emit(b'\x00\xa0')     # adr r1,path (patched below)
     emit(movs(2, 0x0A))
@@ -193,12 +204,12 @@ def build_dump_hook(stock_dec):
     bne_fin = ca + len(cave); emit(b'\x00\xd1')     # bne fin (open failed -> retry later)
     # open OK: arm one-shot flag (r0/r2 clobbered by f_open -> reload)
     emit(movw(0, FLAG & 0xFFFF)); emit(movt(0, FLAG >> 16))
-    emit(movw(2, MAGIC & 0xFFFF)); emit(movt(2, MAGIC >> 16))
+    emit(movw(2, magic & 0xFFFF)); emit(movt(2, magic >> 16))
     emit(str_imm(2, 0))                             # str r2,[r0]  FLAG=MAGIC
-    # f_write(&FIL, BOOT_BASE, BOOT_LEN, &BW)
+    # f_write(&FIL, dump_base, dump_len, &BW)
     emit(movw(0, FIL & 0xFFFF)); emit(movt(0, FIL >> 16))
-    emit(movw(1, BOOT_BASE & 0xFFFF)); emit(movt(1, BOOT_BASE >> 16))
-    emit(movw(2, BOOT_LEN & 0xFFFF)); emit(movt(2, BOOT_LEN >> 16))
+    emit(movw(1, dump_base & 0xFFFF)); emit(movt(1, dump_base >> 16))
+    emit(movw(2, dump_len & 0xFFFF)); emit(movt(2, dump_len >> 16))
     emit(movw(3, BW & 0xFFFF)); emit(movt(3, BW >> 16))
     emit(bl(ca + len(cave), BASE + F_WRITE))
     # f_close(&FIL): re-enters hook, FLAG set -> real close (flushes dir size, releases lock)
@@ -208,7 +219,7 @@ def build_dump_hook(stock_dec):
     emit(popw(0x1FFF, True))                        # pop.w {r0-r12,lr}
     emit(orig)                                      # orig f_close prologue verbatim
     emit(bw(ca + len(cave), BASE + F_CLOSE + 4))    # b.w f_close+4 (resume real close)
-    path_off = len(cave); cave.extend(b'0:/BOOT.BIN\x00')
+    path_off = len(cave); cave.extend(path)
     # patch conditional branches -> fin (pop.w); stack-balanced on every path
     struct.pack_into('<H', cave, beq_fin - ca, 0xD000 | (((fin - (beq_fin + 4)) >> 1) & 0xFF))
     struct.pack_into('<H', cave, bne_fin - ca, 0xD100 | (((fin - (bne_fin + 4)) >> 1) & 0xFF))
@@ -233,7 +244,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('stock'); ap.add_argument('-o', '--out', required=True)
     ap.add_argument('--patch', action='append', default=[], help='OFF:HEXBYTES (repeatable)')
-    ap.add_argument('--dump-hook', action='store_true', help='append EXPERIMENTAL bootloader-dump cave')
+    ap.add_argument('--dump-hook', action='store_true', help='append bootloader-dump cave (sector 0 -> 0:/BOOT.BIN)')
+    ap.add_argument('--dump-app5', action='store_true', help='append app sector-5 dump cave (0x08020000+0x20000 -> 0:/APP5.BIN)')
     ap.add_argument('--verify-only', action='store_true')
     args = ap.parse_args()
     raw = open(args.stock, 'rb').read()
@@ -244,9 +256,17 @@ def main():
     for p in args.patch:
         off, hx = p.split(':', 1); patches.append((int(off, 0), bytes.fromhex(hx)))
     append = None
+    if args.dump_hook and args.dump_app5:
+        ap.error('--dump-hook and --dump-app5 are mutually exclusive (one cave per image)')
     if args.dump_hook:
-        print("== EXPERIMENTAL dump hook (in-place f_close anchor; bench-verify, REPORT §5.13) ==")
+        print("== dump hook: boot sector 0 -> 0:/BOOT.BIN (in-place f_close anchor, bench-confirmed §5.13f) ==")
         hp, append = build_dump_hook(stock_dec); patches += hp
+        verify_cave(append[1])
+    elif args.dump_app5:
+        print("== dump hook: app sector 5 (0x08020000 + 0x20000) -> 0:/APP5.BIN (§5.13f mechanism) ==")
+        hp, append = build_dump_hook(stock_dec, dump_base=0x08020000, dump_len=0x20000,
+                                     path=b'0:/APP5.BIN\x00', magic=0x2003D005)
+        patches += hp
         verify_cave(append[1])
     out = build(raw, patches, append)
     open(args.out, 'wb').write(out)
