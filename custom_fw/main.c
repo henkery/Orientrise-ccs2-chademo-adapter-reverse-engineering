@@ -7,7 +7,8 @@
  * contactors remain open and no HV can appear. gpio_safe_init() only drives DE-ASSERTED
  * (safe) levels; the IWDG key write is a harmless watchdog feed.
  *
- * Current stage: SAFE BOOTSTRAP + CAN1 MESSAGE LAYER + HV MEASUREMENT + INERT CHARGE STM —
+ * Current stage: SAFE BOOTSTRAP + CAN1 MESSAGE LAYER + HV MEASUREMENT + INERT CHARGE STM +
+ * INERT CURRENT CTRL —
  * restore SYSCLK 168 MHz (rcc), drive every power-stage GPIO to its SAFE/de-asserted state
  * (gpio, §5.5c — contactors open, no HV), init the HV measurement front-end (hv/adc/spi4/nv_cal,
  * §5.21 — ADC1+ADC2 simultaneous PB0/PB1, TIM8-triggered DMA2 accumulation -> live_raw, factory
@@ -15,14 +16,18 @@
  * layer (can/chademo, §5.8.2/§5.18 — RX H100/H101/H102 parse, periodic H108/H109 standby TX with
  * the measured outvol in H108 byte1-2), run the INERT charge state machine (charge_stm, §5.17 —
  * safe-charge sequence + byte-exact state-17 engagement guard + interlocks + CAN watchdogs, a
- * SHADOW controller that records but does NOT execute power actions), start the 100 Hz OS tick +
+ * SHADOW controller that records but does NOT execute power actions), run the INERT H102
+ * output-current control law (current_ctrl, §5.21 E — in CurrentDemand, setpoint =
+ * min(request, EVSE available) capped by EVSE max, target voltage = min(target, limit); a
+ * SHADOW setpoint that drives NO power stage), start the 100 Hz OS tick +
  * 100 kHz timebase (tick, §5.20), and run the periodic 100 Hz loop. A RAM `heartbeat` increments
- * each tick for SWD proof-of-life; hv_* are SWD-readable measurement results and stm_* are
- * SWD-readable state-machine results. Still NO asserted power-stage drive.
+ * each tick for SWD proof-of-life; hv_* are SWD-readable measurement results, stm_* are
+ * SWD-readable state-machine results and cc_* are SWD-readable current-control results.
+ * Still NO asserted power-stage drive.
  *
- * Next layers (see README): H102 current control (§5.21) -> gated power-stage drive (LAST,
- * behind a safety flag). EVSE-side handshake inputs to the stm stay safe-stubbed until the CCS2
- * PLC/DIN subsystem is built.
+ * Next layers (see README): CCS2 EVSE-side subsystem (PLC/DIN, supplies the stm + current-control
+ * EVSE inputs) -> gated power-stage drive (LAST, behind a safety flag). EVSE-side handshake inputs
+ * stay safe-stubbed until that subsystem is built.
  */
 #include <stdint.h>
 #include "rcc.h"
@@ -33,6 +38,7 @@
 #include "hv.h"
 #include "adc.h"
 #include "charge_stm.h"
+#include "current_ctrl.h"
 
 #define IWDG_KR   (*(volatile uint32_t *)0x40003000u)
 #define IWDG_FEED 0x0000AAAAu
@@ -51,6 +57,11 @@ volatile uint32_t stm_interlock = 0; /* active interlock bitmask (STM_IL_*)     
 volatile uint32_t stm_engage   = 0;  /* last state-17 engagement-guard result   */
 volatile uint32_t stm_action   = 0;  /* intended (GATED, not executed) action   */
 
+/* Inert H102 current-control results (SWD-readable; NO power drive — shadow setpoint). */
+volatile uint32_t cc_setpoint = 0;   /* capped output-current setpoint (A)      */
+volatile uint32_t cc_cap      = 0;   /* EVSE max-current cap (A)                */
+volatile uint32_t cc_target_v = 0;   /* capped target battery voltage (V)       */
+
 static void enable_irq(void)
 {
     __asm__ volatile ("cpsie i" ::: "memory");
@@ -64,6 +75,7 @@ void main(void)
     can_init();          /* CAN1 500k + acceptance filter + RX0 interrupt (NVIC)     */
     chademo_init();      /* zero the vehicle-data struct + watchdog timestamps       */
     charge_stm_init();   /* inert CHAdeMO charge state machine (shadow, §5.17)       */
+    current_ctrl_init(); /* inert H102 output-current control law (shadow, §5.21 E)  */
     tick_init();         /* 100 Hz SysTick OS tick + 100 kHz TIM2 timebase   */
     enable_irq();        /* boot jumped with interrupts masked (cpsid i)     */
 
@@ -111,9 +123,32 @@ void main(void)
         stm_engage    = charge_stm_engage_result();
         stm_action    = charge_stm_action();
 
+        /* Inert H102 current control (§5.21 E): in CurrentDemand (state 30) compute the
+         * output-current setpoint = min(H102 request, EVSE available) capped by the EVSE max,
+         * and target voltage = min(H102 target, limit). SHADOW — drives NO power stage. The
+         * EVSE-side measurements (max/avail current + range-code factors, voltage limit) come
+         * from the CCS2 PLC/DIN subsystem not built yet -> safe stubs (0), so avail==0 and the
+         * min(request,0)==0 zero-skip holds the setpoint at 0: no current is ever commanded. */
+        if (stm_state == STM_CURRENTDEMAND) {
+            const chademo_vehicle_t *veh = chademo_vehicle();
+            current_ctrl_inputs_t ci;
+            ci.current_request   = veh->current_request;   /* H102 byte3 */
+            ci.target_voltage    = veh->target_voltage;    /* H102 byte1-2 */
+            ci.evse_max_raw      = 0;   /* EVSE max-current raw @0x3D20 — stub */
+            ci.evse_max_factor   = 0;   /* EVSE max-current range code @0x3D22 — stub */
+            ci.evse_avail_raw    = 0;   /* EVSE present/available raw — stub */
+            ci.evse_avail_factor = 0;   /* EVSE present range code — stub */
+            ci.voltage_limit     = 0;   /* p[+0x216] output-voltage limit — stub */
+            current_ctrl_step(&ci);
+        }
+        const current_ctrl_t *cc = current_ctrl_get();
+        cc_setpoint = cc->setpoint;
+        cc_cap      = cc->cap;
+        cc_target_v = cc->target_v;
+
         chademo_tx_periodic(now);  /* H108/H109 standby report every 100 ms     */
         can_service();             /* bus-off recovery / error check            */
-        /* (future: H102 current control §5.21 -> gated power-stage drive LAST) */
+        /* (future: CCS2 EVSE-side subsystem -> gated power-stage drive LAST) */
 
         next++;                              /* advance one 10 ms tick */
         while ((int32_t)(tick_get() - next) < 0) { }

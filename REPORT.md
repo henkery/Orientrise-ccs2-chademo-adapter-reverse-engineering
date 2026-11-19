@@ -1618,22 +1618,51 @@ into the stm context: `p[+0x1d8]` = status byte, `p[+0x1da]` = **TargetBatteryVo
 - **State-30 (CurrentDemand)** regulates the output: it recomputes `outvol = get_hv()/10`, increments a
   phase counter `p[+0x1d2]`, and **every 125 ticks (~1.25 s)** adjusts the current limit (→ state 31) —
   the `"every n minute adjusts current limitation"` behavior. It checks isolation `==3` (`0x0805206C`).
-- **`setpara` dispatcher `0x0804E884`**: validates `arg2 ∈ {0..5}` (`cbz r0/r1` → return 0; `cmp r2,#1..#5`)
-  then jumps to a jump-table handler `0x0804E9AC`; **`arg2=4` = set the output-current limit** (the
-  `setpara_maxevsecurrent` cap path). State-30 calls it with `arg2=4`.
-- **Output-current setpoint struct `0x20000780`**: `[+0x44]` request → `[+0x40]` setpoint → output register
-  (state-30 copies `[+0x44]→[+0x40]` and writes the setpoint halfword). Context init `0x0804EB2E` zeros
-  `0x20000780+0x70/0x74` and `0x20016380`, and inits a 512-byte buffer; `0x0804EAEE` resets the H101/H102
-  flags `p[+0x1b6/1c2/1d0]`.
+- **`setpara` dispatcher `0x0804E884`**: in C013 this is a **validation stub** — `cbz r0/r1` → return 0;
+  `cmp r2,#0..#5` **all** branch to a common return (`0x0804E8A2`→`0x0804E9AC`), so it does **no**
+  per-selector work. (The earlier "arg2=4 sets the output-current limit via a jump-table handler" reading
+  was approximate; the real current control is computed **inline in state-30**, see the E-addendum below.)
+- **Output-current context `0x20000780`** (a shared CAN/charge context — also holds CAN IDs `+0x60`, a
+  mutex `+0x68`, ring head/tail `+0x20/+0x22`): the state-30 setpoint fields are **`+0x16`** capped current
+  setpoint, **`+0x18`** uncapped `min(request,avail)`, **`+0x1a`** EVSE max-current cap, **`+0x1c`** capped
+  target voltage, **`+0x1e`** uncapped target voltage. (The earlier "`[+0x44]`→`[+0x40]` copy" sketch was
+  not confirmed at this struct; the byte-exact fields are the `+0x16…+0x1e` set, E-addendum below.) Context
+  init `0x0804EB2E` zeros `0x20000780+0x70/0x74` and `0x20016380`; `0x0804EAEE` resets the H101/H102 flags
+  `p[+0x1b6/1c2/1d0]`.
 - **Whole-bus watchdog**: `p[+4] > 1525` (15.25 s, `movw #0x5f5` @f+`0x29C58`) → state 450 (`0x1C2`) and
   disable d1 — the CAN-loss safe stop. The H108-build scaling converter `0x0804E786` is a clamp
   (`>=7 → 0xFF`) used as a multiplier in the §5.18 `/1000` output scaling.
 
+**E-addendum — byte-exact CurrentDemand setpoint law (`analyze89`, custom_fw current-control layer).**
+The state-30 output-current setpoint is computed **inline** at **`0x08044D42–0x08044DBC`** (not via
+`setpara`). Anchored on `movw #0x3d22` (f+`0x25148`), the block is:
+
+```
+cap      = scale(EVSE_raw[0x3D20], converter(byte[0x3D22]))        -> ctx[+0x1a]   (strh r0,[r8,#0x1a])
+avail    = scale(EVSE_raw[[sp+0x48]], converter(byte))
+setpoint = min(H102.ChargingCurrentRequest[p+0x1dc], avail)        -> ctx[+0x18]   (cmp/bhs/mov)
+if setpoint > cap && cap != 0: setpoint = cap                      -> ctx[+0x16]   (cmp/bls/cbz/strh)
+target_v = H102.TargetBatteryVoltage[p+0x1da]                      -> ctx[+0x1e]
+if p[+0x216] != 0 && p[+0x216] <= target_v: target_v = p[+0x216]   -> ctx[+0x1c]   (cmp/bhi/strh)
+```
+
+`scale(raw,factor) = (uint16)((uint32)raw * converter(factor) / 1000)` — `muls` + `udiv fp,#0x3e8` + `strh`
+(low 16). **Converter `0x0804E786`** = `sxtb` then `cmp r0,#7; blt keep; movs r0,#0xff` → `(code<7)?code:0xFF`
+(signed; codes 0..6 pass through, ≥7 clamp to 255). **Zero-skip:** a zero `min(request,avail)` (`cbz r0`)
+skips the current stores (keeps the previous setpoint); a zero target voltage (`cbz r1`) skips the voltage
+stores; `cap` (`+0x1a`) is written unconditionally. The capped value lands in `+0x16`/`+0x1c`, the uncapped
+in `+0x18`/`+0x1e`. **Overcurrent protection:** the setpoint never exceeds the EVSE's available current, the
+EVSE max-current cap, or the vehicle's request; the target voltage never exceeds the `p[+0x216]` limit. The
+EVSE-side raw measurements (`+0x3D20/0x3D22` max, `[sp+0x48]` present) come from the **CCS2 PLC/DIN**
+subsystem. Re-derived from C013 bytes by `analyze89.py`; replicated **INERT** (shadow setpoint, no power
+drive) in `custom_fw/src/current_ctrl.c`, host-tested in `custom_fw/test_current_ctrl.c`.
+
 **Net for safe charge:** the measurement path (Vrefint-calibrated ADC → NV two-point cal → `outvol` volts)
-and the control path (H102 request → state-30 periodic current setpoint via `setpara(4)`, capped by the
-EVSE max-current parameter, guarded by isolation + the §5.17 voltage-engagement window + the 15.25 s CAN
-watchdog) are now byte-derived. A custom controller reproducing these laws on the §5.19 layout has the
-information needed for a safe charge. Re-derived from C013 bytes by `analyze85.py`.
+and the control path (H102 request → state-30 inline `min(request, EVSE avail)` setpoint capped by the EVSE
+max, target voltage `min(target, limit)`, guarded by isolation + the §5.17 voltage-engagement window + the
+15.25 s CAN watchdog) are now byte-derived. A custom controller reproducing these laws on the §5.19 layout
+has the information needed for a safe charge. Re-derived from C013 bytes by `analyze85.py` (sketch) and
+`analyze89.py` (byte-exact setpoint law).
 
 ---
 
@@ -1971,6 +2000,16 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   `get_hv`'s `live_raw` is **not** Vrefint-calibrated (that feeds the separate power-stage monitor).
   Backs `custom_fw/src/{spi4,nv_cal,adc,hv}.c`.
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze88.py'`.
+- `analyze89.py` — **H102 output-current control law, byte-exact (§5.21 E-addendum, custom_fw
+  current-control layer)**: re-derives the C013 state-30 CurrentDemand setpoint block `0x08044D42–0x08044DBC`
+  (anchored on `movw #0x3d22`) — `setpoint = min(H102.ChargingCurrentRequest, EVSE avail)` capped by the EVSE
+  max (`cap!=0`), `target_v = min(H102.TargetBatteryVoltage, p[+0x216])`, with `scale = raw*converter/1000`
+  (`muls`+`udiv #0x3e8`) and converter `0x0804E786` (`sxtb`+signed `blt`, `(code<7)?code:0xFF`); decodes the
+  output context `0x20000780` setpoint fields `+0x16/+0x18/+0x1a/+0x1c/+0x1e` + the zero-skip paths.
+  **Corrects the analyze85 sketch**: `setpara` `0x0804E884` is a C013 validation stub (no per-selector work),
+  and the `[+0x44]→[+0x40]` copy was not confirmed — the real law is inline in state-30. Backs
+  `custom_fw/src/current_ctrl.c` (inert shadow setpoint) + `test_current_ctrl.c`.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze89.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -1986,7 +2025,7 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   reset vector, so the app runs as linked. Verified: boot CRC-append residue = 0, app verbatim, and a
   byte-identical round-trip when fed the stock app region. `STOCK.UPG app.bin -o CUSTOM.UPG`.
 - `custom_fw/` — **flashable custom-app safe-bootstrap + CAN1 message layer + HV measurement + inert
-  charge state machine (§5.19, build/flash/recovery pipeline proof + charge-controller base)**: `linker.ld` (FLASH `0x08020000` 640K / RAM `0x20000000` 192K /
+  charge state machine + inert current control (§5.19, build/flash/recovery pipeline proof + charge-controller base)**: `linker.ld` (FLASH `0x08020000` 640K / RAM `0x20000000` 192K /
   CCM 64K, `_estack=0x20030000`), `startup.s` (vector table + self-bootstrapping Reset_Handler: MSP from
   `vector[0]`, `VTOR=0x08020000`, copy `.data`, zero `.bss`+CCM, call `main`; weak core/CAN1 IRQ19–22 handler
   aliases — the boot writes no MSP/VTOR, §5.15/§5.16), `src/rcc.c` (restore SYSCLK 168 MHz HSE→PLL, APB1 42/
@@ -2006,17 +2045,24 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   `charge_stm_engage_ok` [flag==1 && isolation==4 && outvol∈[ress_vol−10,ress_vol+5] unsigned && dwell≥250],
   interlocks [whole-bus 1525→450, per-msg 100, H102 fault→300, emergency→40, bms/hw→600, CurrentDemand
   isolation==3], records but does NOT execute `STM_ACT_*` power actions; EVSE-side handshake inputs
-  safe-stubbed until the CCS2 PLC/DIN layer; host-unit-tested `test_charge_stm.c` 47 checks); `main.c`
-  (rcc→gpio_safe→**hv**→can→chademo→**charge_stm**→tick→`cpsie i`, then 100 Hz loop: IWDG feed + `heartbeat`
-  + publish `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + **charge_stm_step** (publish `stm_state/
-  stm_interlock/stm_engage/stm_action`) + periodic TX + can_service; **no ASSERTED power-stage drive**),
-  `build.sh`/`verify_pad.py`/`README.md`. Built + verified (5444 B code, vectors
+  safe-stubbed until the CCS2 PLC/DIN layer; host-unit-tested `test_charge_stm.c` 47 checks);
+  **inert H102 current control (§5.21 E-addendum, analyze89)**: `src/current_ctrl.c` (shadow setpoint —
+  byte-exact state-30 law `setpoint=min(request,EVSE avail)` capped by EVSE max, `target_v=min(target,limit)`,
+  `scale=raw*converter/1000` + converter `(code<7)?code:0xFF`, zero-skip keep-previous; drives NO power
+  stage; EVSE-side measurements safe-stubbed 0 → avail 0 → setpoint held 0; host-unit-tested
+  `test_current_ctrl.c` 42 checks); `main.c`
+  (rcc→gpio_safe→**hv**→can→chademo→**charge_stm**→**current_ctrl**→tick→`cpsie i`, then 100 Hz loop: IWDG feed
+  + `heartbeat` + publish `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + **charge_stm_step** (publish
+  `stm_state/stm_interlock/stm_engage/stm_action`) + **current_ctrl_step** in state-30 (publish `cc_setpoint/
+  cc_cap/cc_target_v`) + periodic TX + can_service; **no ASSERTED power-stage drive**),
+  `build.sh`/`verify_pad.py`/`README.md`. Built + verified (5696 B code, vectors
   `MSP=0x20030000`/`reset=0x080201AD`, SysTick + CAN1_RX0 + DMA2_Stream0 strong overrides at IRQ15/IRQ20/
   IRQ56 confirmed, adc_init/spi4_init/hv_get_raw register writes + interpolation + engagement-guard compares
-  disasm-checked, charge_stm_step has no peripheral/GPIO stores, CRC residue 0). `outvol` accuracy must be
-  bench-verified vs a reference before the gated engagement/power layer.
-  Power-stage drive stays GATED behind a compile-time safety flag until bench-validated; grow via §5.21
-  H102 current control. Build outputs git-ignored; `CUSTOM.UPG` is a bench-flash candidate (untracked).
+  disasm-checked, charge_stm_step + current_ctrl_step have no peripheral/GPIO stores, CRC residue 0).
+  `outvol` accuracy must be bench-verified vs a reference before the gated engagement/power layer.
+  Power-stage drive stays GATED behind a compile-time safety flag until bench-validated; grow via the CCS2
+  EVSE-side subsystem (PLC/DIN, supplies the stm + current-control EVSE inputs). Build outputs git-ignored;
+  `CUSTOM.UPG` is a bench-flash candidate (untracked).
 - `SERVICE.UPG` / `SERVICE_DUMP.UPG` / `SERVICE_DUMP_APP5.UPG` — built service images (§5.13e/f/i):
   `SERVICE.UPG` = byte-identical stock round-trip (safe recovery); `SERVICE_DUMP.UPG` = stock + one-shot
   bootloader-dump cave on the in-place `f_close` anchor (598 156 B, valid CRCs, **bench-confirmed working**

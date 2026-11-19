@@ -1,15 +1,17 @@
-# custom_fw — safe-bootstrap + CAN1 message layer + HV measurement + inert charge stm (Orientrise KM-CCS2CHAdeMO-1)
+# custom_fw — safe-bootstrap + CAN1 message layer + HV measurement + inert charge stm + inert current control (Orientrise KM-CCS2CHAdeMO-1)
 
 A **minimal, flashable, stock-reversible** custom application for the adapter
 (STM32F427/F429, Cortex-M4), being built up in incremental, independently-testable layers
 toward a safe CHAdeMO charge controller. It proves the full **build → wrap → flash → recover**
 pipeline end-to-end on the byte-derived memory layout (REPORT §5.19) and boot entry contract
 (§5.15/§5.16). **Current stage: SAFE BOOTSTRAP + CAN1 MESSAGE LAYER + HV MEASUREMENT + INERT CHARGE
-STM** — clocks + timebase + GPIO safe-state + CAN1 (500k) CHAdeMO RX/TX + the factory-calibrated HV
-measurement front-end (`get_hv` → `outvol`) + the inert charge state machine (safe-charge sequence +
-byte-exact state-17 engagement guard + interlocks + CAN watchdogs). It performs **no asserted
-power-stage drive** — the state machine is a *shadow* controller that records but does not execute
-power actions (measurement + CAN reporting + state tracking only).
+STM + INERT CURRENT CONTROL** — clocks + timebase + GPIO safe-state + CAN1 (500k) CHAdeMO RX/TX + the
+factory-calibrated HV measurement front-end (`get_hv` → `outvol`) + the inert charge state machine
+(safe-charge sequence + byte-exact state-17 engagement guard + interlocks + CAN watchdogs) + the inert
+H102 output-current control law (state-30 `min(request, EVSE avail)` setpoint capped by EVSE max). It
+performs **no asserted power-stage drive** — the state machine and current control are *shadow*
+controllers that record but do not execute power actions (measurement + CAN reporting + state/setpoint
+tracking only).
 
 ## Safety — read first
 
@@ -45,6 +47,15 @@ This foundation is **safe-by-construction** (contactors open, no HV):
   and **cannot engage**. Interlocks (whole-bus 1525-tick / per-message 100-tick CAN watchdogs, H102 fault,
   emergency, bms/hw fault, CurrentDemand isolation==3) force a safe stop state. Host-unit-tested
   (`test_charge_stm.c`, 47 checks). State/interlock/engage/action are SWD-readable (`stm_*`).
+- **Inert H102 current control**: `current_ctrl_step` runs the C013 state-30 CurrentDemand output-current
+  law (§5.21 E, `analyze89`) as a **shadow setpoint** — `setpoint = min(H102.ChargingCurrentRequest, EVSE
+  available)` capped by the EVSE max-current, `target_v = min(H102.TargetBatteryVoltage, limit)`, with the
+  byte-exact `/1000` scaling + converter (`(code<7)?code:0xFF`). It **drives no power stage** (no GPIO/DAC/
+  PWM). The EVSE-side measurements (max/available current + range-code factors, voltage limit) come from the
+  CCS2 PLC/DIN subsystem not built yet → **safe-stubbed to 0**, so `avail==0` and the `min(request,0)==0`
+  zero-skip **holds the setpoint at 0** — no current is ever commanded. It only runs in state-30
+  (CurrentDemand). Host-unit-tested (`test_current_ctrl.c`, 42 checks). Setpoint/cap/target are SWD-readable
+  (`cc_*`).
 - **IWDG**: the loop feeds the watchdog key (`0x40003000`) — harmless whether or not the IWDG is
   enabled (keeps the app alive if the boot left it running; no-op otherwise).
 - A RAM `heartbeat` counter increments each 10 ms tick so you can confirm "the custom app is
@@ -72,7 +83,9 @@ current control, §5.5c GPIO map + active levels).
 | `src/hv.c/.h` | `hv_init` (spi4+nv_cal+adc); `get_hv` two-point interpolation `eng_lo+(live_raw−raw_lo)(eng_hi−eng_lo)/(raw_hi−raw_lo)`; `outvol=get_hv()/10` (§5.21) |
 | `src/charge_stm.c/.h` | **inert** CHAdeMO charge state machine (shadow): safe-charge sequence 13→…→30 + stop/shutdown skeleton, byte-exact state-17 engagement guard (`charge_stm_engage_ok`), interlocks + CAN watchdogs; records `STM_ACT_*` but drives no GPIO; EVSE-side inputs safe-stubbed (§5.17, `analyze80`) |
 | `test_charge_stm.c` | host unit test (gcc, no hardware): engagement-guard window/thresholds + unsigned wrap, sequence walk/stall/engagement, interlocks, C009-mismatch never-engages — 47 checks |
-| `main.c` | rcc→gpio_safe→hv→can→chademo→charge_stm→tick→`cpsie i`, then 100 Hz loop (feed IWDG + `heartbeat` + publish `hv_*` + RX parse + `charge_stm_step` [publish `stm_*`] + periodic TX + can_service); no asserted power drive |
+| `src/current_ctrl.c/.h` | **inert** H102 output-current control law (shadow setpoint): state-30 `setpoint=min(request,EVSE avail)` capped by EVSE max, `target_v=min(target,limit)`, byte-exact `/1000` scale + converter `(code<7)?code:0xFF`, zero-skip keep-previous; drives no power stage; EVSE-side measurements safe-stubbed (§5.21 E, `analyze89`) |
+| `test_current_ctrl.c` | host unit test (gcc, no hardware): converter/scale, min/cap law, target-voltage limit, zero-skip, EVSE-stub safety (setpoint held 0) — 42 checks |
+| `main.c` | rcc→gpio_safe→hv→can→chademo→charge_stm→current_ctrl→tick→`cpsie i`, then 100 Hz loop (feed IWDG + `heartbeat` + publish `hv_*` + RX parse + `charge_stm_step` [publish `stm_*`] + `current_ctrl_step` in state-30 [publish `cc_*`] + periodic TX + can_service); no asserted power drive |
 | `build.sh` | builds via `nix-shell -p gcc-arm-embedded python3` → `app.elf`/`app.bin`, verifies vectors, pads to sector 5 |
 | `verify_pad.py` | checks `vector[0]==0x20030000`, `vector[1]` is an in-app Thumb address; pads `app.bin` → `app_padded.bin` (128 KB, `0xFF` tail) |
 
@@ -100,6 +113,15 @@ nix-shell -p gcc --run 'gcc -O2 -Wall -Wextra -Isrc -o test_charge_stm test_char
 
 Expected: `47 checks, 0 failures`. `charge_stm.c` is pure logic (no hardware registers), so it compiles
 and runs on the host; the CAN bus-freshness helper is stubbed in the test.
+
+**Host unit test** (no hardware — verifies the H102 current-control converter/scale + min/cap law):
+
+```sh
+nix-shell -p gcc --run 'gcc -O2 -Wall -Wextra -Isrc -o test_current_ctrl test_current_ctrl.c src/current_ctrl.c && ./test_current_ctrl'
+```
+
+Expected: `42 checks, 0 failures`. `current_ctrl.c` is pure logic (no hardware registers), so it compiles
+and runs on the host.
 
 ## Wrap into a bootable UPG
 
@@ -142,6 +164,10 @@ byte-identical round-trip when fed the stock app region.
    `&stm_action` is `0`/`6` (none/all-off). Injecting H102 with a fault byte should move `&stm_interlock`
    and force a safe stop state if the machine were active. **No GPIO is driven by the state machine** —
    `&stm_action` is a *recorded intent*, not an output. Any contactor click here is a fault — stop.
+6. **Confirm the current control is inert**: read `&cc_setpoint` over SWD — with the EVSE-side measurements
+   stubbed it stays `0` (the `min(request,0)==0` zero-skip), as do `&cc_cap`/`&cc_target_v` until state-30.
+   `current_ctrl_step` only runs in CurrentDemand (state 30) and **drives no power stage** — `cc_*` are
+   *shadow setpoints*, not outputs. No current command reaches the power stage; any energisation is a fault.
 
 ## Recovery (bricking-safe)
 
@@ -160,7 +186,7 @@ that mass-erases). See REPORT §5.19.
 
 Built up in incremental, independently-testable layers; power-stage drive stays GATED last.
 
-**Done (safe bootstrap + CAN1 message layer + HV measurement + inert charge stm):**
+**Done (safe bootstrap + CAN1 message layer + HV measurement + inert charge stm + inert current control):**
 - Clocks — `rcc_init` restores SYSCLK 168 MHz (§5.8.1).
 - §5.20 — 100 Hz SysTick OS tick + 100 kHz TIM2 timebase (`src/tick.c`).
 - §5.5c — GPIO **safe-state** init (`src/gpio.c`, active levels via `analyze86`): all power pins
@@ -180,11 +206,19 @@ Built up in incremental, independently-testable layers; power-stage drive stays 
   safety interlocks + CAN watchdogs (whole-bus 1525 / per-message 100). Records `STM_ACT_*` but drives
   **no GPIO**; EVSE-side handshake inputs safe-stubbed until the CCS2 PLC/DIN layer. Host-unit-tested
   (`test_charge_stm.c`, 47 checks). **No power drive.**
+- §5.21 E — **inert H102 current control** (`src/current_ctrl.c`, shadow setpoint via `analyze89`): the
+  byte-exact state-30 CurrentDemand law `setpoint = min(H102.ChargingCurrentRequest, EVSE avail)` capped by
+  the EVSE max-current (`cap!=0`), `target_v = min(H102.TargetBatteryVoltage, p[+0x216] limit)`, with the
+  `/1000` scaling (`muls`+`udiv`) + converter `0x0804E786` (`(code<7)?code:0xFF`) and the zero-skip
+  keep-previous paths. Corrects the earlier `setpara(4)`/`[+0x44]→[+0x40]` sketch (C013 `setpara` is a
+  validation stub; the law is inline in state-30, context `0x20000780` `+0x16…+0x1e`). Runs only in state-30;
+  EVSE-side measurements safe-stubbed 0 → setpoint held 0. Host-unit-tested (`test_current_ctrl.c`, 42
+  checks). **No power drive.**
 
 **Remaining layers:**
-- §5.21 — H102 vehicle-request → output-current control law (`setpara(4)`, struct `0x20000780`).
 - CCS2 EVSE-side subsystem (PLC/QCA7005 + DIN70121/ISO15118) — supplies the stm's EVSE-side handshake
-  inputs (isolation / precharge_flag / CableCheck / ChargeParameterDiscovery) currently safe-stubbed.
+  inputs (isolation / precharge_flag / CableCheck / ChargeParameterDiscovery) **and** the current-control
+  EVSE-side measurements (max/available current + range-code factors, voltage limit) currently safe-stubbed.
 - §5.5c — **asserted** power-stage drive (PB10/PB11 precharge, PD8 inner contactor, PC9 charge,
   PE7/PE8 d1/d2, PD3/PE4 e-lock) — **LAST**, behind a compile-time safety flag, drive **only** once
   the controller is bench-validated.
