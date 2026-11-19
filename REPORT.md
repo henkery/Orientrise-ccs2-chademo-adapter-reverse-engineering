@@ -112,6 +112,15 @@ Reset_Handler zero-fills two `.bss` regions:
 No Ethernet MAC usage seen ⇒ likely **STM32F427/F429**. **[H]** A pin-compatible **GD32F450/470**
 cannot be fully excluded without `DBGMCU_IDCODE` / flash-size register reads.
 
+**Sub-family discriminators (`analyze71`, correct-base peripheral scan):** the firmware references
+**no** F429/F439-only blocks — LTDC (`0x40016800`), DMA2D (`0x4002B000`), SAI1 (`0x40015800`), FMC
+(`0xA0000000`) — and **no** F437/F439 crypto — CRYP (`0x50060000`) / HASH (`0x50060400`). RNG
+(`0x50060800`) **is** present (⇒ not F427xG-without-RNG variants). It reads `DBGMCU_IDCODE`
+(`0xE0042000`) at f+`0x30388` & f+`0x67802` and the 96-bit UID (`0x1FFF7A10`) at f+`0x68406`; the
+flash-size register (`0x1FFF7A22`) is **not** read. F427 and F429 share IDCODE `0x419`, so the
+firmware alone cannot separate them — the exact part number needs the package top marking. Net:
+**STM32F427/F429 (IDCODE 0x419), no display/crypto, RNG on**; GD32F450/470 clone not fully excluded.
+
 ### 3.4 Flash / link base  [C]
 - Flash at `0x08000000` (STM32F4). App is **bootloaded**: string `BOOT_CCS2CHADEMO_1.UPG` present.
 - **CORRECTED by the running-app dump (§5.16, `analyze70`):** the true mapping is
@@ -194,11 +203,22 @@ high-entropy `0x58–0x3EA` block is a **discarded** header field, not a vector 
 
 ## 5. Software architecture (from strings & code)
 
-### 5.1 RTOS  [C present, H identity]
-Preemptive RTOS with named processes and a task-stat dump
-(`Task RT BASE IER SS STKF STKS ADDR NAME`). Named processes include:
-`tcpip_process`, `led_process`, `PDS_PROCESS`, plus per-protocol state-machine tasks.
-Exact RTOS not identified from strings (not FreeRTOS/RT-Thread/uC-OS by name).
+### 5.1 RTOS — uC/OS-II (Micrium), customized  [C identified]
+**RESOLVED (§8.7, `analyze73`):** the RTOS is **uC/OS-II**, identified by the internal-symbol debug
+string `OS Information | OSRdyTbl:%05x | RUN: %u:%02u:%02u` (f+`0x2F042`). **`OSRdyTbl`** is the
+uC/OS-II ready table (uC/OS-III uses `OSRdyList`); the earlier "not uC-OS by name" search missed it
+because it looked for the product name, not the internal symbol.
+- **Tick = 100 Hz (10 ms):** the stat dump's `RUN: h:m:s` math divides the tick counter (`OSTime`,
+  accessor `0x0808981C`) by **100** → seconds, then 60/60 (§5.8).
+- **Task-stat dump** (`Task RT BASE IER SS STKF STKS ADDR NAME`, row format
+  `%4lu %6lu %06x %3lu %2lu %4lu %4lu %08x %s`) iterates TCBs via accessor functions
+  (get-TCB-by-index `0x080895CA`, stack-free `0x080895EC`, stack-size `0x08089614`). The TCB layout
+  is vendor-customized (fields at `+0x00` ptr, `+0x04` byte, `+0x06` hword, `+0x0C` ptr, `+0x14` ptr,
+  `+0x28`, `+0x3C`).
+- **Task creation** is a customized `OSTaskCreateExt`-style wrapper @`0x08088D76`:
+  `(task_func, name_str, ?, pdata, stk_base, stk_size)`, priority set separately (e.g.
+  `tcpip_process`: `0x1000` = 4 KB stack, priority 10). Named processes: `tcpip_process`,
+  `led_process`, `PDS_PROCESS`, `iso1_function_res_process`, plus per-protocol state-machine tasks.
 
 ### 5.2 Protocol state machines  [C]
 - **ISO 15118-2 EVCC** (`iso1_…`): SessionSetup, ServiceDiscovery, PaymentSelection,
@@ -231,6 +251,29 @@ Exact RTOS not identified from strings (not FreeRTOS/RT-Thread/uC-OS by name).
 - Connector **e-lock**, **precharge**, **welding detection**, **insulation/isolation**,
   contactor/relay drive (`precharge_relay failed!terminate`), emergency/timeout shutdown.
 - **TIM2** used heavily (16 refs) ⇒ likely CP PWM capture/compare. **CAN1/CAN2** ⇒ CHAdeMO + GB/T BMS.
+
+### 5.5a GPIO pin map — DECODED (`analyze74`)  [C]
+**RESOLVED (§8.4).** The board GPIO init @ runtime `0x08087010` (f+`0x67412`) writes a literal pool of
+**standard STM32F4 GPIO register values** per port (GPIOA–E), then calls a GPIO-lock helper
+@`0x08087340` (f+`0x67742`, `LCKR` key sequence) with mask `0xFFFF`. The "packed config table" at
+f+`0x67756` is just that literal pool — **not** a custom format (the earlier §8.4 guess was wrong; the
+parser was found by hunting LDR loads whose pool *location* falls in the table, `analyze72`). Bus pins:
+
+| function | pins | AF |
+|---|---|---|
+| **SPI1 — QCA7005 PLC modem** | PA5 SCK / PA6 MISO / PA7 MOSI | AF5 |
+| **SPI4 — storage flash** | PE12 SCK / PE13 MISO / PE14 MOSI | AF5 |
+| **USART1** | PA9 TX / PA10 RX | AF7 |
+| **USB OTG FS** | PA11 DM / PA12 DP | AF10 |
+| **CAN1** | PD0 RX / PD1 TX | AF9 |
+| **TIM4_CH1** | PD12 | AF2 |
+| **ADC analog inputs** | PA0/PA1/PA2, PB0/PB1, PC2 | — |
+
+GPIO outputs (relay / e-lock / LED / contactor drive, exact signal names pending): PA4; PB10/PB11/PB14/PB15;
+PC5/PC9; PD3/PD8/PD11; PE4/PE7/PE8/PE11/PE15. PA13/PA14 left as inputs (SWD not claimed by the app).
+**CAN2 has no AF9 pins in this init** (PB5/PB6/PB12/PB13 left as inputs) ⇒ its GPIO is configured elsewhere
+or the board wires only CAN1 — **CAN1/CAN2→CHAdeMO/GB/T assignment still pending** (§8.5). Full per-pin
+mode/AF/pull/open-drain/initial-level table: `analyze74.py`.
 
 ### 5.6 Self-update mechanism — `usbdisk` process  [C machinery · H orchestration]
 
@@ -352,7 +395,9 @@ Decoding each word as an STM32 `CAN_BTR` (`BRP[9:0]=psc−1`, `TS1[19:16]=BS1−
   strings **`CANBAUD1`** / **`CANBAUD2`** (`0x02EC2E` / `0x02EC3E`) make each bus's rate
   user-configurable. **CHAdeMO = 500 k, GB/T = 250 k** (standard). The config block is copied to RAM at
   boot (no live flash pointer found).
-- **CAN1/CAN2 → CHAdeMO/GB/T assignment still open** (needs the GPIO/pin map, §8.4).
+- **CAN1/CAN2 → CHAdeMO/GB/T assignment:** pin map now decoded (§5.5a) — **CAN1 = PD0/PD1 (AF9)**; CAN2
+  has no AF9 pins in the board init (configured elsewhere or CAN1-only board), so the per-protocol bus
+  assignment is still pending (§8.5).
 
 #### 5.8.2 CAN controller init  [C]
 
@@ -363,6 +408,19 @@ Init routine @ `0x67854` (both controllers, HAL-style):
   `FS1R = 0x0FFFFFFF` (32-bit scale), `FFA1R = 0` (all → FIFO0), `FA1R = 0x4001` (**banks 0 & 14 active**).
   Bank 0 regs @ `+0x240` (CAN1), bank 14 @ `+0x2B0` (CAN2). Init leaves a **placeholder filter (ID=0)**
   that the protocol layer reconfigures with the real acceptance IDs/masks.
+
+**Driver mailbox-FIFO layer (`analyze72`, f+`0x67A40`+ / runtime `0x0808763E`+):** above the HAL init
+sits a software ring-buffer driver keyed off a per-controller SRAM handle (CAN handle base
+`0x200216DC`, loaded via LDR-literal pool f+`0x67B72`). Layout: TX ring head/tail halfwords at
+handle`+0xF00`/`+0xF02`, RX ring head/tail at `+0xF04`/`+0xF06`, an enable byte `+0xF09`; RX mailbox
+array at `+0x180`, TX mailbox array at `+0x1B0`, **3 mailboxes** each (loop `cmp #3`). Each mailbox
+slot is 12 bytes (`r4 + r4<<1` then `<<2` = ×12): word0 = ID/RTR/IDE packed, word1/word2 = data.
+The RX path (`0x08087674`) drains FIFO0 into the ring (tail`+0xF06` advances, `uxtb` wrap); the TX
+path (`0x080876EA`) pushes ring frames into empty mailboxes (head`+0xF00` advances, `&0x3F` wrap =
+64-deep ring). Acceptance masks seen in the pools: `0x0003FFFF` (29-bit extended-ID mask),
+`0x1FFFF800`, `0x00010101`. CAN handle tables in rodata: CAN1 `{base 0x40006400, cfg 0x20000978,
+0x000F0F0F}` @ f+`0x67B76`; CAN2 `{base 0x40006800, …, 0x00010101, NVIC_ISER 0xE000E200,
+0x0003FFFF, 0x1FFFF800}` @ f+`0x67B82`.
 
 #### 5.8.3 GB/T 27930 — J1939 identifiers  [C]
 
@@ -432,10 +490,14 @@ CHAdeMO uses **fixed 11-bit IDs** (no addressing). Confirmed used via debug stri
   overflow (+`0x10000`), and waits `(arg+5)/10` ticks.
 - Core delay @ `0x67D82` = `arg × 1000` busy-units, chunked at 256 000 (`0x3E800`), feeding **IWDG**
   (`0xAAAA`) each chunk; wrappers scale ×100 (`0x67DB0`, `0x6951A`) or ×10 (`0x695F6`, chunk 50 000).
-- **Inference [H]:** busy-unit ≈ 1 µs ⇒ TIM2 tick ≈ 10 µs (100 kHz). Exact **TIM2 prescaler / RTOS tick
-  period not yet confirmed** (the timer @ `0x6847A` with PSC=83/ARR=1110 is a ~1.111 ms PWM, *not* the
-  free-running TIM2 timebase). The numeric tick-constants behind the second-valued timeouts remain to be
-  extracted from the state machines.
+- **RTOS tick = 100 Hz (10 ms) [C, `analyze73`]:** the uC/OS-II task-stat dump (§5.1) converts the
+  `OSTime` tick counter (accessor `0x0808981C`) to seconds by `÷100`, then `÷60`/`÷60` for the
+  `RUN: h:m:s` field — so the OS tick period is **10 ms**. This is the timebase the second-valued
+  protocol timeouts count against.
+- **Inference [H] (busy-delay only):** busy-unit ≈ 1 µs ⇒ TIM2 tick ≈ 10 µs (100 kHz), independent of
+  the OS tick. Exact **TIM2 prescaler not yet confirmed** (the timer @ `0x6847A` with PSC=83/ARR=1110
+  is a ~1.111 ms PWM, *not* the free-running TIM2 timebase). The numeric tick-constants behind the
+  second-valued timeouts remain to be extracted from the state machines.
 
 ### 5.9 CCS2 handshake — how the adapter introduces itself (EVCC)  [C unless noted]
 
@@ -454,6 +516,11 @@ MAC** from a global SLAC struct (`[r5+6]`) into the EVHost-MAC field (`[r5+0x18]
 (`movw sb,#0x3b0e`), V2GTP payload type **0x9000**. The request payload is 2 bytes
 **{security, transport}**: security = **`0x10` (TLS) or `0x00` (no TLS)**, selected by a mode flag
 @ `0x000900` (`tst r0,#0xff` → `0x10`/`0x00`) and stored `[r4+0x22]`; transport = TCP.
+**Trigger traced (`analyze72`):** `r0` is the return of accessor `0x08051074`, which reads a config
+struct @SRAM `0x200189EC` (word +`0x20`, byte +`0x24` packed at bit 24); the tested **low byte
+(`0x20018A0C`) = 0 ⇒ TLS, nonzero ⇒ no TLS**. That config block is filled by a parser copying from
+`0x001F8010` and testing V2G message-type codes `0x8101/0x8105/0x8107/0x8108/0x810D` ⇒ the flag tracks
+the supported protocol/message set (DIN-vs-ISO / PnC capability), not a per-session value.
 **500 ms** per attempt (`0x1f4`), **50 retries** (`0x32`). The SECC's offered security is checked
 (`0x10`/`0x30`); `"NO TLS"` is logged and TLS (mbedTLS) is used for ISO 15118 PnC — cf. the error
 `"EVSE only supports PnC, but no TLS!"`.
@@ -476,10 +543,29 @@ EVCC struct; **EVCCID length = 6** (`[r4+0x1408]`); **6 bytes** copied into `[r4
 and EXI-encoded. Those 6 bytes are the **same MAC** used in SLAC and printed by `MAC:%02x-…`
 (`0x00238C` calls the same thunk). The DIN path shares the SessionSetup encoder (`bl 0x8033EA6`).
 
-**MAC source [H]:** the value is **runtime, not a fixed constant** — held in the global EVCC/SLAC
-struct and populated from the **QCA7005 modem** (its PIB MAC). No hardcoded OUI and no
-STM32-UID-derived MAC found (`0x1FFF7A10` etc. unreferenced). The exact SPI MAC-read MME is not yet
-traced, nor is the SDP security-flag trigger (DIN-vs-ISO / cert availability) — both §8.8.
+**MAC source — call chain + MAC-read MMTYPE RESOLVED [C] (`analyze75`):** the value is **runtime, not a
+fixed constant** — held in the global EVCC/SLAC struct (SRAM `0x200003D0`) and populated from the
+**QCA7005 modem** PIB MAC (fw `1.1.0.727-02-20130826`, banner `MAC-QCA7005-…` f+`0x2596`). No hardcoded
+OUI and no STM32-UID-derived MAC (`0x1FFF7A10` unreferenced). MAC-init chain (`analyze72`): the SLAC
+state machine logs the banner, then `0x0802156C` → `0x08088C10` (SPI mutex `0x20000A00` + **PC5** reset
+pulse, BSRR `0x200000`→`0x20`) → `0x08088B94` (poll QCA7005 SPI reg `0x1A00` for CPU-ready signature
+`0xAA55`, then reg `0xC00` bit 6) → `0x08088A0E` (SPI register init: `0x1200=0xC5B`, `0xC00=0x447`,
+`0xD00=0x41`; reg read `0x080932A8` / write `0x080932EC`).
+
+**MAC-read MME — MMTYPE `0xA000` (REQ) / `0xA001` (CNF) (`analyze75`):** after SPI init the host reads
+the modem PIB MAC with a **vendor-specific MME (MMTYPE `0xA0xx`, MMV `0`)**, EtherType **`0x88E1`**
+(HomePlug AV / IEEE 1901). Builder `0x08088B48` copies a 12-byte MAC header from template `0x080AEC84`
+(dest = QCA7005 **default** PIB MAC `00:B0:52:00:00:01`, src = host `FE:FF:FE:FF:00:01`), writes the
+EtherType via `movw #0xE188`+`strh` (network order ⇒ on-wire `88 E1` — why a static-template scan misses
+it), MMTYPE low/high `00`/`A0`, payload **param `0xB000` + op `'R'` (`0x52`, Read)** + 4 zero bytes, then
+`mme-send` `0x080888CE` (len `0x18`=24). The reply CNF `0xA001` is validated by `0x08088ADA` (checks
+MMTYPE low==1/high==`0xA0`, stamps done-marker `0x55`) and copied to SRAM `0x200227E0`; the **6-byte MAC
+lands at `0x200227E6`** (=+6), returned by accessor `0x08088CAC` — the same bytes used as SLAC
+EVHost-MAC and `SessionSetupReq` EVCCID. Poll loop `0x08088B1E` (10 ms × 20) inside retry wrapper
+`0x08088C74` (×3). The dest is the *default* MAC because the real one is not yet known — the `0xA000`
+read returns the actual per-unit MAC. This PIB read is distinct from the SLAC `CM_*` MMEs (MMTYPE
+`0x6064/65` `CM_SLAC_PARM`, `0x606A` `CM_START_ATTEN_CHAR`, `0x6008/09` `CM_SET_KEY`; decoder
+`0x080214D6`, builder `0x0802166E`/`0x0802188C`), which run *after* the MAC is known (§8.8).
 
 > **Method note:** strings/peripherals in this image are referenced **PC-relative (ADR T1/T3, LDR
 > literal T1/T2)** into inline rodata tables — *not* movw/movt immediates. LDR-literal T2's U-bit is
@@ -1211,6 +1297,38 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   @`0x08020008` with in-place pool resolution (manual MSR decode), and verifies the true link base
   `0x0801FBFE` via internal string pointers. Run:
   `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze70.py acq/dump/app5.bin firmware.bin'`.
+- `analyze71.py` — **correct-base peripheral map + MCU sub-family + RTOS recon (§3.3/§5.1)**: scans
+  `firmware.bin` at the ground-truth base `0x0801FBFE` for (1) every raw stored u32 matching a peripheral
+  base (HAL keeps bases in rodata **handle tables**, not movw/movt immediates), and (2) code-loaded
+  movw/movt + LDR-literal constants; classifies GPIO/CAN/SPI/TIM/ADC/RCC/FLASH/DMA/USB/RNG/SysTick/etc.,
+  flags F429/F439-only (LTDC/DMA2D/SAI/FMC) and F437/F439-only (CRYP/HASH) blocks for sub-family
+  discrimination, and locates `DBGMCU_IDCODE`/UID/flash-size reads. Run:
+  `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze71.py firmware.bin'`.
+- `analyze72.py` — **annotated Thumb-2 app disassembler (§5.8/§5.9)**: disassembles a `firmware.bin` range
+  at base `0x0801FBFE+F` with LDR-literal pool values (+ targeted ASCII strings), ADR string targets,
+  movw/movt reconstruction, BL/B targets, and manual `MSR(register)` decode. **LDR-literal alignment is
+  computed on the runtime PC** (`pca=((rt(a)+4)&~3)-TRUE_BASE`) because the base ≡ 2 (mod 4) — file-offset
+  alignment would be off by ±2. Run:
+  `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze72.py firmware.bin START_HEX END_HEX'`.
+- `analyze73.py` — **RTOS identification + task-stat/creation trace (§5.1)**: finds uC/OS-II internal-symbol
+  strings (`OSRdyTbl`), xrefs the task-stat dump strings (movw/movt + ADR + LDR pools + rodata pointer-table
+  fallback), and disassembles the stat dump (tick ÷100 ⇒ 100 Hz) and the named-task creation sites
+  (`tcpip_process`/`led_process`/`PDS_PROCESS`). Run:
+  `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze73.py firmware.bin'`.
+- `analyze74.py` — **GPIO pin-map decoder (§5.5a/§8.4)**: decodes the board GPIO init @`0x08087010`
+  (f+`0x67412`) — per-port MODER/OTYPER/OSPEEDR/PUPDR/ODR/AFR register values extracted from the init
+  disassembly (`analyze72.py firmware.bin 0x67400 0x674d0`) — into a per-pin mode/AF/pull/open-drain/
+  initial-level table, mapping AF numbers to STM32F427/429 peripheral functions (SPI1/QCA7005 PA5/6/7,
+  SPI4/flash PE12/13/14, USART1 PA9/10, USB FS PA11/12, CAN1 PD0/PD1, TIM4_CH1 PD12, ADC analog pins).
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze74.py'`.
+- `analyze75.py` — **QCA7005 MAC-read MME decoder (§5.9/§8.8a)**: nails the exact MME MMTYPE used to read
+  the modem PIB MAC (= EVCCID). Reconstructs the 24-byte request frame from builder `0x08088B48` — pulls
+  the 12-byte MAC header template live from `firmware.bin` @`0x080AEC84` (f+`0x8F086`), EtherType
+  `0x88E1` (`movw #0xE188`+`strh`, network order), MMV `0`, **MMTYPE `0xA000` (REQ) / `0xA001` (CNF)**,
+  payload param `0xB000` + op `'R'`(`0x52`); prints the MMTYPE map (MAC-read `0xA000/01` + SLAC `CM_*`
+  `0x6064/65/6A/08/09`) and the call chain (builder → `mme-send` `0x080888CE`; validator `0x08088ADA`;
+  poll `0x08088B1E`/retry `0x08088C74`; MAC → SRAM `0x200227E6`). Run:
+  `nix-shell -p python3 --run 'python3 analyze75.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -1241,14 +1359,24 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 
 ## 8. Open questions / next steps
 
-1. **Exact MCU part** — narrowed to **STM32F427/F429, 1 MB flash** (flash-writer’s 12-sector table, §5.6) + 192 KB SRAM + 64 KB CCM. Easiest: **read the MCU top marking** (e.g. `STM32F427VGT6`: V=LQFP100 / Z=LQFP144, G=1 MB) — this also gives the package needed for SWD pin numbers (§5.7). Else confirm via `DBGMCU_IDCODE` (`0xE0042000`, read by the app) / flash-size reg (`0x1FFF7A22`).
+1. **Exact MCU part** — narrowed to **STM32F427/F429, 1 MB flash** (flash-writer’s 12-sector table, §5.6) + 192 KB SRAM + 64 KB CCM. **Peripheral discriminators confirm the narrowing (§3.3, `analyze71`):** no LTDC/DMA2D/SAI1/FMC (⇒ not F429/F439 display variants), no CRYP/HASH (⇒ not F437/F439), RNG present; app reads `DBGMCU_IDCODE` (f+`0x30388`/`0x67802`) + UID (f+`0x68406`) but **not** the flash-size reg. F427/F429 share IDCODE `0x419` ⇒ firmware alone can't separate them. Easiest: **read the MCU top marking** (e.g. `STM32F427VGT6`: V=LQFP100 / Z=LQFP144, G=1 MB) — this also gives the package needed for SWD pin numbers (§5.7). GD32F450/470 clone not fully excluded.
 2. **App link base — RESOLVED `0x0801FBFE` (§5.16, ground-truth dump).** `fw[F]`→`0x0801FBFE+F` (`fw[0x402]`→`0x08020000`); the earlier `.rodata` pointer-table "CONFIRMED `0x08020000`" (§3.4) was off by `0x402` and is superseded. The boot→app jump is traced (§5.15: fn `f+0x119e`, `bx` to the app reset vector; **no MSP/VTOR write in the boot** — the app's Reset_Handler @`0x08020008` does it). The prefix-decrypt question is **closed**: the boot installs `fw[0x402:]` verbatim, the prefix is discarded, the vector SP+reset are `fw[0x402:0x40A]` (§5.16); no `BOOT_…UPG` needed.
 2b. **Bootloader / update orchestration (bricking-critical)** — **ACQUIRED via the dump cave (2026-11-19, §5.14);** software search had found nothing (2026-11-17). The bootloader is a separate factory component at `0x08000000–0x08020000` (128 KB, sectors 0–4). It is **not in the RAR** (only `MAIN_…UPG`), **not elsewhere in the project**, and **not embedded in the app** — no real vector table; the lone `0x8F652` candidate is a misaligned `.rodata` pointer-table false positive (`analyze25/26`). **Not publicly downloadable:** vendor **Orientrise** (No. 355 Longjin Rd, Changzhou, Jiangsu) ships firmware **contact-only** — `support@orientrise.net` / `sales@orientrise.net`, phone/WhatsApp/WeChat `+86 181 0150 7071`; free firmware on request matched to vehicle/region, **no self-service portal and no `BOOT_…UPG` published**. The nearest open project **`uhi22/ccs32clara` / `osexpert/ccs32clara-chademo`** (Dongguan **Longood** OEM + rebrands EV-Boy / Akyga AK-SC-E18 / EVniculus / Autonlaturit) **explicitly lists Orientrise as NOT compatible** (Longood = STM32F407 + plain `My407ccs2chademo.bin`; Orientrise = F427/F429 + `.UPG`/XOR/encrypted prefix) and does **not** include its own OEM bootloader either — but its README independently corroborates §5.6: *"Firmware update logic is inside the bootloader, so this is not affected by the firmware."* **Acquisition paths:** (a) **email the vendor** for `BOOT_CCS2CHADEMO_1.UPG`; (b) **SWD dump** of `0x08000000` len `0x20000` — **bricking-safe procedure in §5.7** (ESP32-S3 CMSIS-DAP or ST-Link): reading is non-destructive at any RDP level, only an RDP 1→0 *unlock* erases — **never unlock**; probe the first 8 bytes to learn the level first. Once obtained, confirm: who reads USB first, the XOR/prefix decode + any whole-image verify, and any USB/SWD recovery mode. **Kit built (2026-11-18):** path (b) is implemented as the read-only, probe-gated **`acq/` kit** (§5.7 / §7) — SWD (ESP32-S3 CMSIS-DAP + OpenOCD) primary, UART/DFU system-bootloader fallbacks, `analyze_boot.py` triage; software-verified (command names + analyzer smoke-tested). **`boot.bin` acquired 2026-11-19 via the §5.13f dump cave** (no SWD hardware needed) → `acq/dump/boot.bin`, RDP0, triaged in §5.14. **Update orchestration now traced (§5.15):** external-SPI storage pool (`0x100000`+) → serial/XMODEM intake → XOR + CRC16/MODBUS decode in-pool → component parse → verbatim SPI→internal-flash install → config rebuild → reset. Install transform **confirmed by the sector-5 dump (§5.16)**: strip `0x402`-byte header, copy `fw[0x402:]` verbatim — **no prefix-decrypt**.
 3. **The prefix block** (`0x58–0x400`) — **RESOLVED: discarded header field (§5.16).** 914 B high-entropy (7.815 after XOR) + plaintext footer `XIE22.00` / **u32 length = filesize−0x404** / u16 CRC `0x2DBE`. The running-app dump proves the boot strips `0x402` bytes and installs `fw[0x402:]` verbatim, so the prefix (< `0x402`) is **never installed or decrypted** — there is **no prefix cipher** (the per-revision difference is per-image header content; the boot's split-table routine is CRC16/MODBUS integrity, §5.15). The footer length/CRC are recomputable. *(The `0x8C400–0x8E600` block is mbedTLS AES/SHA-256 tables, not encrypted data.)*
 3b. **Bootloader→app entry contract — RESOLVED (§5.16); integrity CRACKED; service UPG BUILT (§5.12/§5.13).** Reset vector → file `0x40A`→`0x08020008`; file `0x400` = 10-byte entry header (2 discarded bytes + 8-byte vector SP+reset, **not** an IV); startup self-bootstraps MSP/PSP from its own `vector[0]`, zero-fills `.bss`+CCM, scatter-loads — **no boot-patched literals** (§5.16 corrects the `0x44C`/`0x450` claim). Footer u16 + trailer = **CRC16/MODBUS** (recomputable, `analyze52/54`); the app does **not** verify a whole-image checksum. `make_service_upg.py` builds `SERVICE.UPG` (byte-identical stock round-trip, safe) + `SERVICE_DUMP.UPG` (bench-confirmed dump cave on the in-place `f_close` anchor). **Runtime model established (§5.13b):** the bootloader decodes the image on first boot after an upgrade and the scatterload relocates **data only** ⇒ FatFs runs in place; the free-RAM scratch gap is derived from `.bss` end `0x20024D18`. The corrected cave is **bench-CONFIRMED working** (§5.13h): it produced `BOOT.BIN` (`0x20000` B) — the bootloader is acquired (`acq/dump/boot.bin`, §5.14) and the runtime-model gate is closed. **All resolved:** (a) entry = `0x08020054` (stock pool `APP5+0x50`, no patch, §5.16); (b) **boot-time code check — RESOLVED (§5.15):** CRC16/MODBUS residue during decode + config-block additive checksum/magic `0x55AA55AA`, no whole-image hash/signature; (c) deeper bootloader RE — **traced (§5.15)** + install transform **confirmed (§5.16):** app-jump, orchestration + SPI storage model, UPG components, XMODEM-1K, verify; **no prefix-decrypt** (prefix discarded, verbatim install).
-4. **Pin map** — disassemble the GPIO init table (`0x67756…`) to map relays, e-lock, CP/PP ADC, QCA7005 SPI pins, CAN pins.
-5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[H]**), CAN init/filter config, and protocol timeouts (1/4/5/6/8 s). **Remaining:** exact TIM2 prescaler / RTOS tick period + the numeric tick-constants behind the second-valued timeouts; CAN1/CAN2→CHAdeMO/GB/T assignment (needs pin map, item 4); confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
+4. **Pin map — RESOLVED (§5.5a, `analyze74`).** The board GPIO init @`0x08087010` (f+`0x67412`) writes
+   standard STM32F4 GPIO register values from a literal pool at f+`0x67756` (the earlier "custom packed
+   format" guess was wrong — it is just MODER/OTYPER/OSPEEDR/PUPDR/ODR/AFR constants), then locks all pins
+   via the helper @`0x08087340`. Decoded: **SPI1/QCA7005 = PA5/6/7 (AF5)**, **SPI4/flash = PE12/13/14 (AF5)**,
+   **USART1 = PA9/10 (AF7)**, **USB FS = PA11/12 (AF10)**, **CAN1 = PD0/PD1 (AF9)**, TIM4_CH1 = PD12 (AF2),
+   ADC analog = PA0/1/2 + PB0/1 + PC2; GPIOA–E used (no F–K). **Remaining:** name the individual GPIO-output
+   signals (relay/e-lock/LED/contactor) and the ADC-channel→CP/PP mapping; CAN2 GPIO (no AF9 pins in this
+   init — configured elsewhere or CAN1-only board).
+5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[H]**), CAN init/filter config + driver mailbox-FIFO layer (§5.8.2), and protocol timeouts (1/4/5/6/8 s). **RTOS tick = 100 Hz / 10 ms RESOLVED** (§5.1/§5.8.5). **Remaining:** exact TIM2 busy-delay prescaler + the numeric tick-constants behind the second-valued timeouts; CAN1/CAN2→CHAdeMO/GB/T assignment (**CAN1 pins now confirmed PD0/PD1, §5.5a**; CAN2 GPIO absent from the board init — trace its separate GPIO setup or confirm a CAN1-only board); confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
 6. **QCA7005 firmware** — **RESOLVED: not in this update.** Modem boots from external SPI flash; the MCU is only a SLAC/PLC host (§5.3). For open firmware, use the redistributable Qualcomm blob (open-plc-utils / `qca_spi` ecosystem).
-7. **RTOS identity** — locate the scheduler/task code to name the RTOS.
-8. **EVCC identity details (§5.9)** — EVCCID = the adapter's **6-byte PLC MAC** (confirmed: SLAC EVHost-MAC, `MAC:` prints, and `SessionSetupReq` all use the same global-struct bytes via thunk `0x080890AE`). **Remaining:** (a) trace the exact **QCA7005 MAC-read MME** over SPI1 that populates the global EVCC/SLAC struct at init (the MAC value is runtime/per-unit, not a fixed constant — no OUI or STM32-UID derivation found); (b) the **SDP security-flag trigger** — when `0x10` (TLS) vs `0x00` (no TLS) is requested (`0x000900`), i.e. its dependence on DIN-vs-ISO mode / contract-cert availability.
+7. **RTOS identity — RESOLVED (§5.1, `analyze73`): uC/OS-II (Micrium), customized.** Identified by the
+   internal-symbol debug string `OSRdyTbl` (uC/OS-II ready table). Tick = **100 Hz / 10 ms** (stat dump
+   `÷100`); customized TCB accessors + `OSTaskCreateExt`-style wrapper @`0x08088D76`; named tasks
+   `tcpip_process` (4 KB stack, prio 10) / `led_process` / `PDS_PROCESS` / `iso1_function_res_process`.
+8. **EVCC identity details (§5.9)** — EVCCID = the adapter's **6-byte PLC MAC** (confirmed: SLAC EVHost-MAC, `MAC:` prints, and `SessionSetupReq` all use the same global-struct bytes via thunk `0x080890AE`, which indexes a 48-byte-entry array @SRAM `0x2002390C`, pointer at `+0x2C`). **(a) MAC-read MMTYPE RESOLVED** (`analyze75`): chain SLAC banner → `0x0802156C` → `0x08088C10` (mutex + PC5 reset) → `0x08088B94` (QCA7005 SPI signature `0xAA55`@reg`0x1A00`) → `0x08088A0E` (SPI reg init `0x1200=0xC5B`/`0xC00=0x447`/`0xD00=0x41`); then the MAC-read MME = **vendor-specific MMTYPE `0xA000` (REQ) / `0xA001` (CNF)**, MMV `0`, EtherType `0x88E1`, payload param `0xB000` + op `'R'`(`0x52`, Read). Builder `0x08088B48` (12-byte header template `0x080AEC84`, dest = QCA7005 **default** MAC `00:B0:52:00:00:01`; EtherType via `movw #0xE188`+`strh`), validator `0x08088ADA` (CNF `0xA001`, done-marker `0x55`), poll `0x08088B1E` / retry `0x08088C74`; 6-byte MAC → SRAM `0x200227E6` (accessor `0x08088CAC`). SLAC `CM_*` MMTYPEs also decoded: `0x6064/65` `CM_SLAC_PARM`, `0x606A` `CM_START_ATTEN_CHAR`, `0x6008/09` `CM_SET_KEY` (decoder `0x080214D6`). **(b) SDP security trigger RESOLVED mechanism:** security = (config byte @SRAM `0x20018A0C` == 0) ? TLS : no-TLS, via accessor `0x08051074` (config struct `0x200189EC`); the block is parsed from `0x001F8010` against V2G msg codes `0x8101/0x8105/0x8107/0x8108/0x810D`. **Remaining:** name which msg-code/cert condition sets that byte (DIN-vs-ISO / PnC).
 9. **Device provenance (§5.10)** — vendor **disavows the unit as a clone**; firmware nameplate = **`KM-CCS2CHAdeMO-1`** / `CCS2GBT` with CATL/CAMA BMS code. Identify the **"KM" OEM**: web search was unavailable (2026-11-18, retry); decode the ID-block fields `F$K$N$T$2005$TY/VR$…` (f+0x090df0); check enclosure/label markings and the `SER:202406180463` date-code convention against other units. The USB log **proves the unit runs C009 = `firmware.bin`** (§5.10), so all RE findings apply to this hardware regardless of brand. MAC OUIs are IEEE-RA reference values — not a maker fingerprint.
