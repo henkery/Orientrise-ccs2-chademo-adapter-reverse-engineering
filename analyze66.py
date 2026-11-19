@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Independent verification of the built service UPGs + f_sync identification.
+"""Independent verification of the built service UPGs + FatFs finalizer identification.
  (1) SERVICE.UPG must be byte-identical to the stock raw UPG (round-trip proof).
  (2) SERVICE_DUMP.UPG: re-derive key, re-decode, independently recompute MODBUS footer
-     + trailer CRCs, check length field, disasm the hook site (0x910AC -> b.w cave) and
-     the cave (0x92000), confirm cave within sector 9, confirm entry/first4 preserved.
- (3) disasm f_sync candidate 0x0358c8 (f_close=0x036a9c only validates+clears; f_sync
-     flushes the dir-entry size, the correct finalizer for the dump cave).
+     + trailer CRCs, check length field, disasm the in-place hook site (f_close 0x0368E8
+     -> b.w cave) + its resume point (f_close+4 0x0368EC) and the cave (0x92000), confirm
+     cave within sector 9, confirm entry/first4 preserved.
+ (3) disasm f_sync 0x03685A + f_close 0x0368E8 from stock (f_close calls f_sync to flush
+     the dir-entry size, then validates+clears fp->obj.fs — the dump cave's finalizer).
 Usage: nix-shell -p python3 python3Packages.capstone --run 'python3 analyze66.py SERVICE.UPG SERVICE_DUMP.UPG ../extracted/MAIN_CCS2CHADEMO_1.UPG firmware.bin'
 """
 import sys, struct
@@ -45,8 +46,9 @@ print(f"  first4@400=0x{struct.unpack_from('<I',d,0x400)[0]:08X} stock=0x{struct
 print(f"  entry[400:45E] preserved: {d[0x400:0x45E]==sdec[0x400:0x45E]}")
 print(f"  prefix[0:3EA] preserved: {d[0:0x3EA]==sdec[0:0x3EA]}")
 print(f"  cave end f+0x{n-4:06x} < sector9 end 0xA0000: {n-4 < 0xA0000}")
-disasm(d, 0x910AC, 0x910B4, "hook site 0x910AC (expect b.w 0x080b2000)")
-disasm(d, 0x92000, 0x92078, "cave 0x92000 (dump sequence + path)")
+disasm(d, 0x0368E8, 0x0368F4, "hook site f_close 0x0368E8 (expect b.w 0x080b2000, then resume bl f_sync)")
+disasm(d, 0x92000, n - 4, "cave 0x92000 (dump sequence + fin epilogue + path)")
 
 fdec = sdec
-disasm(fdec, 0x0358c8, 0x03597c, "f_sync candidate 0x0358c8 (full)")
+disasm(fdec, 0x03685A, 0x0368E8, "f_sync 0x03685A (dir-entry size flush)")
+disasm(fdec, 0x0368E8, 0x036940, "f_close 0x0368E8 (calls f_sync, validates, clears obj.fs)")

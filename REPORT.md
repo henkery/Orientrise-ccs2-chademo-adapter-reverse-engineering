@@ -172,7 +172,8 @@ bootloader before it jumps to the app. **[H]** (consistent with the confirmed li
 
 - **Contents [H]:** almost certainly the Cortex-M **vector table + secure init** (there is no vector
   table anywhere in the clear). The **decryption key/routine is in the bootloader**, not this image,
-  so it cannot be decrypted from the `.UPG` alone. For an open firmware this is a non-issue: we
+  so it cannot be decrypted from the `.UPG` alone — but the bootloader is now acquired (§5.14), so the
+  key/routine is recoverable from `acq/dump/boot.bin`. For an open firmware this is a non-issue: we
   supply our own vector table.
 
 ---
@@ -261,13 +262,14 @@ living in the **bootloader** (not in this app, not in the update). So the app re
 to flash **in its raw/obfuscated form**, then resets; the **bootloader performs the prefix-decrypt
 (+ likely verify) and installs/launches the app** (the outer XOR-decode can be done by either side from
 the self-described key). **The outer-key change across revisions is therefore not a compatibility
-barrier; the prefix key + any version/hardware check are the real gates** — confirm via the bootloader
-dump (§5.7).
+barrier; the prefix key + any version/hardware check are the real gates** — now traceable on the acquired
+bootloader dump (§5.14).
 
 **Bricking-safety read:**
 - **In-place self-update, no A/B / staging** (app+logs fill the 1 MB). App erases its own sectors 5–9.
 - **Bootloader (sectors 0–4) is NOT touched by a MAIN update ⇒ it survives** a failed app update and is
-  the **recovery anchor**. Whether it has a USB/SWD recovery mode is **unknown** (bootloader not in hand).
+  the **recovery anchor**. It has a **USB update path and XMODEM-1K serial recovery** (bootloader acquired,
+  §5.14); SWD read is non-destructive at RDP0 (§5.7).
 - Integrity: **per-word read-back verify** in the writer; **the app does NOT verify a whole-image
   checksum** — no CRC32 routine exists in the app, and the UPG trailing bytes are CRC16/MODBUS
   integrity *metadata* (§5.13), recomputable, not a gate the app enforces. Any whole-image verify or
@@ -277,8 +279,10 @@ dump (§5.7).
 
 ### 5.7 Bootloader acquisition — bricking-safe SWD read  [C procedure]
 
-The bootloader (§8.2b) is not in hand; the non-destructive way to obtain it is a **SWD flash read** of
-`0x08000000–0x08020000`. Key safety fact: **reading flash never triggers a mass-erase.** On STM32F4 the
+The bootloader is **already acquired** non-invasively via the dump cave (§5.14, `acq/dump/boot.bin`); this
+SWD procedure is retained as an **alternative** non-destructive read path (and the way to re-dump or read
+other regions). The read targets `0x08000000–0x08020000`. Key safety fact: **reading flash never triggers
+a mass-erase.** On STM32F4 the
 erase fires **only on an RDP Level 1→0 regression** (an explicit "unlock / remove-protection" *write*):
 
 | RDP level | SWD read flash | outcome |
@@ -648,13 +652,14 @@ stub jumps to is the lowest-risk way to get a **vendor-bootable** service image 
 `0x08000000–0x08020000` out to USB and can re-flash a stock `MAIN_…UPG` to back out. **Implemented:**
 `make_service_upg.py` (§5.13) reuses the stock prefix/entry verbatim, applies app patches / appends a
 dump cave, and re-seals both MODBUS CRCs + the length field — `SERVICE.UPG` round-trips byte-identical
-to stock (safe recovery image); `SERVICE_DUMP.UPG` adds an experimental one-shot bootloader-dump hook.
-The remaining unknowns (the **encoded-overlay runtime model** — whether FatFs/flash-writer run in place
-or RAM-relocated — free RAM, FatFs re-entrancy, and the exact patched entry address) are precisely what
-a **read-only bootloader dump** (`acq/`, §5.7) resolves; until then the dump variant is bench-gated and
-carries brick risk (§5.13).
+to stock (safe recovery image); `SERVICE_DUMP.UPG` adds a one-shot bootloader-dump cave on the in-place
+`f_close` anchor (§5.13f). **Bench-confirmed working (§5.13h):** it dumped the bootloader to USB
+(`acq/dump/boot.bin`, §5.14) — the runtime model (FatFs in place, scatterload-derived free RAM) is
+established (§5.13b) and the original non-invasive acquisition goal is met. The `acq/` SWD kit (§5.7)
+remains an alternative dump path. Remaining interpretation tasks on the dump: the exact patched entry
+address (`0x450`), the prefix-cipher key, and any boot-time code check (§5.14).
 
-### 5.13 UPG integrity cracked, encoded-overlay pack, and the service-UPG builder  [C fields · H runtime model]
+### 5.13 UPG integrity cracked, encoded-overlay pack, and the service-UPG builder  [C fields · C runtime model · C cave]
 
 **(a) Integrity fields = CRC16/MODBUS (recomputable).** The trailing bytes are memory-integrity
 *metadata*, not a secret and not an app-enforced gate (`analyze51/52/54`, confirmed C009 **and** C013):
@@ -681,14 +686,35 @@ So the CRCs are recomputable and any boot-time whole-image check would be **boot
 - FatFs pools likewise: stored `0xBCB82001` → swap16 → `0x2001BCB8` (a valid SRAM address).
 
 ⇒ the flash writer (and pool-bearing code) is **not directly executable from the stored bytes**; the
-pools are fixed up at runtime. The `usbdisk` overlay (`0x02FF00–0x030300`) is separately **RAM-relocated**
+pools are fixed up at install. The `usbdisk` overlay (`0x02FF00–0x030300`) is separately **RAM-relocated**
 (its 32 BLs hit zero FatFs targets; its strings have zero static xrefs — `analyze57/58`). This is a light
-pack, not crypto: it defeats naive static constant-xref scanning, nothing more. **[H, hopeful]** the
-entry contract's scatter-load helpers (§5.12, file `0x45E`) decode/relocate these pools at startup, so the
-FatFs API runs **in place at `BASE+file_offset`** by the time the flash writer is called — but the runtime
-addresses, free RAM, and re-entrancy are **not statically provable** and must be confirmed on a bench dump.
+pack, not crypto: it defeats naive static constant-xref scanning, nothing more.
 
-**(c) Flash-writer signature (hook anchor).** `flash_write(sector=r0, offset=r1, data=r2, len=r3)`;
+**Bootloader-decode model (confirmed).** The bootloader **unobfuscates the image on first boot after an
+upgrade** — XOR-decode + storage-pool decode written back to flash — then hands off to the app, which runs
+normally on subsequent boots. Evidence: the device log shows a `RESET`/system-init pass after each
+`UPGRADE` (h), and the **scatterload relocates DATA ONLY** (no code region; `analyze68`), so app code —
+**including FatFs — executes in place at `BASE+file_offset`** from the decoded flash. Only the flash writer
+is SRAM-copied (it erases its own bank; STM32F4 stalls instruction fetch from a bank during erase/program).
+The 595 KB image exceeds the 256 KB RAM, so whole-image RAM execution is impossible — in-place flash
+execution is forced.
+
+**Scatterload region table → free RAM (`analyze68`, file `0x48A`, adr@`0x45E`).** Four DATA regions only:
+
+| region | load (flash) | exec (RAM) | size | init |
+|---|---|---|---|---|
+| R0 `.data` | `0x080B0A44` | `0x20000000` | `0x3B8` | copy |
+| R1 `.data` | `0x080B0DFC` | `0x200003B8` | `0x78C` | decompress |
+| R2 `.bss` | `0x080B10C0` | `0x20000B44` | `0x241D4` (147 924) | zero |
+| R3 CCM `.bss` | — | `0x10000000` | `0xFE2C` (65 068) | zero |
+
+⇒ `.bss` ends **`0x20024D18`**; main SRAM is 192 KB (`0x20000000–0x2002FFFF`), MSP stack at top
+`0x20030000`. The **free SRAM gap `0x20024D18..0x20030000` (45 800 B)** is usable scratch (above
+`.bss`/heap, below the ISR/MSP stack); the cave places `FIL/BW/FLAG` at `0x2002E000` (~37 KB above `.bss`
+end, 8 KB below stack top). No code region is relocated ⇒ the FatFs anchors in (d) are valid **in-place**
+hook targets.
+
+**(c) Flash-writer signature (SRAM-executed — *not* a hook anchor).** `flash_write(sector=r0, offset=r1, data=r2, len=r3)`;
 entry at file `0x910AC` (runtime `0x080B10AC`), prologue `push.w {r4-r11,lr}` (`E92D 4FF0`), then
 `0x910B0 mov r8,r2 / mov r7,r0`. FLASH base `0x40023C00`. App code ends runtime `0x080B14C0`; the
 **unused sector-9 tail** file `0x914C0..0xA0000` = **60 224 B** is cave space (no ≥256 B `0xFF`/`0x00`
@@ -726,26 +752,93 @@ verbatim, so its per-image keystream is **not** needed. With no patches it re-em
 UPG (`SERVICE.UPG`) — a round-trip proof of the format and a safe, bootable, stock-equivalent recovery
 image. `--verify-only` checks any UPG's CRCs.
 
-**(f) `SERVICE_DUMP.UPG` — experimental bootloader-dump cave.** `--dump-hook` patches the flash-writer
-entry `0x910AC` → `b.w` cave at file `0x92000` (runtime `0x080B2000`, in the unused sector-9 tail). The
-cave (hand-encoded Thumb, capstone-verified, pool-free `movw/movt/adr/bl`):
-`push.w {r0-r12,lr}`; one-shot guard `FLAG==MAGIC` (RAM `0x2003F234`); `f_open(&FIL,"0:/BOOT.BIN",0x0A)`
-(`FA_CREATE_ALWAYS|FA_WRITE`); on success `f_write(&FIL,0x08000000,0x20000,&BW)` then `f_close(&FIL)`
-(syncs the 131 072-byte size); `pop.w {r0-r12,lr}`; re-exec the original prologue `push.w {r4-r11,lr}`;
-`b.w 0x080B10B0` — so the **stock flash write still runs** (recovery path preserved). `FIL=0x2003F000`,
-`BW=0x2003F230`, `MAGIC=0x2003D00D`. Independent re-verification (`analyze66`): both MODBUS CRCs, length,
-key-echo, first4/entry/prefix preservation, cave-in-sector-9, hook target, and the full cave sequence all
-pass.
+**(f) `SERVICE_DUMP.UPG` — bootloader-dump cave (in-place `f_close` anchor, bench-confirmed).** `--dump-hook`
+patches the **in-place** FatFs `f_close` entry `0x0368E8` → `b.w` cave at file `0x92000` (runtime
+`0x080B2000`, unused sector-9 tail). `f_close` runs in place (b), unlike the SRAM-copied flash writer, so
+the hook **is** the executed copy. The cave (hand-encoded Thumb, capstone-verified, pool-free
+`movw/movt/adr/bl`): `push.w {r0-r12,lr}`; one-shot guard `FLAG==MAGIC` (`0x2002E234`) → `beq fin`;
+`f_open(&FIL,"0:/BOOT.BIN",0x0A)` (`FA_CREATE_ALWAYS|FA_WRITE`); on failure `bne fin` (**FLAG stays unset →
+retry** if the volume isn't mounted yet); on success arm `FLAG=MAGIC`, `f_write(&FIL,0x08000000,0x20000,&BW)`,
+`f_close(&FIL)` (re-enters the hook, sees FLAG set → real close: syncs the 131 072-byte size + releases any
+lock slot); **`fin:`** `pop.w {r0-r12,lr}`; re-exec the original `f_close` prologue verbatim
+(`push {r3,r4,r5,lr}; mov r4,r0` = `38 b5 04 46`); `b.w f_close+4` (`0x080568EC`) — so **every real close
+completes** (stock update/recovery preserved). The shared `fin` epilogue pops each frame exactly once: the
+inner `f_close(BOOT.BIN)` returns into `fin`, which then services the outer frame — recursion-safe,
+stack-balanced. `FIL=0x2002E000` (0x228 B), `BW=0x2002E230`, `MAGIC=0x2003D00D`. Independent re-verification
+(`analyze66`): both MODBUS CRCs, length, key-echo, first4/entry/prefix preservation, cave-in-sector-9, hook
+target + resume point, and the full cave sequence all pass.
 
-**(g) Residual bench-verify gates (do NOT flash the dump variant blind).** The hook is only as good as
-the runtime model in (b): (1) **encoded-overlay** — confirm FatFs/flash-writer execute in place with
-decoded pools (vs RAM-relocated, which would move every address); (2) **free RAM** at `0x2003F000`
-(FIL+BW+FLAG ≈ 572 B) — the app RAM map is not statically known; (3) **FatFs re-entrancy** — opening a
-second `FIL` while the UPG file is open (FatFs is non-reentrant); (4) **stack headroom** (~256 B for the
-pushed frame + FatFs locals); (5) the hook fires on **any** `flash_write`, including a stock-recovery
-write, so a crash there bricks the recovery path. All five are resolved by a **read-only SWD dump**
-(`acq/`, §5.7) of the running app/bootloader — **dump first, then bench-test `SERVICE_DUMP.UPG`** with
-SWD recovery available. `SERVICE.UPG` (no hook) is safe to flash at any time as a stock-equivalent.
+**(g) Bench-verify gates — all cleared on re-test.** The in-place anchor + scatterload free-RAM (b)
+resolved the two defects that killed the first cave (h). The remaining risks were: (1) **bootloader
+pool-decode of the hook/cave bytes** — the cave is pool-free (`movw/movt/adr/bl`), so a *selective*
+literal-pool decode has nothing to corrupt (a *blanket* halfword-swap of the overlay region could have
+damaged the `b.w` hook or cave code); (2) **exact free-RAM safety** — `0x2002E000` is above `.bss` end and
+below the MSP stack top (a heap growing up from `.bss` or a deep ISR stack could have collided); (3) **FatFs
+re-entrancy** — a second `FIL` opened while the UPG/LOGS file is open (FatFs non-reentrant); (4) **stack
+headroom** (~330 B for the pushed frames + FatFs locals). **All four were cleared by the successful bench
+re-test (h):** the cave dumped `BOOT.BIN` cleanly with no hardfault and stock recovery still works.
+`SERVICE.UPG` (no hook) is safe to flash at any time as a stock-equivalent; the dump variant is
+**bench-confirmed working**.
+
+**(h) Bench confirmation (hardware) — format/recovery CLOSED; first cave failed, corrected cave SUCCEEDED.**
+The first `SERVICE_DUMP.UPG` (flash-writer anchor) was **accepted by the bootloader** and installed (device
+log `UPGRADE:[597112]` = the exact rebuilt length `0x91C78`), and the running service image then
+**re-flashed a stock `MAIN_…UPG`** (`UPGRADE:[594112]`) — so the re-sealed CRCs + extended image **boot**,
+and the **stock-recovery path works end-to-end**. That first cave produced **no `BOOT.BIN`**, yet the
+update ran clean (no hardfault). Two cave defects explain it:
+  1. **Invalid scratch RAM** — the cave used `FIL/BW/FLAG = 0x2003Fxxx`, but main SRAM is **192 KB**
+     (`0x20000000–0x2002FFFF`, confirmed by the `.bss` zero-fill of `0xC000` words, §3.3); `0x2003F000` is
+     **out of range** — any access bus-faults.
+  2. **Wrong hook anchor** — the flash writer **executes from SRAM**, not in place: it erases/programs the
+     same flash bank it resides in (STM32F4 stalls instruction fetch from a bank during erase/program), so
+     it must run from a SRAM copy. The in-flash hook at `0x910AC` is **not the executed copy**.
+  A clean update with **no hardfault** means the cave body **never executed** (running it would fault on
+  defect 1) ⇒ defect 2 is the primary cause. **Consequence:** a working USB-dump cave needs (a) an
+  **in-place** hook anchor and (b) a valid free-RAM region. The corrected cave (f) supplies both without
+  SWD: the in-place FatFs `f_close` anchor (the scatterload relocates data only, so FatFs runs in place —
+  (b)) and scratch RAM in the scatterload-derived free gap `0x2002E000` (above `.bss` end `0x20024D18`,
+  below the MSP stack). **Bench re-test SUCCESS:** the corrected cave produced `BOOT.BIN` of exactly
+  `0x20000` B on the USB stick — the bootloader is **acquired non-invasively** (§5.14), closing the
+  runtime-model gate (g). The format/recovery gates are **closed**; the original acquisition goal is met.
+
+### 5.14 Bootloader acquired via the dump cave — structure (`acq/dump/boot.bin`)  [C dump · H orchestration]
+
+The corrected `f_close` cave (§5.13f) produced `BOOT.BIN` = exactly `0x20000` B; preserved at
+`acq/dump/boot.bin`, triaged by `acq/analyze_boot.py`. **RDP Level 0** (sane Cortex-M vector table),
+**plaintext** (not XOR/pool-encoded — the bootloader is the *decoder*, §5.13b). It is small: of the 128 KB
+region (sectors 0–4) only sector 0 is densely populated (~10.6 KB non-`0xFF`), sectors 1–3 sparse, sector 4
+fully erased; whole-image entropy 0.99 bits/B (mostly erased flash).
+
+**Vector table + reset startup.** `vector[0]` initial SP = `0x20028968`; `vector[1]` reset = `0x08000009`
+(handler @ `0x08000008`, code follows the 2-word SP+reset immediately). Reset @ `f+0x8`: `cpsid i/f` →
+load SP from `[0x08000000]` → `msr MSP/PSP` → `bl 0x08000246` (clock/init: RCC `0x40023800`, PWR
+`0x40007000`) → **zero-fill `0xC000` words = all 192 KB SRAM** (`0x20000000..0x20030000`) → `bx 0x0800003C`
+(boot main).
+
+**Own flash writer (~`f+0x2570`).** `push.w {r0-r12,lr}` … `cmp r2,#8`; `FLASH_KEYR` keys
+`0x45670123`/`0xCDEF89AB` @ `f+0x2554/0x2558`, FLASH base `0x40023C00`, app base `0x08020000`. Confirms the
+bootloader itself programs flash (the install/decode pass of §5.13b).
+
+**Boot→app entrypoint (the original question).** Accessor helpers read the app vector table at
+`0x08020000`: `get_app_reset()` = `ldr r0,=0x08020000; ldr r0,[r0,#4]; bx lr` (`f+0x240`, `f+0x1918`) →
+app reset vector @ `0x08020004`; `get_app_base()` = `ldr r0,=0x08020000; bx lr` (`f+0x1922`, `f+0x251A`).
+A boot-decision/launch cluster @ `f+0x1926` calls update/USB checks (`bl 0x080021D8` etc.), reloads IWDG
+(`0x40003000` ← `0xAAAA`), `cpsie if`; `SCB_AIRCR` (`0xE000ED0C`) referenced @ `f+0x18BC`. This corroborates
+the app-side entry contract (§5.12): app base `0x08020000`, reset vector @ file `0x40A` ⇒ runtime
+`0x0802040A`. **[H]** the exact MSP/VTOR-set + `bx` jump sequence is in this cluster, pending full trace.
+
+**Recovery + UPG components.** XMODEM-1K serial recovery (`"->1K Xmodem"` / `"EXIT XMODEM1K"` @
+`f+0xF94/0xFBA`). UPG component name strings `MAINARM` / `BOOTARM` / `ROOTCERTS` / `PRIROOT` @
+`f+0x20E4..0x2100` ⇒ the UPG is **multi-component** (app / bootloader / root certs). ID block
+`F$K$N$T$2005$VR$CAMA0FDQC000V3.6#` @ `f+0x46C` + `TY$KM-CCS2CHAdeMO-1` @ `f+0x4AC` (matches the app,
+§5.10); log strings `RDP:%u`, `FLASH_OPT:%08x`, `USER PRG SADR:0x%08x`, `NO USER PRG`. Peripherals
+referenced: RCC, FLASH, USB_OTG_FS (`0x50000000`), CAN1/CAN2, IWDG, PWR.
+
+**Remaining (deeper RE, not yet traced):** exact app-jump sequence; update orchestration (USB MSC read →
+XOR/prefix decode → flash write); the **prefix stream-cipher key/routine** (§4.1, the one piece the app
+never needed); XMODEM-1K protocol details; UPG component parsing; any boot-time whole-image verify beyond
+the CRCs (§5.13a). The dump itself is complete and verified — these are interpretation tasks on
+`acq/dump/boot.bin`, no further hardware access required.
 
 ---
 
@@ -786,13 +879,15 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 > stock UPG so the bootloader decrypts the stock vector table — **no prefix key needed**; footer + trailer
 > are **CRC16/MODBUS**, recomputable, and the app does **not** verify a whole-image checksum.
 > `make_service_upg.py` already builds `SERVICE.UPG` (byte-identical stock round-trip, safe) and
-> `SERVICE_DUMP.UPG` (experimental dump cave). The remaining gates are (a) the **encoded-overlay runtime
-> model** (§5.13b — in-place vs RAM-relocated FatFs/flash-writer, free RAM, re-entrancy), (b) the exact
-> entry address patched into literal `0x450`, and (c) any **boot-time** code check the bootloader adds
-> beyond the CRCs. All are resolved by a **read-only bootloader dump** (`acq/`, §5.7). **Sequence: dump
-> the bootloader first** (non-destructive at any RDP level), **then bench-test** the dump variant; flashing
-> `SERVICE_DUMP.UPG` *before* the dump carries brick risk (§5.13g). The dump itself needs no custom
-> firmware (`dump_image` / `stm32flash -r` / `dfu-util -U` at RDP0).
+> `SERVICE_DUMP.UPG` (bench-confirmed dump cave). The **runtime model is now established (§5.13b):** the
+> bootloader decodes the image on first boot after an upgrade and the scatterload relocates **data only**,
+> so FatFs runs **in place** and the cave hooks `f_close` with scratch RAM in the scatterload-derived free
+> gap. The corrected cave is **bench-CONFIRMED working** (§5.13h): it dumped `BOOT.BIN` (`0x20000` B) to
+> USB, acquiring the bootloader non-invasively (`acq/dump/boot.bin`, §5.14) — the original goal. The
+> `acq/` read-only SWD kit (§5.7) remains available as an alternative dump path (non-destructive at any RDP
+> level; `dump_image` / `stm32flash -r` / `dfu-util -U` at RDP0) but was **not needed**. Open items: deeper
+> bootloader RE on the dump (update orchestration, prefix-cipher key, exact app-jump — §5.14), the entry
+> address patched into literal `0x450`, and any **boot-time** code check beyond the CRCs.
 
 ---
 
@@ -890,29 +985,38 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   `0x080B14C0`, unused sector-9 tail `0x914C0..0xA0000` = 60 224 B for a cave).
 - `analyze66.py` — **independent service-UPG verifier (§5.13e/f)**: re-derive key, re-decode, recompute
   both MODBUS CRCs + length + key-echo from scratch; check `SERVICE.UPG` byte-identical to stock; disasm
-  the hook site + cave; confirm cave-in-sector-9 and entry/first4/prefix preservation. Run:
+  the in-place `f_close` hook site (`0x0368E8` → `b.w` cave) + resume point (`f_close+4`) + the full cave;
+  confirm cave-in-sector-9 and entry/first4/prefix preservation; disasm `f_sync`/`f_close` from stock. Run:
   `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze66.py SERVICE.UPG SERVICE_DUMP.UPG ../extracted/MAIN_CCS2CHADEMO_1.UPG firmware.bin'`.
 - `analyze67.py` — **`f_sync`/`f_close` finalizer identification (§5.13d)**: list all BL callers of
   `validate(0x036368)`, bound enclosing functions by push-prologues, disasm the small ones — pinpoints
   `f_sync=0x03685A` (flush dir-entry size) and `f_close=0x0368E8` (calls `f_sync` then clears `fp->obj.fs`),
   ruling out the no-sync `0x036A9C`. Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze67.py firmware.bin'`.
+- `analyze68.py` — **scatterload region-table parser (§5.13b)**: reads the ARM `__scatterload` table at
+  file `0x48A` (adr@`0x45E`), decodes each 16-byte `{load, exec, size, init_fn}` entry (offset-encoded
+  init fn), and classifies exec addresses as SRAM/CCM/FLASH — proves **data-only relocation** (no code
+  region ⇒ FatFs runs in place) and derives `.bss` end `0x20024D18` → the free-SRAM scratch gap. Run:
+  `nix-shell -p python3 --run 'python3 analyze68.py firmware.bin'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
-  `--dump-hook` (experimental bootloader-dump cave), `--verify-only`. Emits `SERVICE.UPG` (safe,
-  stock-equivalent) and `SERVICE_DUMP.UPG` (experimental, bench-gated).
+  `--dump-hook` (bootloader-dump cave, bench-confirmed), `--verify-only`. Emits `SERVICE.UPG` (safe,
+  stock-equivalent) and `SERVICE_DUMP.UPG` (bench-confirmed working — produced `BOOT.BIN`).
 - `SERVICE.UPG` / `SERVICE_DUMP.UPG` — built service images (§5.13e/f): `SERVICE.UPG` = byte-identical
-  stock round-trip (safe recovery); `SERVICE_DUMP.UPG` = stock + one-shot bootloader-dump cave (598 140 B,
-  valid CRCs, **bench-verify before flashing**).
+  stock round-trip (safe recovery); `SERVICE_DUMP.UPG` = stock + one-shot bootloader-dump cave on the
+  in-place `f_close` anchor (598 156 B, valid CRCs, **bench-confirmed working** — produced `BOOT.BIN`).
+- `acq/dump/boot.bin` — **the acquired bootloader** (§5.14): 131 072 B (`0x20000`) dumped non-invasively
+  by `SERVICE_DUMP.UPG`, RDP0, plaintext; triaged by `acq/analyze_boot.py` (vector table, reset startup,
+  own flash writer, boot→app accessors, XMODEM-1K recovery, UPG component names, ID block).
 - `REPORT.md` — this document.
 
 ## 8. Open questions / next steps
 
 1. **Exact MCU part** — narrowed to **STM32F427/F429, 1 MB flash** (flash-writer’s 12-sector table, §5.6) + 192 KB SRAM + 64 KB CCM. Easiest: **read the MCU top marking** (e.g. `STM32F427VGT6`: V=LQFP100 / Z=LQFP144, G=1 MB) — this also gives the package needed for SWD pin numbers (§5.7). Else confirm via `DBGMCU_IDCODE` (`0xE0042000`, read by the app) / flash-size reg (`0x1FFF7A22`).
-2. **App link base** — **CONFIRMED `0x08020000`** via the `.rodata` pointer table (§3.4). Remaining: obtain `BOOT_CCS2CHADEMO_1.UPG` to see how the prefix/vector table is decrypted & placed, and to recover the prefix keystream/key.
-2b. **Bootloader / update orchestration (bricking-critical)** — **SEARCHED, NOT FOUND (2026-11-17).** The bootloader is a separate factory component at `0x08000000–0x08020000` (128 KB, sectors 0–4). It is **not in the RAR** (only `MAIN_…UPG`), **not elsewhere in the project**, and **not embedded in the app** — no real vector table; the lone `0x8F652` candidate is a misaligned `.rodata` pointer-table false positive (`analyze25/26`). **Not publicly downloadable:** vendor **Orientrise** (No. 355 Longjin Rd, Changzhou, Jiangsu) ships firmware **contact-only** — `support@orientrise.net` / `sales@orientrise.net`, phone/WhatsApp/WeChat `+86 181 0150 7071`; free firmware on request matched to vehicle/region, **no self-service portal and no `BOOT_…UPG` published**. The nearest open project **`uhi22/ccs32clara` / `osexpert/ccs32clara-chademo`** (Dongguan **Longood** OEM + rebrands EV-Boy / Akyga AK-SC-E18 / EVniculus / Autonlaturit) **explicitly lists Orientrise as NOT compatible** (Longood = STM32F407 + plain `My407ccs2chademo.bin`; Orientrise = F427/F429 + `.UPG`/XOR/encrypted prefix) and does **not** include its own OEM bootloader either — but its README independently corroborates §5.6: *"Firmware update logic is inside the bootloader, so this is not affected by the firmware."* **Acquisition paths:** (a) **email the vendor** for `BOOT_CCS2CHADEMO_1.UPG`; (b) **SWD dump** of `0x08000000` len `0x20000` — **bricking-safe procedure in §5.7** (ESP32-S3 CMSIS-DAP or ST-Link): reading is non-destructive at any RDP level, only an RDP 1→0 *unlock* erases — **never unlock**; probe the first 8 bytes to learn the level first. Once obtained, confirm: who reads USB first, the XOR/prefix decode + any whole-image verify, and any USB/SWD recovery mode. **Kit built (2026-11-18):** path (b) is implemented as the read-only, probe-gated **`acq/` kit** (§5.7 / §7) — SWD (ESP32-S3 CMSIS-DAP + OpenOCD) primary, UART/DFU system-bootloader fallbacks, `analyze_boot.py` triage; software-verified (command names + analyzer smoke-tested), awaiting a bench `boot.bin` dump. **Dump first, then build** the service firmware (§6).
-3. **The prefix block** (`0x58–0x400`) — **characterized** (§4.1): stream-cipher ciphertext (914 B) + plaintext footer `XIE22.00` / **u32 length = filesize−0x404** / u16 check `0x2DBE` (§4.1 corrected — the old "`0x10C0` + `9`" reading was the length's low/high halves). Ciphertext differs 913/914 B between C009/C013 ⇒ **per-image keystream (IV/nonce)**, key/routine in the bootloader. *(The `0x8C400–0x8E600` block is mbedTLS AES/SHA-256 tables, not encrypted data.)*
-3b. **Bootloader→app entry contract — MAPPED; integrity CRACKED; service UPG BUILT (§5.12/§5.13).** Reset vector → file `0x40A`; file `0x400` = 10-byte header (4-byte IV/nonce + 6 constant bytes); startup sets MSP/PSP via bootloader-filled literals `0x44C`/`0x450`, zero-fills `.bss`, scatter-loads. Footer u16 + trailer = **CRC16/MODBUS** (recomputable, `analyze52/54`); the app does **not** verify a whole-image checksum. `make_service_upg.py` builds `SERVICE.UPG` (byte-identical stock round-trip, safe) + `SERVICE_DUMP.UPG` (experimental dump cave). **Remaining:** (a) the **encoded-overlay runtime model** (§5.13b) — do FatFs/flash-writer run in place with decoded pools, or RAM-relocated? plus free RAM / FatFs re-entrancy / stack headroom for the cave; (b) the exact entry address patched into literal `0x450`; (c) whether the **bootloader** adds a boot-time code check beyond the CRCs. All answered by the read-only `boot.bin`/app dump (§5.7 / item 2b) — **dump first, then bench-test the dump variant** (§5.13g).
+2. **App link base** — **CONFIRMED `0x08020000`** via the `.rodata` pointer table (§3.4), corroborated by the bootloader's app-base accessors (§5.14). Remaining: trace how the prefix/vector table is decrypted & placed and recover the prefix keystream/key — now possible on the acquired `acq/dump/boot.bin` (§5.14); no `BOOT_…UPG` needed.
+2b. **Bootloader / update orchestration (bricking-critical)** — **ACQUIRED via the dump cave (2026-11-19, §5.14);** software search had found nothing (2026-11-17). The bootloader is a separate factory component at `0x08000000–0x08020000` (128 KB, sectors 0–4). It is **not in the RAR** (only `MAIN_…UPG`), **not elsewhere in the project**, and **not embedded in the app** — no real vector table; the lone `0x8F652` candidate is a misaligned `.rodata` pointer-table false positive (`analyze25/26`). **Not publicly downloadable:** vendor **Orientrise** (No. 355 Longjin Rd, Changzhou, Jiangsu) ships firmware **contact-only** — `support@orientrise.net` / `sales@orientrise.net`, phone/WhatsApp/WeChat `+86 181 0150 7071`; free firmware on request matched to vehicle/region, **no self-service portal and no `BOOT_…UPG` published**. The nearest open project **`uhi22/ccs32clara` / `osexpert/ccs32clara-chademo`** (Dongguan **Longood** OEM + rebrands EV-Boy / Akyga AK-SC-E18 / EVniculus / Autonlaturit) **explicitly lists Orientrise as NOT compatible** (Longood = STM32F407 + plain `My407ccs2chademo.bin`; Orientrise = F427/F429 + `.UPG`/XOR/encrypted prefix) and does **not** include its own OEM bootloader either — but its README independently corroborates §5.6: *"Firmware update logic is inside the bootloader, so this is not affected by the firmware."* **Acquisition paths:** (a) **email the vendor** for `BOOT_CCS2CHADEMO_1.UPG`; (b) **SWD dump** of `0x08000000` len `0x20000` — **bricking-safe procedure in §5.7** (ESP32-S3 CMSIS-DAP or ST-Link): reading is non-destructive at any RDP level, only an RDP 1→0 *unlock* erases — **never unlock**; probe the first 8 bytes to learn the level first. Once obtained, confirm: who reads USB first, the XOR/prefix decode + any whole-image verify, and any USB/SWD recovery mode. **Kit built (2026-11-18):** path (b) is implemented as the read-only, probe-gated **`acq/` kit** (§5.7 / §7) — SWD (ESP32-S3 CMSIS-DAP + OpenOCD) primary, UART/DFU system-bootloader fallbacks, `analyze_boot.py` triage; software-verified (command names + analyzer smoke-tested). **`boot.bin` acquired 2026-11-19 via the §5.13f dump cave** (no SWD hardware needed) → `acq/dump/boot.bin`, RDP0, triaged in §5.14. Remaining: trace the update orchestration + prefix-cipher key on the dump (interpretation only).
+3. **The prefix block** (`0x58–0x400`) — **characterized** (§4.1): stream-cipher ciphertext (914 B) + plaintext footer `XIE22.00` / **u32 length = filesize−0x404** / u16 check `0x2DBE` (§4.1 corrected — the old "`0x10C0` + `9`" reading was the length's low/high halves). Ciphertext differs 913/914 B between C009/C013 ⇒ **per-image keystream (IV/nonce)**, key/routine in the bootloader (now acquired, §5.14 — recoverable from the dump). *(The `0x8C400–0x8E600` block is mbedTLS AES/SHA-256 tables, not encrypted data.)*
+3b. **Bootloader→app entry contract — MAPPED; integrity CRACKED; service UPG BUILT (§5.12/§5.13).** Reset vector → file `0x40A`; file `0x400` = 10-byte header (4-byte IV/nonce + 6 constant bytes); startup sets MSP/PSP via bootloader-filled literals `0x44C`/`0x450`, zero-fills `.bss`, scatter-loads. Footer u16 + trailer = **CRC16/MODBUS** (recomputable, `analyze52/54`); the app does **not** verify a whole-image checksum. `make_service_upg.py` builds `SERVICE.UPG` (byte-identical stock round-trip, safe) + `SERVICE_DUMP.UPG` (bench-confirmed dump cave on the in-place `f_close` anchor). **Runtime model established (§5.13b):** the bootloader decodes the image on first boot after an upgrade and the scatterload relocates **data only** ⇒ FatFs runs in place; the free-RAM scratch gap is derived from `.bss` end `0x20024D18`. The corrected cave is **bench-CONFIRMED working** (§5.13h): it produced `BOOT.BIN` (`0x20000` B) — the bootloader is acquired (`acq/dump/boot.bin`, §5.14) and the runtime-model gate is closed. **Remaining:** (a) the exact entry address patched into literal `0x450`; (b) whether the **bootloader** adds a boot-time code check beyond the CRCs; (c) deeper bootloader RE on the dump — update orchestration, prefix-cipher key, exact app-jump, XMODEM/UPG-component parsing (§5.14).
 4. **Pin map** — disassemble the GPIO init table (`0x67756…`) to map relays, e-lock, CP/PP ADC, QCA7005 SPI pins, CAN pins.
 5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[H]**), CAN init/filter config, and protocol timeouts (1/4/5/6/8 s). **Remaining:** exact TIM2 prescaler / RTOS tick period + the numeric tick-constants behind the second-valued timeouts; CAN1/CAN2→CHAdeMO/GB/T assignment (needs pin map, item 4); confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
 6. **QCA7005 firmware** — **RESOLVED: not in this update.** Modem boots from external SPI flash; the MCU is only a SLAC/PLC host (§5.3). For open firmware, use the redistributable Qualcomm blob (open-plc-utils / `qca_spi` ecosystem).

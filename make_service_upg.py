@@ -15,11 +15,12 @@ The prefix ciphertext [58:3EA] is kept verbatim, so its per-image keystream is N
 needed; both CRCs are recomputed over the (possibly patched) decoded bytes.
 
 Default (no patches) re-emits a byte-identical UPG — a round-trip proof of the format.
---dump-hook appends an EXPERIMENTAL bootloader-dump cave (see build_dump_hook) and is
-gated on bench verification: the app literal pools are +2-byte packed (REPORT §5.13),
-so runtime addresses / free RAM / FatFs re-entrancy must be confirmed on a bench dump
-before flashing. Recovery to stock is preserved because the stock update path is left
-intact (the hook only adds a one-shot dump before the normal flash write).
+--dump-hook appends an EXPERIMENTAL bootloader-dump cave (see build_dump_hook) anchored
+on the in-place FatFs f_close entry: on the first close after boot it dumps boot flash
+0x08000000..0x08020000 to "0:/BOOT.BIN", then re-executes f_close's original prologue so
+every real close (incl. the stock update/recovery path) still completes. Gated on bench
+verification — free-RAM safety / FatFs re-entrancy / stack headroom must be confirmed on
+a bench dump before relying on it (REPORT §5.13).
 
 Usage:
   python3 make_service_upg.py STOCK.UPG -o SERVICE.UPG
@@ -106,26 +107,37 @@ def build(raw, patches=(), append=None, verbose=True):
 
 # ---------------------------------------------------------------------------
 # EXPERIMENTAL bootloader-dump cave (hand-encoded Thumb, capstone-verified).
-# Hook: flash-writer entry file 0x910AC (runtime 0x080B10AC) -> b.w cave.
-# Cave: one-shot dump of boot flash 0x08000000..0x08020000 to "0:/BOOT.BIN" via
-#       FatFs f_open/f_write/f_close, guarded by a RAM magic flag, then re-executes
-#       the original flash-writer prologue and continues (stock write preserved).
-# ASSUMPTIONS (bench-verify before flashing — REPORT §5.13):
-#   * FatFs API runs in place at BASE+file_offset (entry contract §5.12 supports this);
-#     f_open=0x0363E0, f_write=0x0366C8, f_sync=0x03685A, f_close=0x0368E8 confirmed
-#     (analyze67: f_close calls f_sync then clears fp->obj.fs; f_sync flushes the dir
-#     entry size, so BOOT.BIN is finalized at 0x20000 B, not 0).
-#   * free RAM at 0x2003F000 (FIL 0x228 B), BW 0x2003F230, FLAG 0x2003F234 — app RAM
-#     map not statically known; confirm no overlap.
-#   * cave appended at file 0x92000 (unused sector-9 tail), pool-free (movw/movt/adr/bl).
-#   * flash-writer is called in task context with the UPG file already f_read; opening a
-#     second FIL sequentially is assumed safe (FatFs non-reentrant) — confirm on bench.
+# Anchor: f_close entry (file F_CLOSE) runs IN PLACE from decoded flash. The bootloader
+# XOR/pool-decodes the image on first boot after an upgrade (log shows a RESET/init pass
+# per UPGRADE), and the scatterload relocates DATA ONLY (analyze68) — so app code incl.
+# FatFs executes at BASE+file_offset. Overwrite f_close's 4-byte prologue with b.w cave;
+# the cave re-executes that prologue verbatim and resumes at f_close+4, so every real
+# close still completes (stock update/recovery path intact).
+#   !! Prior flash-writer anchor (0x910AC) FAILED on bench: that routine is SRAM-copied
+#   !! (it erases its own flash bank), so an in-flash hook there never ran. f_close is
+#   !! in-place, hence hookable. Still EXPERIMENTAL — bench-verify before relying on it.
+# Cave: one-shot dump of boot flash 0x08000000..0x08020000 to "0:/BOOT.BIN" via FatFs
+#       f_open/f_write/f_close, guarded by a RAM magic FLAG, then re-executes the original
+#       f_close prologue and continues. FLAG is set only AFTER f_open succeeds, so a close
+#       firing before the USB volume is mounted retries next time; the cave's own
+#       f_close(BOOT.BIN) re-enters the hook but sees FLAG set and falls through to the
+#       real close (shared 'fin' epilogue pops each frame exactly once — recursion-safe).
+# ASSUMPTIONS (bench-verify — REPORT §5.13):
+#   * FatFs in place at BASE+offset: f_open=0x0363E0, f_write=0x0366C8, f_sync=0x03685A,
+#     f_close=0x0368E8 (analyze67: f_close calls f_sync then clears fp->obj.fs; f_sync
+#     flushes the dir-entry size, so BOOT.BIN finalizes at 0x20000 B, not 0).
+#   * scratch RAM in the free SRAM gap above .bss (ends 0x20024D18, scatterload §5.13)
+#     and below MSP stack top 0x20030000: FIL=0x2002E000 (0x228 B), BW=0x2002E230,
+#     FLAG=0x2002E234 — ~37 KB above .bss end (heap headroom), 8 KB below stack top.
+#   * cave appended at file 0x92000 (unused sector-9 tail), pool-free (movw/movt/adr/bl)
+#     so the bootloader's literal-pool decode has nothing to corrupt in the cave body.
+#   * opening a second FIL sequentially is assumed safe (FatFs non-reentrant); ~330 B
+#     extra stack headroom needed — confirm on bench.
 BASE = 0x08020000
 F_OPEN, F_WRITE, F_CLOSE = 0x0363E0, 0x0366C8, 0x0368E8
 F_SYNC = 0x03685A                  # f_close calls this internally (dir-entry size flush)
-WR_ENTRY = 0x910AC                 # file offset of flash-writer entry
 CAVE_OFF = 0x92000                 # file offset of appended cave
-FIL, BW, FLAG = 0x2003F000, 0x2003F230, 0x2003F234
+FIL, BW, FLAG = 0x2002E000, 0x2002E230, 0x2002E234
 MAGIC = 0x2003D00D
 BOOT_BASE, BOOT_LEN = 0x08000000, 0x20000
 
@@ -157,47 +169,55 @@ def pushw(regs, lr):  # regs bitmask r0..r12
 def popw(regs, lr):
     return struct.pack('<HH', 0xE8BD, ((1 if lr else 0) << 14) | regs)
 
-def build_dump_hook():
-    """Return (patches, append) for the experimental dump hook."""
+def build_dump_hook(stock_dec):
+    """Return (patches, append) for the in-place f_close dump hook.
+
+    stock_dec: decoded stock image, used to copy f_close's original 4-byte prologue
+    verbatim into the cave's tail so the real close resumes unchanged at f_close+4.
+    """
+    orig = bytes(stock_dec[F_CLOSE:F_CLOSE + 4])    # push {r3,r4,r5,lr}; mov r4,r0
     cave = bytearray(); ca = BASE + CAVE_OFF
     def emit(b): cave.extend(b)
     emit(pushw(0x1FFF, True))                       # push.w {r0-r12,lr}
-    a = ca + len(cave); emit(movw(0, FLAG & 0xFFFF)); emit(movt(0, FLAG >> 16))
+    emit(movw(0, FLAG & 0xFFFF)); emit(movt(0, FLAG >> 16))
     emit(ldr_imm(1, 0))                             # ldr r1,[r0]  (flag)
     emit(movw(2, MAGIC & 0xFFFF)); emit(movt(2, MAGIC >> 16))
     emit(cmp_reg(1, 2))
-    beq_skip = ca + len(cave); emit(b'\x00\xd0')    # beq skip (patched below)
-    emit(str_imm(2, 0))                             # str r2,[r0]  flag=MAGIC
-    # f_open(&FIL, path, FA_CREATE_ALWAYS|FA_WRITE = 0x0A)
+    beq_fin = ca + len(cave); emit(b'\x00\xd0')     # beq fin (already dumped)
+    # f_open(&FIL, "0:/BOOT.BIN", FA_CREATE_ALWAYS|FA_WRITE = 0x0A)
     emit(movw(0, FIL & 0xFFFF)); emit(movt(0, FIL >> 16))
     adr_pos = ca + len(cave); emit(b'\x00\xa0')     # adr r1,path (patched below)
     emit(movs(2, 0x0A))
     emit(bl(ca + len(cave), BASE + F_OPEN))
     emit(struct.pack('<H', 0x2800))                 # cmp r0,#0
-    bne_skip = ca + len(cave); emit(b'\x00\xd1')    # bne skip (patched)
+    bne_fin = ca + len(cave); emit(b'\x00\xd1')     # bne fin (open failed -> retry later)
+    # open OK: arm one-shot flag (r0/r2 clobbered by f_open -> reload)
+    emit(movw(0, FLAG & 0xFFFF)); emit(movt(0, FLAG >> 16))
+    emit(movw(2, MAGIC & 0xFFFF)); emit(movt(2, MAGIC >> 16))
+    emit(str_imm(2, 0))                             # str r2,[r0]  FLAG=MAGIC
     # f_write(&FIL, BOOT_BASE, BOOT_LEN, &BW)
     emit(movw(0, FIL & 0xFFFF)); emit(movt(0, FIL >> 16))
     emit(movw(1, BOOT_BASE & 0xFFFF)); emit(movt(1, BOOT_BASE >> 16))
     emit(movw(2, BOOT_LEN & 0xFFFF)); emit(movt(2, BOOT_LEN >> 16))
     emit(movw(3, BW & 0xFFFF)); emit(movt(3, BW >> 16))
     emit(bl(ca + len(cave), BASE + F_WRITE))
-    # f_close(&FIL)
+    # f_close(&FIL): re-enters hook, FLAG set -> real close (flushes dir size, releases lock)
     emit(movw(0, FIL & 0xFFFF)); emit(movt(0, FIL >> 16))
     emit(bl(ca + len(cave), BASE + F_CLOSE))
-    skip = ca + len(cave)
+    fin = ca + len(cave)                            # shared epilogue: every path pops here
     emit(popw(0x1FFF, True))                        # pop.w {r0-r12,lr}
-    emit(pushw(0x0FF0, True))                       # push.w {r4-r11,lr} (orig prologue)
-    emit(bw(ca + len(cave), BASE + WR_ENTRY + 4))   # b.w flash-writer+4
+    emit(orig)                                      # orig f_close prologue verbatim
+    emit(bw(ca + len(cave), BASE + F_CLOSE + 4))    # b.w f_close+4 (resume real close)
     path_off = len(cave); cave.extend(b'0:/BOOT.BIN\x00')
-    # patch branches
-    struct.pack_into('<H', cave, beq_skip - ca, 0xD000 | (((skip - (beq_skip + 4)) >> 1) & 0xFF))
-    struct.pack_into('<H', cave, bne_skip - ca, 0xD100 | (((skip - (bne_skip + 4)) >> 1) & 0xFF))
+    # patch conditional branches -> fin (pop.w); stack-balanced on every path
+    struct.pack_into('<H', cave, beq_fin - ca, 0xD000 | (((fin - (beq_fin + 4)) >> 1) & 0xFF))
+    struct.pack_into('<H', cave, bne_fin - ca, 0xD100 | (((fin - (bne_fin + 4)) >> 1) & 0xFF))
     adr_target = ca + path_off
     imm8 = (adr_target - ((adr_pos + 4) & ~3)) >> 2
     struct.pack_into('<H', cave, adr_pos - ca, 0xA100 | (imm8 & 0xFF))   # adr r1,path
-    # hook: overwrite flash-writer entry prologue with b.w cave
-    hook = bw(BASE + WR_ENTRY, ca)
-    return [(WR_ENTRY, hook)], (CAVE_OFF, bytes(cave))
+    # hook: overwrite f_close entry prologue with b.w cave
+    hook = bw(BASE + F_CLOSE, ca)
+    return [(F_CLOSE, hook)], (CAVE_OFF, bytes(cave))
 
 def verify_cave(cave):
     try:
@@ -217,15 +237,16 @@ def main():
     ap.add_argument('--verify-only', action='store_true')
     args = ap.parse_args()
     raw = open(args.stock, 'rb').read()
+    stock_dec = xor_crypt(raw, derive_key(raw))
     if args.verify_only:
-        dec = xor_crypt(raw, derive_key(raw)); check_integrity(dec, 'input'); return
+        check_integrity(stock_dec, 'input'); return
     patches = []
     for p in args.patch:
         off, hx = p.split(':', 1); patches.append((int(off, 0), bytes.fromhex(hx)))
     append = None
     if args.dump_hook:
-        print("== EXPERIMENTAL dump hook (bench-verify before flashing; REPORT §5.13) ==")
-        hp, append = build_dump_hook(); patches += hp
+        print("== EXPERIMENTAL dump hook (in-place f_close anchor; bench-verify, REPORT §5.13) ==")
+        hp, append = build_dump_hook(stock_dec); patches += hp
         verify_cave(append[1])
     out = build(raw, patches, append)
     open(args.out, 'wb').write(out)
