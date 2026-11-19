@@ -592,10 +592,12 @@ CHAdeMO uses **fixed 11-bit IDs** (no addressing). Confirmed used via debug stri
   `OSTime` tick counter (accessor `0x0808981C`) to seconds by `÷100`, then `÷60`/`÷60` for the
   `RUN: h:m:s` field — so the OS tick period is **10 ms**. This is the timebase the second-valued
   protocol timeouts count against.
-- **Inference [H] (busy-delay only):** busy-unit ≈ 1 µs ⇒ TIM2 tick ≈ 10 µs (100 kHz), independent of
-  the OS tick. Exact **TIM2 prescaler not yet confirmed** (the timer @ `0x6847A` with PSC=83/ARR=1110
-  is a ~1.111 ms PWM, *not* the free-running TIM2 timebase). The numeric tick-constants behind the
-  second-valued timeouts remain to be extracted from the state machines.
+- **Busy-delay timebase CONFIRMED [C, `analyze84`, §5.20]:** TIM2 tick = 10 µs (100 kHz) — PSC=839
+  (84 MHz/840), `ARR=0xFFFF` free-running, independent of the OS tick (busy-unit ≈ 1 µs ⇒ the earlier
+  inference was correct). TIM1 (PSC=1679, 168 MHz/1680) and TIM3 (PSC=839) are the same 100 kHz timebase.
+  The timer @ `0x6847A` with PSC=83/ARR=1110 is a ~1.111 ms PWM, *not* the free-running TIM2 timebase.
+  TIM2's base is computed (TIM1<<14), not LDR-literal loaded (§5.20). The numeric tick-constants behind
+  the second-valued timeouts are extracted in §5.17/§5.20/§5.21 (10 ms units: 250/424/125/1525).
 
 ### 5.9 CCS2 handshake — how the adapter introduces itself (EVCC)  [C unless noted]
 
@@ -1355,8 +1357,9 @@ and **clamps the result to 450** (`mov r0,#0x1C2; cmp r1,r0; blo; mov r1,r0`) be
 | 6 | `p[+0x227]` | |
 | 7 | `p[+0x228]` | |
 
-The H109 build is **state-gated**: it only updates on every 10th tick (`bl 0x08052770` time getter,
-`sdiv #10`, `cbnz` → zero the value otherwise) and only within the CurrentDemand/stop state ranges
+The H109 build is **state-gated**: it only updates on every 10th tick (`bl 0x08052770` = `get_hv`, the
+HV-voltage getter — see §5.21; `sdiv #10`, `cbnz` → zero the value otherwise) and only within the
+CurrentDemand/stop state ranges
 (`p->state ∈ {0x20–0x23, 0x29–0x2C, 0x33–0x34, 0x1C2–0x1C3, 0x28A–0x28C}`), else the output is held/zeroed.
 
 **CAN TX path (both senders).** `memset(buf,0,8)` via `0x080882CE`; the 8-byte buffer pointer is
@@ -1372,8 +1375,9 @@ the state-17 voltage-engagement guard (§5.17) this forms the safe operating env
 only when `outvol ∈ [ress_vol−10, ress_vol+5]`, then ramp/limit the reported output. *(Field physical
 meaning — voltage vs current vs remaining-time — follows the CHAdeMO H108/H109 spec; the byte packing,
 IDs, /1000 scaling, 450 clamp, bit-reversal and TX path above are byte-derived. The vehicle-request parse
-H100/H101/H102 → `setpara_maxevsecurrent` cap, and the full `get_hv` raw→volts law, are still pending —
-roadmap D/E.)* Re-derived from C013 bytes by `analyze82.py`.
+H100/H101/H102 → output-current setpoint and the full `get_hv` raw→volts law are now decoded in §5.21
+(`analyze85`); the timebase that clocks these periodic updates is in §5.20 (`analyze84`).)*
+Re-derived from C013 bytes by `analyze82.py`.
 
 ### 5.19 Custom-firmware build / flash / stock-recovery recipe — CONSOLIDATED (`analyze83`)  [C layout · H build]
 
@@ -1427,9 +1431,104 @@ RDP-unlock — that mass-erases; `acq/` kit = ESP32-S3 CMSIS-DAP + OpenOCD).
 **Net for the goal:** the *flash-and-recover* half is fully solved and bench-proven — a custom app linked
 per the script above, wrapped by `make_service_upg.py`, is vendor-bootable and reversible. The *safe-charge*
 half needs the charge controller (§5.17 state machine + engagement guard + interlocks, §5.18 H108/H109
-output law) reimplemented on this layout, plus the still-pending measurement/control details (roadmap
-D/E: `get_hv` raw→volts law, CP/PP thresholds, vehicle-request parse + `setpara_maxevsecurrent` cap).
-Layout re-derived from bytes by `analyze83.py`.
+output law) reimplemented on this layout; the measurement/control details it depends on are now decoded —
+the HV raw→volts law + vehicle-request current control in §5.21 (`analyze85`), the timebase in §5.20
+(`analyze84`), and the CP/PP IEC thresholds in §5.5b. Layout re-derived from bytes by `analyze83.py`.
+
+### 5.20 Timebase + OS tick — DECODED (C013, `analyze84`)  [H]
+
+`analyze84.py` re-derives the firmware timebase from the timer-init writes and resolves the long-standing
+"TIM2 has no LDR-literal base loads" mystery (§8.5).
+
+**Free-running 100 kHz counters.** The timer-base-init function (f+`0x6A544` = `0x0808A142`, located by
+its TIM3 `0x40000400` base load) programs three timers as free-running 16-bit timebases:
+
+| timer | base | PSC (+0x28) | ARR (+0x2C) | clock | rate |
+|---|---|---|---|---|---|
+| TIM1 | `0x40010000` | 1679 | `0xFFFF` | 168 MHz (APB2 ×2) | 100 kHz |
+| TIM2 | `0x40000000` | 839 | `0xFFFF` | 84 MHz (APB1 ×2) | 100 kHz |
+| TIM3 | `0x40000400` | 839 | `0xFFFF` | 84 MHz (APB1 ×2) | 100 kHz |
+
+All three give **10 µs/tick** (`clk/(PSC+1)`); `ARR=0xFFFF` ⇒ free-running, no periodic interrupt. TIM4 is
+the CP PWM input-capture timer (§5.5b), not a timebase.
+
+**TIM2 base is COMPUTED, not loaded.** The init tracks the base register `r1` through
+`lsls r1,r1,#0xE`: TIM1 `0x40010000 << 14 = 0x40000000` = TIM2. That is why a whole-image LDR-literal scan
+for `0x40000000` finds **zero** TIM2 base loads (the raw pool-word matches at f+`0x911A0`+ are misaligned
+sector-size table entries, not code). TIM3 is loaded explicitly; TIM2 is derived from TIM1 by the shift.
+
+**SysTick = free-running timestamp.** `LOAD=0xFFFFFF` (`mvn #0xFF000000`), `CTRL=1` (ENABLE only, no
+TICKINT) ⇒ a free-running down-counter used as a fine timestamp, not the OS tick.
+
+**OS tick = 100 Hz (10 ms), software counter.** The timestamp getter `0x0808A236`
+(`ldr r0,=0x20000A50; ldr r0,[r0,#4]; bx lr`) returns the **software tick counter `0x20000A54`**, the value
+every stm log/timeout reads. It is incremented by the uC/OS-II tick ISR (`OSTimeTick`). The 100 Hz rate is
+inferred from the stm timeout constants, all of which land on whole seconds at 10 ms/tick: engagement
+guard `≥250` ≈ 2.5 s, state-17 wait `424` ≈ 4.24 s, CurrentDemand adjust `125` ≈ 1.25 s, whole-bus watchdog
+`1525` ≈ 15.25 s, CAN watchdogs 1 s/15 s (§5.17). Timer-callback registration `0x0808A26C` uses mutex
+`0x20000A60` and a 4-slot table `0x20024254` (stride `0xC`: {fn, arg, active}) for periodic callbacks.
+
+**Net:** the charge controller runs on a 100 Hz OS tick; all §5.17/§5.18/§5.21 timeout/period constants are
+in 10 ms units, and the 100 kHz TIMx counters provide 10 µs busy-delay/timestamp resolution. Re-derived
+from C013 bytes by `analyze84.py`.
+
+### 5.21 HV measurement law + vehicle-request current control — DECODED (C013, `analyze85`)  [D/E]
+
+`analyze85.py` closes roadmap D (ADC scaling) and E (current/voltage control law): how the DC-link HV
+voltage becomes volts (`get_hv`), and how the vehicle's H102 request drives the output-current setpoint.
+
+**D — the `get_hv` raw→volts chain.** The HV DC-link is sampled by **ADC1+ADC2 dual simultaneous**
+(PB0/PB1), DMA buffer `0x20022640`, init/calibration f+`0x68986` (§5.17). The chain is:
+
+1. **Vrefint calibration** (f+`0x68986`): the internal-reference raw reading produces two halfword factors
+   stored in the cal struct `0x200009C0`: `+2 = 162981000/vref_raw`, `+6 = 180180000/vref_raw`. These
+   compensate VDDA drift ratiometrically.
+2. **Calibrated-read primitive `0x0808883A`** (a leaf): `ldr r0,=0x200009C0; ldr r1,[r0,#0xc]` (channel
+   raw); `ldrh r0,[r0,#2]` (factor); `muls r1,r0,r1; movw r0,#0x3ffc; udiv r0,r1,r0; bx lr` ⇒
+   **`reading = raw × Vrefint_factor / 16380`** (`0x3FFC = 4095×4`, the 12-bit full-scale ×4).
+3. **Live HV raw global `0x200008B0`** holds the calibrated HV measurement fed to `get_hv`.
+4. **`get_hv` `0x08052770` = two-point interpolation** through a **factory-persisted NV cal struct
+   `0x20019094`** (getter `0x08052356`, lazy init `0x0805231E`): 0x44 bytes, erased sentinel `0xFE000`,
+   validity magic `0x41444A67` @`+0x3C`, checksum over the first 0x10 bytes (fn `0x0805236A`) stored
+   @`+0x40`. Fields: `+0x0C` raw_hi, `+0x10` raw_lo, `+0x14` eng_hi, `+0x18` eng_lo. The body
+   (`ldrd [r0,#0xc]`, load `0x200008B0`, `smull`, `bl 0x0809E322` = `__aeabi_ldivmod`, signed 64÷64)
+   computes **`get_hv = eng_lo + (live_raw − raw_lo)·(eng_hi − eng_lo)/(raw_hi − raw_lo)`**.
+5. **`outvol = get_hv()/10` (volts)** → `p[+0x16]` (state-17 handler f+`0x23B88`: `bl get_hv; movs r1,#0xa;
+   sdiv r0,r0,r1; strh r0,[r4,#0x16]`). This is the `outvol` the §5.17 engagement guard compares against
+   `ress_vol`. *(The earlier "time getter" label for `0x08052770` in §5.18/`analyze82` was wrong — it is
+   `get_hv`; corrected.)*
+
+Related analog front-end: the power-stage feedback monitor `0x080524FC` reads the calibrated ADC
+(`0x0808883A`), compares against thresholds **8000 / 10500**, debounces **100 ticks**, and drives the
+PreChargeRELAY (`0x08088498`, PB10/PB11). The isolation getter `0x0805206C` reads struct `0x20000868`
+{`+0` valid, `+1` level (bit1 = warning), `+2` mode}; state-30 requires isolation `==3`, the engagement
+guard `==4` (§5.17).
+
+**E — vehicle-request → output-current control law.** The adapter parses the vehicle's **H102** request
+into the stm context: `p[+0x1d8]` = status byte, `p[+0x1da]` = **TargetBatteryVoltage** (halfword),
+`p[+0x1dc]` = **ChargingCurrentRequest** (byte). The control flow:
+
+- **State-17** engages when `ChargingCurrentRequest > 0 A`; its wait counter `p[+0x14]` times out at
+  **424 ticks (~4.24 s)**; it logs `outvol`/request every 50 ticks. **State-19** sets the precharge relay.
+- **State-30 (CurrentDemand)** regulates the output: it recomputes `outvol = get_hv()/10`, increments a
+  phase counter `p[+0x1d2]`, and **every 125 ticks (~1.25 s)** adjusts the current limit (→ state 31) —
+  the `"every n minute adjusts current limitation"` behavior. It checks isolation `==3` (`0x0805206C`).
+- **`setpara` dispatcher `0x0804E884`**: validates `arg2 ∈ {0..5}` (`cbz r0/r1` → return 0; `cmp r2,#1..#5`)
+  then jumps to a jump-table handler `0x0804E9AC`; **`arg2=4` = set the output-current limit** (the
+  `setpara_maxevsecurrent` cap path). State-30 calls it with `arg2=4`.
+- **Output-current setpoint struct `0x20000780`**: `[+0x44]` request → `[+0x40]` setpoint → output register
+  (state-30 copies `[+0x44]→[+0x40]` and writes the setpoint halfword). Context init `0x0804EB2E` zeros
+  `0x20000780+0x70/0x74` and `0x20016380`, and inits a 512-byte buffer; `0x0804EAEE` resets the H101/H102
+  flags `p[+0x1b6/1c2/1d0]`.
+- **Whole-bus watchdog**: `p[+4] > 1525` (15.25 s, `movw #0x5f5` @f+`0x29C58`) → state 450 (`0x1C2`) and
+  disable d1 — the CAN-loss safe stop. The H108-build scaling converter `0x0804E786` is a clamp
+  (`>=7 → 0xFF`) used as a multiplier in the §5.18 `/1000` output scaling.
+
+**Net for safe charge:** the measurement path (Vrefint-calibrated ADC → NV two-point cal → `outvol` volts)
+and the control path (H102 request → state-30 periodic current setpoint via `setpara(4)`, capped by the
+EVSE max-current parameter, guarded by isolation + the §5.17 voltage-engagement window + the 15.25 s CAN
+watchdog) are now byte-derived. A custom controller reproducing these laws on the §5.19 layout has the
+information needed for a safe charge. Re-derived from C013 bytes by `analyze85.py`.
 
 ---
 
@@ -1720,6 +1819,25 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   free scratch gap; emits a GNU ld linker script for a custom app at `0x08020000` (self-bootstrapping
   Reset_Handler); and prints the UPG packaging + verbatim-install + stock-recovery recipe (the transform
   `make_service_upg.py` implements). Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze83.py'`.
+- `analyze84.py` — **timebase + OS-tick decoder (§5.20/§8.5, roadmap H)**: re-derives the firmware timebase
+  from the C013 timer-init writes. Locates the timer-base-init function by its TIM3 `0x40000400` base load,
+  tracks the base register through `lsls r1,r1,#14` (TIM1 `0x40010000`<<14 = TIM2 `0x40000000`) and the
+  PSC/ARR/CR1 constant writes → TIM1 PSC=1679 (168 MHz/1680), TIM2/TIM3 PSC=839 (84 MHz/840), all 100 kHz
+  free-running (`ARR=0xFFFF`, 10 µs/tick). **Resolves the "TIM2 has zero LDR-literal base loads" mystery:
+  its base is COMPUTED, not loaded.** Decodes SysTick (LOAD=0xFFFFFF, CTRL=1, free-running, no TICKINT),
+  the software-tick getter `0x0808A236` (counter `0x20000A54`), and the 4-slot timer-callback table
+  `0x20024254`; infers OS tick = 100 Hz from the stm timeout constants.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze84.py'`.
+- `analyze85.py` — **HV measurement law + vehicle-request current-control decoder (§5.21, roadmap D/E)**:
+  re-derives from C013 bytes (1) the ADC calibrated-read primitive `0x0808883A` (`raw × Vrefint_factor /
+  16380`, cal struct `0x200009C0`); (2) `get_hv` `0x08052770` = two-point interpolation through the
+  factory-persisted NV cal struct `0x20019094` (magic `0x41444A67`, checksum-validated), live raw global
+  `0x200008B0`, signed 64-bit `smull`+`__aeabi_ldivmod`; confirms `outvol = get_hv()/10` via the state-17
+  store; (3) the vehicle-request control law — whole-bus watchdog `p[+4]>1525`→state 450, CurrentDemand
+  periodic adjust `p[+0x1d2]`≥125, the `setpara` dispatcher `0x0804E884` (arg2 selector 0..5, =4 current
+  limit), output-current setpoint struct `0x20000780` (`[+0x44]→[+0x40]`), and the parsed H102 fields
+  (`p[+0x1d8/1da/1dc]`). Corrects the §5.18 "time getter" mislabel (`0x08052770` = `get_hv`).
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze85.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -1772,7 +1890,7 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
    PC8 (PreChargeRELAY); PB15 unreferenced. **CAN2 GPIO — RESOLVED (`analyze79`, §5.8.2): CAN1-only
    board** (CAN2 has no AF9 pins, no service task, and an unreferenced stop thunk — it is unwired).
    **Remaining:** LED drive pins (the `led_process` label is the e-lock tick, not a separate LED block).
-5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[C] — confirmed from RCC PLLCFGR/CFGR/FLASH_ACR, `analyze79`**), CAN init/filter config + driver mailbox-FIFO layer (§5.8.2), and protocol timeouts (1/4/5/6/8 s). **CAN1/CAN2→CHAdeMO/GB/T assignment RESOLVED (`analyze79`, §5.8.2): CAN1-only board** — CAN1 (PD0/PD1) carries both protocols via the single `CAN1_REC` task + IDE-split frame dispatch `0x080524FE`; CAN2 unwired. **RTOS tick = 100 Hz / 10 ms RESOLVED** (§5.1/§5.8.5). **Remaining:** exact TIM2 busy-delay prescaler + the numeric tick-constants behind the second-valued timeouts; confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
+5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[C] — confirmed from RCC PLLCFGR/CFGR/FLASH_ACR, `analyze79`**), CAN init/filter config + driver mailbox-FIFO layer (§5.8.2), and protocol timeouts (1/4/5/6/8 s). **CAN1/CAN2→CHAdeMO/GB/T assignment RESOLVED (`analyze79`, §5.8.2): CAN1-only board** — CAN1 (PD0/PD1) carries both protocols via the single `CAN1_REC` task + IDE-split frame dispatch `0x080524FE`; CAN2 unwired. **RTOS tick = 100 Hz / 10 ms RESOLVED** (§5.1/§5.8.5). **TIM2 prescaler + tick constants RESOLVED (`analyze84`, §5.20):** TIM1 PSC=1679 (168 MHz/1680), TIM2/TIM3 PSC=839 (84 MHz/840) → all 100 kHz free-running (10 µs/tick, `ARR=0xFFFF`); TIM2 base is COMPUTED (TIM1 `0x40010000`<<14), not LDR-literal — resolving the zero-load mystery; the second-valued timeouts are 10 ms-unit stm constants (engagement 250, state-17 wait 424, CurrentDemand adjust 125, whole-bus watchdog 1525). **Remaining:** confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
 6. **QCA7005 firmware** — **RESOLVED: not in this update.** Modem boots from external SPI flash; the MCU is only a SLAC/PLC host (§5.3). For open firmware, use the redistributable Qualcomm blob (open-plc-utils / `qca_spi` ecosystem).
 7. **RTOS identity — RESOLVED (§5.1, `analyze73`): uC/OS-II (Micrium), customized.** Identified by the
    internal-symbol debug string `OSRdyTbl` (uC/OS-II ready table). Tick = **100 Hz / 10 ms** (stat dump
