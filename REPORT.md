@@ -1227,6 +1227,154 @@ header, a discarded-prefix field (any bytes — recompute the trailer CRC), the 
 `SERVICE.UPG` / `SERVICE_DUMP*.UPG` remain valid; the prefix bytes are free to change once the trailer CRC
 is re-sealed.
 
+### 5.17 CHAdeMO charge state machine — DECODED (C013 improved logic, `analyze80`)  [C]
+
+The vehicle-side charge controller for the CCS2-EVSE ↔ CHAdeMO-vehicle path is the **`CHAdeMO stm`**
+state machine (C013 code region f+`0x21A6E`–`0x2EA74` / runtime `0x0804166C`–`0x0804E672`, ~53 KB,
+387 log format strings). Its context struct `p` keeps the **state in the halfword `p->state` @ `+0x02`**;
+every transition is a `strh rX,[p,#2]` (p in `r4`). `analyze80.py` re-derives the skeleton from bytes:
+it xrefs every `CHAdeMO stm` log string (full NUL-bounded start incl. the `[%t]#` prefix), parses the
+numbered case labels, and extracts each `p->state` write with its decoded next-state immediate.
+
+**Safe-charge sequence (state → next, from the decoded transitions):**
+
+| phase | states | action / guard |
+|---|---|---|
+| plug-in / authorize | … → 13 | `GET_AD_CPD` connector plug-in; DIN70121 / ISO15118 EVSE authorized |
+| CableCheck | 13 → 14 | isolation check (`EVSEIsolationStatus`), 50 s timeout; `SET_CSS1 d1 ON` on finish |
+| ChargeParameterDiscovery | 14 → 15 | send CML/CTS, 65 s timeout; H102.`VehicleChargingEnabled`, 8 s from d1=ON |
+| precharge start | 15 → 16 | `Switch(d2)=ON`, 8 s (configurable) for EV contactor; H102.`VehicleStatus` |
+| EV contactor / current req | 16 → 17 | 4 s after d2=ON; H102.`ChargingCurrentRequest` > 0 A |
+| **precharge voltage-match** | **17 → 18** (or → 450 wait) | **the engagement guard below** — C013 stalls here until the EVSE reaches target |
+| precharge relay close | 18/19 → 20 | `set_precharge_relay`, wait `TargetBatteryVoltage`; 1 s `set_precharge_relay failed!terminate` |
+| current demand | 20 → 30 | send H108/H109 (`get_hv`, `get_precharge_relay`); `CurrentDemand phase`, `setpara_maxevsecurrent` |
+| stop (normal/abnormal) | 30 → 31/50/60/40 | stop by vehicle (normal→50, abnormal→60) / by charger (→40); remaining-time 0 → 50 |
+| contactor open / de-energize | 31 → 32 → 33 → 34 → 35 | wait switchK off (4 s); output voltage < 10 V → `energizing_state=0` |
+| shutdown / unlock | 41…44 → 51 → 52 → 53 → 61 → 62 | H109.5.4=1 (welding/contactor check); `phase_cnt>=200` stop-control (61), `>=350` unlock (62) |
+| e-lock unlock / end | 62 → 650/652 → 91/300 | `STM_EVCC_UNLOCK_ACTION_STEP1/2/3` (unlock-failed-3-times guard); close A+; charging end |
+
+**Special state codes:** `300 (0x12C)` = `STM_TIMEOUT_STOP_CHARGER_TRIGGERED`, `450 (0x1C2)` = common
+wait/error pending state, `600 (0x258)` = `notify_bms_shutdown`, `650 (0x28A)`/`652 (0x28C)` = unlock/stop
+action steps. Per-message CAN watchdogs: H100/H101/H102 each **1 s**, whole-bus **15 s** (C013).
+
+**State-17 precharge voltage-match (engagement) guard — the safety-critical check C013 fixes**
+(`0x0804AF08`–`0x0804AF30`): with `outvol = p[+0x16]` (EVSE output voltage) and `ress_vol` in `r10`
+(car-side residual/battery voltage), the guard requires `[r6+0x23F]==1`, an isolation word `==4`,
+**`outvol+10 >= ress_vol` AND `outvol-5 <= ress_vol`** (i.e. `outvol ∈ [ress_vol−10, ress_vol+5]`), and a
+counter `p[+0x0A] >= 0xFA (250)`. On match it clears the counters and sets `p->state=18`; otherwise it
+stalls in the wait state (450, `Precharge,wait out[%lu]reach ress_vol`). **C009** closed the precharge
+relay as soon as `outvol ≈ ress_vol` without waiting for the EVSE to ramp to target → the car held ~1–2 A
+and raised H102 `VoltageDeviation`+`CurrentDeviation` → emergency abort (§5.11); **C013** waits for the
+EVSE output to actually reach the battery voltage before mating the contactors, then ramps current.
+
+**Safety-stop / abort paths (from the log strings):** `get_evcc_hw_fault` (+ `get_key_lock` error),
+`h102_status error`, `E-lock Failed!go to shutdown`, CableCheck `EVSEIsolationStatus` error / 50 s timeout,
+`Precharge timeout` / `PreChargeRes t>=tout`, `set_precharge_relay failed!terminate`, CAN 15 s timeout,
+`bms_error_stop` (`data_tmout`), `charging_system_error` / `charger_error`, `emergency_flag==1` (stop by
+charger), `SYNCH_POWERDELIVERY_ERR`, and the unlock-failed-3-times guard. These are the interlocks a
+custom charge controller must preserve.
+
+*(Method note: `analyze80`'s per-transition text labels are a nearest-preceding-log-string heuristic and
+can be approximate; the `p->state` values, code offsets, and the engagement-guard immediates are exact.
+The GB/T `GBT stm` and ISO15118 `iso1_…` machines are separate controllers — `CurrentDemand phase,BCL 1s
+timeout` lives in the GBT stm; their full maps are pending.)*
+
+#### Power-stage drive + HV ADC front-end (C013, `analyze81`)  [C]
+
+The state-machine actions drive the **same physical pins as C009** (§5.5c) — the board is hardware-
+invariant; C013 only shifts the code. `analyze81.py` re-locates the GPIO primitive cluster in C013 at
+**`0x08088400`+** (f+`0x68802`+, vs C009 `0x080879FE`) and re-binds each write primitive to its naming
+strings via BL-callers → enclosing-function ADR/LDR:
+
+| signal | pin(s) | C013 drive primitive | callers → naming |
+|---|---|---|---|
+| **CHAdeMO enables (d1/d2)** | **PE7 / PE8** | `0x08088400` / `0x08088412` | 21 / 14 → CHAdeMO×7 each |
+| **BatteryPower** (inner contactor) | **PD8** | `0x08088450` | 4 → BatteryPower |
+| **e-lock motor** | **PD3 + PE4** (active-low) | `0x0808846C` | 3 → (E_LOCK fn-ptr, no naming str) |
+| **PreChargeRELAY** | **PB10 + PB11** | `0x08088498` | 5 → PreChargeRELAY×3 |
+| **BatteryCharge** | **PC9** (active-low) | `0x080884D4` | 6 → BatteryPower×1, BatteryCharge×1 |
+| (unused) | PB15 | `0x080884C4` | 0 callers |
+
+Feedback inputs re-confirmed: PE10 (CHAdeMO status, active-low), PD9 (e-lock position), PD8/PB10/PC9
+readback, PC8 (PreChargeRELAY, active-low), PD10 (KEY_LOCK), PB12 (PLC D_LINK), PB8 (active-low). So
+`set_precharge_relay` → PB10/PB11, `close inner relay`/BatteryPower → PD8 (interlock clears PC9 first),
+BatteryCharge → PC9, `SET_CSS1(d1)`/`SET_CSS2(d2)` → PE7/PE8, e-lock unlock → PD3/PE4 pulse train.
+
+**HV ADC front-end + calibration.** The HV DC-link voltage (`get_hv`, used by the state-17 engagement
+guard and H108/H109) is measured **ADC1+ADC2 dual simultaneous** (PB0/PB1). The ADC init/calibration
+function (f+`0x68986` / `0x08088584`) configures ADC1 (`0x40012000`), ADC2 (`0x40012100`), ADC3
+(`0x40012200`), ADC12_COMMON (`0x40012300`) and DMA2 (`0x40026400`), then computes **Vrefint-referenced
+scale factors** by `udiv`: it calls the Vrefint read `0x080889C4` (raw → `calibration_struct[+2]`), then
+`162981000 (0x09B6E488) / raw → calibration_struct[+4]` and `180180000 (0x0ABD5420) / raw →
+calibration_struct[+6]` (halfword factors), with **calibration struct = `0x200009C0`**. DMA2 streams the
+dual-ADC results to buffer `0x20022640`; the scan/range-check consumer (`0x0808876A`) reads the packed
+halfwords and compares them against the two factors. Additional per-channel scaling constants appear in
+the init cluster (`0x04924924`, `0x24924924`, `0x00742108`, `0x10842108`, `0x1E000001`, `0x0002A006` —
+ADC SMPR/CR register writes). `get_hv` is only a log substring (no standalone xref); the full
+**raw→volts getter** that consumes these factors is still pending (roadmap D). The engagement guard
+(§5.17) operates on the already-scaled `outvol`/`ress_vol`. Re-derived from C013 bytes by `analyze81.py`.
+
+### 5.18 CHAdeMO message layer + output control law — DECODED (C013, `analyze82`)  [C]
+
+The adapter acts as the **CHAdeMO charger** toward the vehicle, so it *receives* H100/H101/H102
+(vehicle status + current/voltage request) and *transmits* the periodic **H108/H109** charger-status
+messages. `analyze82.py` re-derives the transmit half from bytes by scanning for the CAN-ID store
+pattern (`mov r1,#ID; str r1,[rX,#0x60]`) and decoding each sender's payload packing.
+
+**Periodic tick dispatcher.** The `CHAdeMO stm` tick (the state-30 CurrentDemand handler region,
+f+`0x28C56`+) calls four message functions on a modulo schedule of the tick counter `p[+4]`:
+`udiv #10 / mls` (every 10th tick) gates the H108/H109 build+send quartet
+`0x0803C95C → 0x0803CB36 → 0x0803C9B8 → 0x0803CBDC`; `cmp #0x14 (20)` advances `p->state`;
+`cmp #0x64 (100)` is a timeout. This is the `"CurrentDemand phase, every n minute adjusts current
+limintation"` behavior — the output command is recomputed periodically, not continuously.
+
+**H108 (CAN ID `0x108`) — charger output status.** Build `0x0803C95C`, send `0x0803CB36`:
+
+| CAN byte | source | note |
+|---|---|---|
+| 0 | `p[+0x210]` | status byte (set = 1 by the build) |
+| 1–2 | `p[+0x212]` (lo, hi>>8) | **the /1000-scaled output value, clamped to 450 (0x1C2)** |
+| 3 | `p[+0x214]` | |
+| 4–5 | `p[+0x216]` (lo, hi>>8) | |
+| 6 | `p[+0x218]` | |
+| 7 | `p[+0x219]` | |
+
+The build reads EVSE-side measurements from a source struct at +`0x3D08/0x3D0A/0x3D22/0x3D30` via the
+converter `0x0804E786`, computes `value × raw / 1000` (`muls` then `udiv` by a register loaded `#0x3E8`),
+and **clamps the result to 450** (`mov r0,#0x1C2; cmp r1,r0; blo; mov r1,r0`) before storing `p[+0x212]`.
+
+**H109 (CAN ID `0x109`) — charger status / remaining time.** Build `0x0803C9B8`, send `0x0803CBDC`:
+
+| CAN byte | source | note |
+|---|---|---|
+| 0 | `p[+0x220]` | status (build sets = 3) |
+| 1–2 | `p[+0x222]` (lo, hi>>8) | /1000-scaled value |
+| 3 | `p[+0x224]` | /1000-scaled value (periodic-gated) |
+| 4 | `p[+0x225]` | |
+| 5 | `p[+0x226]` | **low 6 bits bit-reversed on the wire** (`ubfx` per-bit + `orr` re-pack) |
+| 6 | `p[+0x227]` | |
+| 7 | `p[+0x228]` | |
+
+The H109 build is **state-gated**: it only updates on every 10th tick (`bl 0x08052770` time getter,
+`sdiv #10`, `cbnz` → zero the value otherwise) and only within the CurrentDemand/stop state ranges
+(`p->state ∈ {0x20–0x23, 0x29–0x2C, 0x33–0x34, 0x1C2–0x1C3, 0x28A–0x28C}`), else the output is held/zeroed.
+
+**CAN TX path (both senders).** `memset(buf,0,8)` via `0x080882CE`; the 8-byte buffer pointer is
+`p[+0x25C]`; the CAN ID is written to `0x200007E0`; a mutex `0x200007E8` is taken (`0x08089D4C`) /
+given (`0x08089DB8`) around the pack; transmit is via the **fn-ptr `p[+0x270]`** (`blx`) then the CAN1
+transmit `0x08052EE2(ID, buf)` (the same CAN1-only layer as §5.8). A flag `p[+0x49]` triggers an
+immediate re-send.
+
+**Control-law summary (safe-charge report half).** The adapter reports its DC-link output to the vehicle
+as H108/H109, scaling the EVSE-side measurement by `/1000` and **clamping the primary output value to
+450**; the command is refreshed periodically (every 10 ticks) and gated by charge state. Together with
+the state-17 voltage-engagement guard (§5.17) this forms the safe operating envelope: mate contactors
+only when `outvol ∈ [ress_vol−10, ress_vol+5]`, then ramp/limit the reported output. *(Field physical
+meaning — voltage vs current vs remaining-time — follows the CHAdeMO H108/H109 spec; the byte packing,
+IDs, /1000 scaling, 450 clamp, bit-reversal and TX path above are byte-derived. The vehicle-request parse
+H100/H101/H102 → `setpara_maxevsecurrent` cap, and the full `get_hv` raw→volts law, are still pending —
+roadmap D/E.)* Re-derived from C013 bytes by `analyze82.py`.
+
 ---
 
 ## 6. What this means for an open-source firmware
@@ -1482,6 +1630,32 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   29-bit→GB/T J1939). (5) Counts CAN2 stop-thunk BL callers (0). Confirms a **CAN1-only board** carrying
   **both** protocols on CAN1; CAN2 is unwired generic-HAL scaffolding. Run:
   `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze79.py'`.
+- `analyze80.py` — **CHAdeMO charge state-machine mapper (§5.17/§5.2/§5.11)**: re-derives the safe-charge
+  state machine from the **C013** firmware (`.qwen/tmp/c013/decoded_c013.bin`, the revision with the proven
+  precharge-wait fix). Xrefs every `CHAdeMO stm` log string (full NUL-bounded start incl. the `[%t]#`
+  prefix; LDR-literal T1/T2 + ADR T1, one pass), parses the numbered case labels into a state skeleton,
+  walks the code region tracking movs/mov.w/movw immediates to extract each `p->state` transition write
+  (`strh rX,[r4,#2]`, state halfword @+0x02) with its decoded next-state value, and disassembles the
+  state-17 precharge voltage-match guard (outvol @+0x16 ∈ [ress_vol−10, ress_vol+5], counter @+0x0A ≥250,
+  isolation==4 → state 17→18). Lists the safety-stop/abort/isolation/welding/unlock interlocks. Run:
+  `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze80.py'`.
+- `analyze81.py` — **C013 power-stage control mapper (§5.17/§5.5c/§8.5)**: ties the charge state-machine
+  actions to the physical GPIO outputs + HV ADC measurement, re-derived from the **C013** bytes. Decodes
+  the C013 GPIO primitive cluster (push-less BSRR-write / IDR-ODR-read leaves, shifted to `0x08088400`+),
+  names each write primitive via BL-callers → enclosing-function naming strings (PreChargeRELAY=PB10/PB11,
+  BatteryPower=PD8, BatteryCharge=PC9, CHAdeMO enables=PE7/PE8, e-lock=PD3/PE4 — hardware-invariant vs
+  C009 `analyze78`), and locates the HV ADC front-end by its ADC12_COMMON base loads: disassembles the
+  ADC init/calibration function and reports the Vrefint-referenced `udiv` scale factors (162981000/raw,
+  180180000/raw → calibration struct `0x200009C0`) + DMA2. The full `get_hv` raw→volts getter is pending.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze81.py'`.
+- `analyze82.py` — **CHAdeMO message-layer + output control-law mapper (§5.18/§5.17, roadmap E)**:
+  re-derives from **C013** bytes how the adapter (as CHAdeMO charger) builds/transmits the periodic
+  H108/H109 status messages. Scans for the CAN-ID store pattern (`mov r1,#ID; str r1,[rX,#0x60]`) to
+  locate the senders byte-derived, decodes each 8-byte payload packing (context offset → CAN byte, incl.
+  `lsrs #8` high-byte splits + the H109 byte-5 bit-reversal), and tracks the build scaling law (register
+  `udiv` /1000, the 450/0x1C2 output clamp, periodic state-gating) + the CAN TX path (fn-ptr `p[+0x270]`
+  → `0x08052EE2`, mutex `0x200007E8`, buffer `p[+0x25C]`). The vehicle-request parse + `setpara_maxevsecurrent`
+  cap are pending. Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze82.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
