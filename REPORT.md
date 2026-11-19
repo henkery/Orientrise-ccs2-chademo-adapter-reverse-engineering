@@ -272,11 +272,15 @@ parser was found by hunting LDR loads whose pool *location* falls in the table, 
 | **TIM4_CH1 — CP PWM input-capture** | PD12 | AF2 |
 | **ADC analog inputs** (named §5.5b) | PA0=`AD_CPD`(CP), PA1=`+24V`, PA2=`AD_PP`(PP), PB0/PB1=`HV` diff, PC2=`AD_BAT` | — |
 
-GPIO outputs (relay / e-lock / LED / contactor drive, exact signal names pending): PA4; PB10/PB11/PB14/PB15;
-PC5/PC9; PD3/PD8/PD11; PE4/PE7/PE8/PE11/PE15. PA13/PA14 left as inputs (SWD not claimed by the app).
-**CAN2 has no AF9 pins in this init** (PB5/PB6/PB12/PB13 left as inputs) ⇒ its GPIO is configured elsewhere
-or the board wires only CAN1 — **CAN1/CAN2→CHAdeMO/GB/T assignment still pending** (§8.5). Full per-pin
-mode/AF/pull/open-drain/initial-level table: `analyze74.py`.
+GPIO outputs — **signal names RESOLVED (§5.5c, `analyze78`)**: **PreChargeRELAY = PB10/PB11**,
+**BatteryPower = PD8**, **BatteryCharge = PC9**, **e-lock motor = PD3/PE4** (pulse-train drive),
+**CHAdeMO-side enables = PE7/PE8**. Status-feedback inputs: **KEY_LOCK = PD10** (e-lock), **PD9** (e-lock
+position), **PE10** (CHAdeMO), **PB12 = PLC D_LINK** (QCA7005 link), **PC8** (PreChargeRELAY). The PB15
+output primitive is unreferenced (unused); PA4/PB14/PC5/PE11/PE15 are not tied to a named driver. PA13/PA14
+left as inputs (SWD not claimed by the app). **CAN2 has no AF9 pins in this init** (PB5/PB6/PB13 left as
+inputs; PB12 is the PLC D_LINK input) ⇒ its GPIO is configured elsewhere or the board wires only CAN1 —
+**CAN1/CAN2→CHAdeMO/GB/T assignment still pending** (§8.5). Full per-pin mode/AF/pull/open-drain/initial-level
+table: `analyze74.py`.
 
 ### 5.5b ADC channel→signal map — DECODED + NAMED (`analyze77`)  [C]
 **RESOLVED (§8.4).** The analog front-end is named by the firmware's own **"Hardware Information"**
@@ -314,6 +318,38 @@ PaymentSelectionRes / ContractAuthenticationRes), `'M'` (7.5–97 % nominal PWM)
 **PP state** (`PP_ST`, getter `0x08051DBC`) = an `AD_PP` voltage **window detector** `0x08051D7A`
 (2146/2296 mV thresholds, debounce 4 → flag `0x2000087C`). The remaining dumper rows are `KEY_LOCK`
 (connector e-lock, `0x08087AEE`) and `PLC LINK`/`INT` (QCA7005). Re-derived from bytes by `analyze77.py`.
+
+### 5.5c GPIO-output signal map — DECODED + NAMED (`analyze78`)  [C]
+**RESOLVED (§8.4).** The relay / e-lock / contactor drives are a cluster of tiny **push-less GPIO
+primitives** @`0x080879EC`–`0x08087AF8` (f+`0x67DEE`–`0x67EFA`): each writes one pin (or a paired set) via
+`BSRR` (+`0x18`, set-mask | reset-mask<<16) or reads one pin via `IDR` (+`0x10`) / `ODR` (+`0x14`) + `ubfx`.
+Xref-ing each primitive to its BL callers and the callers' enclosing-function ADR naming strings binds
+pin → signal:
+
+| signal | pin(s) | drive primitive | feedback | naming evidence |
+|---|---|---|---|---|
+| **PreChargeRELAY** | **PB10 + PB11** | `0x08087A84` | PC8 (`0x08087AE0`, active-low) + PB10 readback | `_PreChargeRELAY %s[v=%.3u]` / `can't open/close` |
+| **BatteryPower** | **PD8** | `0x08087A3C` | PD8 readback `0x08087A4E` | `BatteryPower %s`; interlock clears PC9 first |
+| **BatteryCharge** | **PC9** | `0x08087AC0` (active-low) | PC9 ODR readback `0x08087AD2` | `BatteryCharge %s` |
+| **e-lock motor** | **PD3 + PE4** | `0x08087A58` (active-low, paired) | PD9 (`0x08087A32`) + KEY_LOCK PD10 | fn-ptr registered into E_LOCK state machine |
+| **CHAdeMO enable** | **PE7 / PE8** | `0x080879EC` / `0x080879FE` | — (write-only) | set in CHAdeMO H100/H102 after a 0.5 s delay |
+| **CHAdeMO status** | **PE10** (input, active-low) | — | `0x08087A24` | CHAdeMO H100/H101/H102 + stop-charger |
+| **PLC D_LINK** | **PB12** (input) | — | `0x08087AA6` | SLAC `D_LINK_DISCONNECTED`/`RESTORED`, `AVLN` |
+
+**e-lock motor drive mechanism.** `E_LOCK` is a uC/OS-II task (entry `0x080515AB`, created `0x080516B0`,
+prio 1). Its periodic tick — registered as the **misnamed `led_process`** process via `0x08089858`
+(callback `0x08051718`) — runs a **shift-register pulse driver** `0x080517C6`: a 16-bit pattern (struct+`0x4`)
+is shifted out one bit per 100 Hz tick (16 ticks = 160 ms) and tail-called (`bx ip`) through the registered
+GPIO driver `0x08087A58` = **PD3+PE4** (both pins driven with the same inverted bit). The pattern is selected
+by motor profile from a **12-entry u16 table @`0x080AB604`** (`0x08051826`): e.g. `0xFFFF`=continuous,
+`0x00FF`=8-on/8-off, `0x7777`=3-on/1-off, `0x0000`=off — matching the lock-motor profile strings
+(`H12`/`JH12`/`JH24`/`A12`/`IE12`/`A24`/`IE24`/`ELS5_V12M`, f+`0x90060`+). Lock status is read on
+**KEY_LOCK = PD10** (`0x08087AEE`, the dumper's `KEY_LOCK` row) and **PD9** (`0x08087A32`). The `ELOCK=`
+diagnostic dispatch (`0x080526FE`, `tbb`) sets software command flags in struct `0x200003D8` (via
+`0x080231CA`/`0x080231F2`/…) that the task acts on — it does **not** drive GPIO directly. **PB15** has a
+write primitive (`0x08087AB0`) but **zero references** (unused output); the `led_process` label is the e-lock
+tick, not a separate LED block (LED drive pins not yet tied to a named driver). Re-derived from bytes by
+`analyze78.py`.
 
 ### 5.6 Self-update mechanism — `usbdisk` process  [C machinery · H orchestration]
 
@@ -1399,6 +1435,18 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   PA1=`+24V`, PB0−PB1=`HV`; CP PWM duty/freq = TIM4_CH1/PD12 input-capture (median filter `0x20022688`),
   duty→current by the IEC 61851-1 law (`0x08051E02`), duty→state-char `{'0','1','5','M','N'}` (`'5'`=5%
   digital mode). Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze77.py'`.
+- `analyze78.py` — **GPIO-output signal mapper (§5.5a/§5.5c/§8.4)**: names the board's relay/e-lock/
+  contactor GPIO outputs + status-feedback inputs, re-derived from `firmware.bin` bytes (no hardcoded
+  conclusions). Locates the GPIO primitive cluster by its GPIO-base LDR-literal loads + BSRR writes,
+  decodes each push-less primitive's port/pin/direction from the BSRR set-shift / IDR-ODR `ubfx` /
+  active-low `bics` (flush at `bx lr`; capstone reg IDs are PC=81/LR=80, not 15/14), xrefs each write
+  primitive to BL callers + enclosing-function ADR naming strings, finds the e-lock motor driver
+  registered as a function pointer into the E_LOCK struct (`0x20000864`) and decodes its 12-entry u16
+  pulse-pattern table (`0x080AB604`). Confirms **PreChargeRELAY = PB10/PB11** (feedback PC8),
+  **BatteryPower = PD8**, **BatteryCharge = PC9**, **e-lock motor = PD3/PE4** (shift-register pulse driver
+  `0x080517C6`, E_LOCK task `0x080515AB`, `led_process` tick misnomer), **CHAdeMO enables = PE7/PE8**,
+  **PE10** = CHAdeMO status, **PB12 = PLC D_LINK**, **KEY_LOCK = PD10** / PD9 = e-lock feedback; PB15
+  unreferenced. Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze78.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -1434,7 +1482,7 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
 2b. **Bootloader / update orchestration (bricking-critical)** — **ACQUIRED via the dump cave (2026-11-19, §5.14);** software search had found nothing (2026-11-17). The bootloader is a separate factory component at `0x08000000–0x08020000` (128 KB, sectors 0–4). It is **not in the RAR** (only `MAIN_…UPG`), **not elsewhere in the project**, and **not embedded in the app** — no real vector table; the lone `0x8F652` candidate is a misaligned `.rodata` pointer-table false positive (`analyze25/26`). **Not publicly downloadable:** vendor **Orientrise** (No. 355 Longjin Rd, Changzhou, Jiangsu) ships firmware **contact-only** — `support@orientrise.net` / `sales@orientrise.net`, phone/WhatsApp/WeChat `+86 181 0150 7071`; free firmware on request matched to vehicle/region, **no self-service portal and no `BOOT_…UPG` published**. The nearest open project **`uhi22/ccs32clara` / `osexpert/ccs32clara-chademo`** (Dongguan **Longood** OEM + rebrands EV-Boy / Akyga AK-SC-E18 / EVniculus / Autonlaturit) **explicitly lists Orientrise as NOT compatible** (Longood = STM32F407 + plain `My407ccs2chademo.bin`; Orientrise = F427/F429 + `.UPG`/XOR/encrypted prefix) and does **not** include its own OEM bootloader either — but its README independently corroborates §5.6: *"Firmware update logic is inside the bootloader, so this is not affected by the firmware."* **Acquisition paths:** (a) **email the vendor** for `BOOT_CCS2CHADEMO_1.UPG`; (b) **SWD dump** of `0x08000000` len `0x20000` — **bricking-safe procedure in §5.7** (ESP32-S3 CMSIS-DAP or ST-Link): reading is non-destructive at any RDP level, only an RDP 1→0 *unlock* erases — **never unlock**; probe the first 8 bytes to learn the level first. Once obtained, confirm: who reads USB first, the XOR/prefix decode + any whole-image verify, and any USB/SWD recovery mode. **Kit built (2026-11-18):** path (b) is implemented as the read-only, probe-gated **`acq/` kit** (§5.7 / §7) — SWD (ESP32-S3 CMSIS-DAP + OpenOCD) primary, UART/DFU system-bootloader fallbacks, `analyze_boot.py` triage; software-verified (command names + analyzer smoke-tested). **`boot.bin` acquired 2026-11-19 via the §5.13f dump cave** (no SWD hardware needed) → `acq/dump/boot.bin`, RDP0, triaged in §5.14. **Update orchestration now traced (§5.15):** external-SPI storage pool (`0x100000`+) → serial/XMODEM intake → XOR + CRC16/MODBUS decode in-pool → component parse → verbatim SPI→internal-flash install → config rebuild → reset. Install transform **confirmed by the sector-5 dump (§5.16)**: strip `0x402`-byte header, copy `fw[0x402:]` verbatim — **no prefix-decrypt**.
 3. **The prefix block** (`0x58–0x400`) — **RESOLVED: discarded header field (§5.16).** 914 B high-entropy (7.815 after XOR) + plaintext footer `XIE22.00` / **u32 length = filesize−0x404** / u16 CRC `0x2DBE`. The running-app dump proves the boot strips `0x402` bytes and installs `fw[0x402:]` verbatim, so the prefix (< `0x402`) is **never installed or decrypted** — there is **no prefix cipher** (the per-revision difference is per-image header content; the boot's split-table routine is CRC16/MODBUS integrity, §5.15). The footer length/CRC are recomputable. *(The `0x8C400–0x8E600` block is mbedTLS AES/SHA-256 tables, not encrypted data.)*
 3b. **Bootloader→app entry contract — RESOLVED (§5.16); integrity CRACKED; service UPG BUILT (§5.12/§5.13).** Reset vector → file `0x40A`→`0x08020008`; file `0x400` = 10-byte entry header (2 discarded bytes + 8-byte vector SP+reset, **not** an IV); startup self-bootstraps MSP/PSP from its own `vector[0]`, zero-fills `.bss`+CCM, scatter-loads — **no boot-patched literals** (§5.16 corrects the `0x44C`/`0x450` claim). Footer u16 + trailer = **CRC16/MODBUS** (recomputable, `analyze52/54`); the app does **not** verify a whole-image checksum. `make_service_upg.py` builds `SERVICE.UPG` (byte-identical stock round-trip, safe) + `SERVICE_DUMP.UPG` (bench-confirmed dump cave on the in-place `f_close` anchor). **Runtime model established (§5.13b):** the bootloader decodes the image on first boot after an upgrade and the scatterload relocates **data only** ⇒ FatFs runs in place; the free-RAM scratch gap is derived from `.bss` end `0x20024D18`. The corrected cave is **bench-CONFIRMED working** (§5.13h): it produced `BOOT.BIN` (`0x20000` B) — the bootloader is acquired (`acq/dump/boot.bin`, §5.14) and the runtime-model gate is closed. **All resolved:** (a) entry = `0x08020054` (stock pool `APP5+0x50`, no patch, §5.16); (b) **boot-time code check — RESOLVED (§5.15):** CRC16/MODBUS residue during decode + config-block additive checksum/magic `0x55AA55AA`, no whole-image hash/signature; (c) deeper bootloader RE — **traced (§5.15)** + install transform **confirmed (§5.16):** app-jump, orchestration + SPI storage model, UPG components, XMODEM-1K, verify; **no prefix-decrypt** (prefix discarded, verbatim install).
-4. **Pin map — RESOLVED (§5.5a, `analyze74`); ADC-channel→CP/PP map RESOLVED + NAMED (§5.5b, `analyze77`).**
+4. **Pin map — RESOLVED (§5.5a, `analyze74`); ADC-channel→CP/PP map RESOLVED + NAMED (§5.5b, `analyze77`); GPIO-output signals NAMED (§5.5c, `analyze78`).**
    The board GPIO init @`0x08087010` (f+`0x67412`) writes
    standard STM32F4 GPIO register values from a literal pool at f+`0x67756` (the earlier "custom packed
    format" guess was wrong — it is just MODER/OTYPER/OSPEEDR/PUPDR/ODR/AFR constants), then locks all pins
@@ -1444,9 +1492,13 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
    Information" dumper (`0x0804E92C`): **CP DC level = PA0/ADC3_IN0 (`AD_CPD`)**, **PP = PA2/ADC3_IN2
    (`AD_PP`)**, PC2 = `AD_BAT` (battery, 2:1 divider), PA1 = `+24V` rail, **PB0−PB1 (ADC1+ADC2 dual
    simultaneous) = `HV` DC-link voltage**; CP PWM duty/freq = TIM4_CH1/PD12 capture (not ADC), decoded to
-   current by the IEC 61851-1 law (§5.5b). **Remaining:** name the individual GPIO-output
-   signals (relay/e-lock/LED/contactor); CAN2 GPIO (no AF9 pins in this
-   init — configured elsewhere or CAN1-only board).
+   current by the IEC 61851-1 law (§5.5b). **GPIO-output signals named (§5.5c, `analyze78`):**
+   PreChargeRELAY = PB10/PB11 (feedback PC8), BatteryPower = PD8, BatteryCharge = PC9, e-lock motor =
+   PD3/PE4 (shift-register pulse drive, profile table `0x080AB604`, E_LOCK task `0x080515AB`), CHAdeMO
+   enables = PE7/PE8; feedback inputs KEY_LOCK = PD10, PD9 (e-lock), PE10 (CHAdeMO), PB12 = PLC D_LINK,
+   PC8 (PreChargeRELAY); PB15 unreferenced. **Remaining:** CAN2 GPIO (no AF9 pins in this init —
+   configured elsewhere or CAN1-only board); LED drive pins (the `led_process` label is the e-lock tick,
+   not a separate LED block).
 5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[H]**), CAN init/filter config + driver mailbox-FIFO layer (§5.8.2), and protocol timeouts (1/4/5/6/8 s). **RTOS tick = 100 Hz / 10 ms RESOLVED** (§5.1/§5.8.5). **Remaining:** exact TIM2 busy-delay prescaler + the numeric tick-constants behind the second-valued timeouts; CAN1/CAN2→CHAdeMO/GB/T assignment (**CAN1 pins now confirmed PD0/PD1, §5.5a**; CAN2 GPIO absent from the board init — trace its separate GPIO setup or confirm a CAN1-only board); confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
 6. **QCA7005 firmware** — **RESOLVED: not in this update.** Modem boots from external SPI flash; the MCU is only a SLAC/PLC host (§5.3). For open firmware, use the redistributable Qualcomm blob (open-plc-utils / `qca_spi` ecosystem).
 7. **RTOS identity — RESOLVED (§5.1, `analyze73`): uC/OS-II (Micrium), customized.** Identified by the
