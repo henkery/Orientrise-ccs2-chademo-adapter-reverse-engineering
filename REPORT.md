@@ -1375,6 +1375,62 @@ IDs, /1000 scaling, 450 clamp, bit-reversal and TX path above are byte-derived. 
 H100/H101/H102 → `setpara_maxevsecurrent` cap, and the full `get_hv` raw→volts law, are still pending —
 roadmap D/E.)* Re-derived from C013 bytes by `analyze82.py`.
 
+### 5.19 Custom-firmware build / flash / stock-recovery recipe — CONSOLIDATED (`analyze83`)  [C layout · H build]
+
+This consolidates the bricking-critical layout (§3.3/§3.4/§5.6/§5.12/§5.13/§5.16) into an actionable
+recipe for a custom app that the **stock bootloader will launch** and that can be **flashed back to
+stock**. `analyze83.py` re-derives the layout from the firmware bytes and emits a linker script.
+
+**Flash map — byte-derived from the flash-writer's own 12-entry tables** (sizes @file `0x9119E`,
+start-offsets @`0x911CE`; 1 MB, STM32F427/F429 “G”):
+
+| sectors | address | size | role |
+|---|---|---|---|
+| 0–3 | `0x08000000–0x0800FFFF` | 4×16 KB | bootloader |
+| 4 | `0x08010000–0x0801FFFF` | 64 KB | bootloader (the `0x402` UPG header lands at its tail `0x0801FBFE`) |
+| **5–9** | **`0x08020000–0x080BFFFF`** | **5×128 KB = 640 KB** | **main app — custom firmware links here** |
+| 10–11 | `0x080C0000–0x080FFFFF` | 2×128 KB = 256 KB | logs / config |
+
+**RAM layout — byte-derived from the ARM scatterload region table** (`adr@0x45E` → `sl/fp` → 4×{load,
+exec, size, fn}): `.data` copy 952 B → `0x20000000`, `.data` decompress 1932 B → `0x200003B8`, `.bss`
+zero 147 924 B → `0x20000B44` (**end `0x20024D18`** = stock vector SP), CCM `.bss` zero 65 068 B →
+`0x10000000`. Main SRAM 192 KB (`0x20000000–0x2002FFFF`), **MSP stack top `0x20030000`**, CCM 64 KB.
+Free scratch gap `0x20024D18..0x20030000` = 45 800 B. The scatterload relocates **data only** ⇒ code
+(incl. FatFs) runs in place; only the flash writer is SRAM-copied (§5.13b).
+
+**Linker script (emitted by `analyze83`).** A custom app links at `0x08020000` (sector 5):
+`FLASH rx ORIGIN=0x08020000 LENGTH=640K`, `RAM rwx ORIGIN=0x20000000 LENGTH=192K`, `CCM rwx
+ORIGIN=0x10000000 LENGTH=64K`; `.isr_vector` first (vector[0]=SP=`_estack`=0x20030000, [1]=Reset_Handler),
+`.text/.rodata` in FLASH, `.data` `>RAM AT>FLASH`, `.bss` in RAM, `.ccm_bss` in CCM. The
+**Reset_Handler must self-bootstrap** (the boot patches nothing, §5.16): set MSP/PSP from `vector[0]`,
+`VTOR=0x08020000`, zero `.bss`+CCM, copy `.data`, call `main` — mirroring the stock startup @`0x08020008`.
+
+**UPG packaging (the transform `make_service_upg.py` implements, §5.13).** Self-described outer XOR key
+(`key0=raw[0]`, `key1=raw[0]^raw[1]`); decoded layout `dec[0:2]` key-echo, `dec[2:0x58]` `$$` header,
+`dec[0x58:0x400]` discarded prefix (keep stock), `dec[0x400:0x402]` 2 discarded bytes,
+`dec[0x402:0x40A]` vector SP+reset, `dec[0x40A:]` app code. Re-seal: length u32LE `@0x3F2` =
+`filesize−0x404`; footer CRC u16LE `@0x3FE` = CRC16/MODBUS(`dec[0x3EA:0x3FE]`); trailer `dec[n−4:n]` =
+`00 00` + CRC16/MODBUS(`dec[2:n−2]`) (poly `0xA001`, init `0xFFFF`, refin/refout, xorout 0). Re-XOR,
+name `MAIN_CCS2CHADEMO_1.UPG`, put on a FAT32 stick root (label not checked).
+
+**Install + entry (boot side, §5.16 ground truth).** The boot XOR-decodes + CRC-verifies, **strips the
+`0x402` header and copies `fw[0x402:]` verbatim to `0x08020000`** — no cipher, no patch. Boot-time check
+= CRC16/MODBUS residue + config-block additive checksum/magic `0x55AA55AA`; **no whole-image hash**. The
+app self-bootstraps from its own vectors; the boot does not write MSP/VTOR (§5.15).
+
+**Stock recovery (bricking-safe).** The bootloader (sectors 0–4) is **never touched by a MAIN update** ⇒
+it survives a failed app flash and is the recovery anchor. **`SERVICE.UPG`** = byte-identical stock
+round-trip (`make_service_upg.py STOCK -o SERVICE.UPG`) re-flashes the exact stock app. The boot also has
+its own **USB update path + XMODEM-1K serial recovery**; **SWD read is non-destructive at RDP0** (never
+RDP-unlock — that mass-erases; `acq/` kit = ESP32-S3 CMSIS-DAP + OpenOCD).
+
+**Net for the goal:** the *flash-and-recover* half is fully solved and bench-proven — a custom app linked
+per the script above, wrapped by `make_service_upg.py`, is vendor-bootable and reversible. The *safe-charge*
+half needs the charge controller (§5.17 state machine + engagement guard + interlocks, §5.18 H108/H109
+output law) reimplemented on this layout, plus the still-pending measurement/control details (roadmap
+D/E: `get_hv` raw→volts law, CP/PP thresholds, vehicle-request parse + `setpara_maxevsecurrent` cap).
+Layout re-derived from bytes by `analyze83.py`.
+
 ---
 
 ## 6. What this means for an open-source firmware
@@ -1656,6 +1712,14 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   `udiv` /1000, the 450/0x1C2 output clamp, periodic state-gating) + the CAN TX path (fn-ptr `p[+0x270]`
   → `0x08052EE2`, mutex `0x200007E8`, buffer `p[+0x25C]`). The vehicle-request parse + `setpara_maxevsecurrent`
   cap are pending. Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze82.py'`.
+- `analyze83.py` — **memory/linker layout + custom-firmware build/flash/recovery recipe (§5.19, roadmap F)**:
+  consolidates the bricking-critical layout from `firmware.bin` bytes. Decodes the flash-writer's two
+  12-entry sector tables (sizes @`0x9119E`, start-offsets @`0x911CE`) → the exact 1 MB/12-sector flash map
+  (boot 0–4, app 5–9 @`0x08020000`, logs 10–11); decodes the ARM scatterload region table (`adr@0x45E` →
+  4×{load,exec,size,fn}) → `.data`/`.bss`/CCM regions, `.bss` end `0x20024D18`, stack top `0x20030000`,
+  free scratch gap; emits a GNU ld linker script for a custom app at `0x08020000` (self-bootstrapping
+  Reset_Handler); and prints the UPG packaging + verbatim-install + stock-recovery recipe (the transform
+  `make_service_upg.py` implements). Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze83.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
