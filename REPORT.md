@@ -278,8 +278,8 @@ GPIO outputs — **signal names RESOLVED (§5.5c, `analyze78`)**: **PreChargeREL
 position), **PE10** (CHAdeMO), **PB12 = PLC D_LINK** (QCA7005 link), **PC8** (PreChargeRELAY). The PB15
 output primitive is unreferenced (unused); PA4/PB14/PC5/PE11/PE15 are not tied to a named driver. PA13/PA14
 left as inputs (SWD not claimed by the app). **CAN2 has no AF9 pins in this init** (PB5/PB6/PB13 left as
-inputs; PB12 is the PLC D_LINK input) ⇒ its GPIO is configured elsewhere or the board wires only CAN1 —
-**CAN1/CAN2→CHAdeMO/GB/T assignment still pending** (§8.5). Full per-pin mode/AF/pull/open-drain/initial-level
+inputs; PB12 is the PLC D_LINK input) — **resolved (`analyze79`, §5.8.2): this is a CAN1-only board**; CAN2
+is unwired generic-HAL scaffolding, and CAN1 carries both CHAdeMO and GB/T. Full per-pin mode/AF/pull/open-drain/initial-level
 table: `analyze74.py`.
 
 ### 5.5b ADC channel→signal map — DECODED + NAMED (`analyze77`)  [C]
@@ -443,15 +443,19 @@ of the up-to-1000 V power section.
 > (ESP32-S3 CMSIS-DAP + OpenOCD), UART (`stm32flash`) / USB-DFU (`dfu-util`) system-bootloader fallbacks,
 > and `analyze_boot.py` triage. Never unlocks/erases/writes; refuses to dump on RDP1/2. See `acq/README.md`.
 
-### 5.8 CAN bus deep-dive — identifiers, baud rates, timing  [C/H]
+### 5.8 CAN bus deep-dive — identifiers, baud rates, timing  [C]
 
-The adapter drives **two independent vehicle-side CAN buses** (STM32 bxCAN **CAN1** `0x40006400`,
-**CAN2** `0x40006800`): **CHAdeMO** (11-bit IDs, 500 kbit/s) and **GB/T 27930** (29-bit SAE J1939 IDs,
-250 kbit/s). The driver reaches the peripherals through a **base-pointer + register-offset** handle
-table — there are no absolute `0x40006400` loads in code; the bases live in a 12-byte-stride peripheral
-handle table at `0x67B74` (this is why a naive literal-xref scan finds only misaligned "data" hits).
+**CAN1-only board (`analyze79`).** The adapter wires a single vehicle-side CAN controller — STM32 bxCAN
+**CAN1** `0x40006400` on **PD0/PD1 (AF9)** — and runs **both** protocols on it: **CHAdeMO** (11-bit IDs,
+500 kbit/s) and **GB/T 27930** (29-bit SAE J1939 IDs, 250 kbit/s), one active at a time (whichever vehicle
+is attached). **CAN2** `0x40006800` exists only in the generic bxCAN HAL (handle-table entry + stop thunk +
+filter bank 14 via `CAN2SB=14`) but is **unwired**: no CAN2 AF9 GPIO in the board init, no CAN2 service
+task, and its base is loaded at a single site (the unreferenced stop thunk, §5.8.2). The protocol layer
+reaches the peripheral through a **base-pointer + register-offset** handle table at `0x67B74` (12-byte
+stride, 2-mod-4 aligned — a step-4 literal-xref scan misses it); the HAL/driver also loads the bases as
+LDR-literals at **7 CAN1 sites vs 1 CAN2 site** (`analyze79` part 2).
 
-#### 5.8.1 Baud rates & bit timing  [C values · H clock]
+#### 5.8.1 Baud rates & bit timing  [C]
 
 A **3-entry BTR (bit-timing) lookup table** sits in the boot config block at file `0x08F062`
 (2-byte-aligned, immediately before the default-IP word `192.168.1.1` = `0x0101A8C0` @ `0x08F06E`).
@@ -464,20 +468,24 @@ Decoding each word as an STM32 `CAN_BTR` (`BRP[9:0]=psc−1`, `TS1[19:16]=BS1−
 | `0x00050014` | 21 | 6 | 1 | 8 | **250 kbit/s** | 87.5 % |
 | `0x00270006` | 7 | 8 | 3 | 12 | **500 kbit/s** | 75 % |
 
-- ⇒ **APB1 = 42 MHz ⇒ SYSCLK = 168 MHz** (APB1 = SYSCLK/4). **[H, strong]** — corroborated by
-  `FLASH_ACR = 0x705` (5 wait-states + I/D-cache + prefetch) @ `0x67712`, the correct setting for
-  168 MHz @ 3.3 V. RCC PLL registers not yet read directly.
+- ⇒ **APB1 = 42 MHz ⇒ SYSCLK = 168 MHz** — **CONFIRMED from RCC (`analyze79` part 1, was [H]).** The
+  clock-config function @`0x080872BA` (f+`0x676BC`) writes `PLLCFGR = 0x07402A04` (PLLM=4, PLLN=168,
+  PLLP=2, PLLQ=7, PLLSRC=HSE ⇒ HSE 8 MHz /4 ×168 /2 = **168 MHz**), `CFGR = 0x80209400` (HPRE=/1,
+  **PPRE1=/4 ⇒ APB1=42 MHz**, PPRE2=/2 ⇒ APB2=84 MHz), and `FLASH_ACR = 0x705` (5 wait-states + I/D-cache
+  + prefetch, correct for 168 MHz @ 3.3 V). APB1 timer clock = 84 MHz (×2 when PPRE1>1). The 42 MHz APB1
+  reproduces the {125,250,500} kbit/s BTR table exactly.
 - CAN init **indexes this table by a baud selector** (range 1–4, **default 3 → 500 kbit/s**). Menu
   strings **`CANBAUD1`** / **`CANBAUD2`** (`0x02EC2E` / `0x02EC3E`) make each bus's rate
   user-configurable. **CHAdeMO = 500 k, GB/T = 250 k** (standard). The config block is copied to RAM at
   boot (no live flash pointer found).
-- **CAN1/CAN2 → CHAdeMO/GB/T assignment:** pin map now decoded (§5.5a) — **CAN1 = PD0/PD1 (AF9)**; CAN2
-  has no AF9 pins in the board init (configured elsewhere or CAN1-only board), so the per-protocol bus
-  assignment is still pending (§8.5).
+- **CAN1/CAN2 → CHAdeMO/GB/T assignment — RESOLVED (`analyze79`, §5.8.2):** **CAN1-only board.** CAN1 =
+  PD0/PD1 (AF9) is the only wired controller and carries **both** protocols (11-bit CHAdeMO + 29-bit GB/T),
+  split by the IDE bit in a single frame dispatch; CAN2 is present in the generic HAL but unwired.
 
 #### 5.8.2 CAN controller init  [C]
 
-Init routine @ `0x67854` (both controllers, HAL-style):
+Generic CAN-open @ `0x08087482` (f+`0x67884`; HAL-style, base passed in `r0`, a `tbb` dispatcher on the
+handle mode byte `+0xF08`). The init arm writes:
 - `MCR = 0x4D` — INRQ (enter init), TXFP, RFLM (RX-FIFO locked), NART (no auto-retransmit), ABOM (auto bus-off recovery).
 - `IER = 0x8003` — TX-mailbox-empty + FIFO0-message-pending + sleep interrupts.
 - Filters: `FMR` `0xE01→0xE00` (**CAN2SB = 14**, CAN2 filters start at bank 14); `FM1R = 0` (mask mode),
@@ -497,6 +505,20 @@ path (`0x080876EA`) pushes ring frames into empty mailboxes (head`+0xF00` advanc
 `0x1FFFF800`, `0x00010101`. CAN handle tables in rodata: CAN1 `{base 0x40006400, cfg 0x20000978,
 0x000F0F0F}` @ f+`0x67B76`; CAN2 `{base 0x40006800, …, 0x00010101, NVIC_ISER 0xE000E200,
 0x0003FFFF, 0x1FFFF800}` @ f+`0x67B82`.
+
+**CAN1-only assignment + protocol dispatch (`analyze79` parts 2–5):** the init arm's filter-bank setup
+(`FMR/FM1R/FS1R/FFA1R/FA1R` at `CAN1+0x200`) is guarded by `cmp r0,r5; bne` @`0x08087502` where
+`r5 = 0x40006400` (loaded at the function top) — bxCAN shares all filter registers through the CAN1 base,
+with `CAN2SB` splitting the banks, so a CAN2 open skips this block. Only **one** CAN service task exists:
+**`CAN1_REC`** (created @`0x08052820`, entry `0x080527DB`), which waits on CAN1's cfg event queue
+`0x20000978` (== the CAN1 handle cfg word @f+`0x67B7A`) via the event-wait `0x080893EA`, polls RX with
+`0x080875F0`, and dispatches frames through `0x080524FE`. There is **no `CAN2_REC` task**. The frame
+dispatch `0x080524FE` splits on the **IDE bit** — `ubfx r0,r5,#0x14,#4; cmp #0xA; beq` selects the 29-bit
+extended path → **GB/T 27930 J1939** (PF compares `#0x14/0x1A/0x1C/0x1E`), else the 11-bit standard path →
+**CHAdeMO** handlers (`0x08052426`/`0x08052958`). Thus CAN1 carries both protocols, one active at a time.
+**CAN2 is unwired:** its base `0x40006800` is loaded at exactly one site — the stop thunk `0x08087476`,
+which has **0 BL callers** — and there is no CAN2 AF9 GPIO in the board init (§5.5a). The CAN2 handle/filter
+bank 14 are vestigial generic-HAL scaffolding, never serviced.
 
 #### 5.8.3 GB/T 27930 — J1939 identifiers  [C]
 
@@ -1447,6 +1469,19 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   `0x080517C6`, E_LOCK task `0x080515AB`, `led_process` tick misnomer), **CHAdeMO enables = PE7/PE8**,
   **PE10** = CHAdeMO status, **PB12 = PLC D_LINK**, **KEY_LOCK = PD10** / PD9 = e-lock feedback; PB15
   unreferenced. Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze78.py'`.
+- `analyze79.py` — **CAN-bus assignment + RCC clock decoder (§5.8.1/§5.8.2/§8.4/§8.5)**: resolves which CAN
+  controller carries CHAdeMO vs GB/T and confirms the MCU clock tree, re-derived from `firmware.bin` bytes
+  (no hardcoded conclusions). (1) Constant-tracks the RCC clock-config function's `PLLCFGR`/`CFGR`/
+  `FLASH_ACR` writes (invalidating tracked registers on memory loads / RMW so a stale base can't overwrite
+  a config value) and decodes the PLL/bus prescalers → SYSCLK 168 / APB1 42 / APB2 84 MHz. (2) Counts
+  CAN1/CAN2 base LDR-literal load sites (7 vs 1) and locates the generic CAN-open's `cmp base,CAN1; bne`
+  filter-bank skip (tracking the base register from the `tbb` dispatcher's prologue, not stopping at
+  case-arm pops). (3) Finds the `CAN1_REC` task by name → entry → the cfg event queue it waits on
+  (`0x20000978`, the r0 arg to event-wait `0x080893EA`) and matches it to the CAN1 handle cfg word.
+  (4) Disassembles the frame dispatch `0x080524FE` to show the IDE-bit protocol split (11-bit→CHAdeMO,
+  29-bit→GB/T J1939). (5) Counts CAN2 stop-thunk BL callers (0). Confirms a **CAN1-only board** carrying
+  **both** protocols on CAN1; CAN2 is unwired generic-HAL scaffolding. Run:
+  `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze79.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -1496,10 +1531,10 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
    PreChargeRELAY = PB10/PB11 (feedback PC8), BatteryPower = PD8, BatteryCharge = PC9, e-lock motor =
    PD3/PE4 (shift-register pulse drive, profile table `0x080AB604`, E_LOCK task `0x080515AB`), CHAdeMO
    enables = PE7/PE8; feedback inputs KEY_LOCK = PD10, PD9 (e-lock), PE10 (CHAdeMO), PB12 = PLC D_LINK,
-   PC8 (PreChargeRELAY); PB15 unreferenced. **Remaining:** CAN2 GPIO (no AF9 pins in this init —
-   configured elsewhere or CAN1-only board); LED drive pins (the `led_process` label is the e-lock tick,
-   not a separate LED block).
-5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[H]**), CAN init/filter config + driver mailbox-FIFO layer (§5.8.2), and protocol timeouts (1/4/5/6/8 s). **RTOS tick = 100 Hz / 10 ms RESOLVED** (§5.1/§5.8.5). **Remaining:** exact TIM2 busy-delay prescaler + the numeric tick-constants behind the second-valued timeouts; CAN1/CAN2→CHAdeMO/GB/T assignment (**CAN1 pins now confirmed PD0/PD1, §5.5a**; CAN2 GPIO absent from the board init — trace its separate GPIO setup or confirm a CAN1-only board); confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
+   PC8 (PreChargeRELAY); PB15 unreferenced. **CAN2 GPIO — RESOLVED (`analyze79`, §5.8.2): CAN1-only
+   board** (CAN2 has no AF9 pins, no service task, and an unreferenced stop thunk — it is unwired).
+   **Remaining:** LED drive pins (the `led_process` label is the e-lock tick, not a separate LED block).
+5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[C] — confirmed from RCC PLLCFGR/CFGR/FLASH_ACR, `analyze79`**), CAN init/filter config + driver mailbox-FIFO layer (§5.8.2), and protocol timeouts (1/4/5/6/8 s). **CAN1/CAN2→CHAdeMO/GB/T assignment RESOLVED (`analyze79`, §5.8.2): CAN1-only board** — CAN1 (PD0/PD1) carries both protocols via the single `CAN1_REC` task + IDE-split frame dispatch `0x080524FE`; CAN2 unwired. **RTOS tick = 100 Hz / 10 ms RESOLVED** (§5.1/§5.8.5). **Remaining:** exact TIM2 busy-delay prescaler + the numeric tick-constants behind the second-valued timeouts; confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
 6. **QCA7005 firmware** — **RESOLVED: not in this update.** Modem boots from external SPI flash; the MCU is only a SLAC/PLC host (§5.3). For open firmware, use the redistributable Qualcomm blob (open-plc-utils / `qca_spi` ecosystem).
 7. **RTOS identity — RESOLVED (§5.1, `analyze73`): uC/OS-II (Micrium), customized.** Identified by the
    internal-symbol debug string `OSRdyTbl` (uC/OS-II ready table). Tick = **100 Hz / 10 ms** (stat dump
