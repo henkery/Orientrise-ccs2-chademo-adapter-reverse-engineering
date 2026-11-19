@@ -1,11 +1,12 @@
-# custom_fw — safe-bootstrap foundation (Orientrise KM-CCS2CHAdeMO-1)
+# custom_fw — safe-bootstrap + CAN1 message layer (Orientrise KM-CCS2CHAdeMO-1)
 
 A **minimal, flashable, stock-reversible** custom application for the adapter
 (STM32F427/F429, Cortex-M4), being built up in incremental, independently-testable layers
 toward a safe CHAdeMO charge controller. It proves the full **build → wrap → flash → recover**
 pipeline end-to-end on the byte-derived memory layout (REPORT §5.19) and boot entry contract
-(§5.15/§5.16). **Current stage: SAFE BOOTSTRAP** — clocks + timebase + GPIO safe-state. It is
-**not yet a charge controller** and performs **no asserted power-stage drive**.
+(§5.15/§5.16). **Current stage: SAFE BOOTSTRAP + CAN1 MESSAGE LAYER** — clocks + timebase +
+GPIO safe-state + CAN1 (500k) CHAdeMO RX/TX. It is **not yet a charge controller** and performs
+**no asserted power-stage drive** (CAN reporting only).
 
 ## Safety — read first
 
@@ -21,6 +22,10 @@ This foundation is **safe-by-construction** (contactors open, no HV):
 - **No asserted drive**: the functions that *close* contactors / precharge / charge are **not
   implemented yet** and will stay **GATED behind a compile-time safety flag** until bench-validated.
 - **Timebase**: `tick_init` starts the 100 Hz SysTick OS tick + 100 kHz TIM2 counter (§5.20).
+- **CAN1 message layer**: `can_init` brings up bxCAN CAN1 at 500 kbit/s (PD0/PD1 AF9, BTR
+  `0x00270006`, §5.8.2); `chademo` parses RX H100/H101/H102 and sends periodic H108/H109 with a
+  **standby status + zero output** (§5.18). This is **communication only** — it drives no power
+  pin. The CHAdeMO enables d1/d2 (PE7/PE8) stay LOW (safe), so the power stage remains disabled.
 - **IWDG**: the loop feeds the watchdog key (`0x40003000`) — harmless whether or not the IWDG is
   enabled (keeps the app alive if the boot left it running; no-op otherwise).
 - A RAM `heartbeat` counter increments each 10 ms tick so you can confirm "the custom app is
@@ -40,7 +45,9 @@ current control, §5.5c GPIO map + active levels).
 | `src/rcc.c/.h` | `rcc_init`: restore SYSCLK 168 MHz (HSE→PLL, APB1 42 / APB2 84 MHz, FLASH 5WS, PWR VOS scale1 — §5.8.1) |
 | `src/gpio.c/.h` | `gpio_safe_init`: drive all power pins to SAFE/de-asserted levels, glitch-free (BSRR pre-load then MODER→output — §5.5c, `analyze86`); pin map + active levels |
 | `src/tick.c/.h` | `tick_init`: 100 Hz SysTick OS tick (`SysTick_Handler`) + 100 kHz TIM2 counter; `tick_get`/`tick_micros`/`tick_delay_ms` (§5.20) |
-| `main.c` | safe-bootstrap: rcc→gpio_safe→tick→`cpsie i`, then 100 Hz loop (feed IWDG + bump `heartbeat`); no asserted power drive |
+| `src/can.c/.h` | bxCAN CAN1 transport: 500k (BTR `0x00270006`), MCR `0x4D`, PD0/PD1 AF9, bank-0 mask filter accept `0x100..0x103`, FIFO0-pending RX ISR (`CAN1_RX0_IRQHandler`)→ring, polled TX, bus-off recovery (§5.8.2) |
+| `src/chademo.c/.h` | CHAdeMO message layer: RX H100/H101/H102 parse (byte→field per `analyze87`), periodic H108/H109 standby TX, per-message + whole-bus watchdog timestamps (§5.18) |
+| `main.c` | rcc→gpio_safe→can→chademo→tick→`cpsie i`, then 100 Hz loop (feed IWDG + `heartbeat` + RX parse + periodic TX + can_service); no asserted power drive |
 | `build.sh` | builds via `nix-shell -p gcc-arm-embedded python3` → `app.elf`/`app.bin`, verifies vectors, pads to sector 5 |
 | `verify_pad.py` | checks `vector[0]==0x20030000`, `vector[1]` is an in-app Thumb address; pads `app.bin` → `app_padded.bin` (128 KB, `0xFF` tail) |
 
@@ -55,7 +62,8 @@ bash build.sh
 Produces `app.bin` (vectors + code, linked at `0x08020000`) and `app_padded.bin` (128 KB =
 sector 5, matching the ground-truth `app5.bin` dump). Expected vectors:
 `MSP=0x20030000`, `reset=0x080201AD` (handler `0x080201AC`, Thumb bit set). The SysTick vector
-(offset `0x3C`) must point to `tick.c`'s strong `SysTick_Handler` (overriding the weak alias).
+(offset `0x3C`) must point to `tick.c`'s strong `SysTick_Handler`, and the CAN1_RX0 vector
+(IRQ20, offset `0x90`) to `can.c`'s strong `CAN1_RX0_IRQHandler` (both override the weak aliases).
 
 ## Wrap into a bootable UPG
 
@@ -82,8 +90,11 @@ byte-identical round-trip when fed the stock app region.
 2. Insert into the adapter and trigger the USB update path (as for a stock update). The boot
    XOR-decodes + CRC-verifies in the SPI pool, then installs verbatim to sector 5 and jumps.
 3. The app runs the 100 Hz loop feeding the IWDG. Confirm it runs over SWD: halt and read
-   `&heartbeat` (incrementing at 100 Hz) or check `PC` is in the `main` loop (`0x080202xx`).
-   **No contactor should click and no HV should appear** — if anything energises, stop immediately.
+   `&heartbeat` (incrementing at 100 Hz) or check `PC` is in the `main` loop. On a CAN bench
+   (500k, e.g. an ESP32-S3/Arduino-Mega CAN node or analyzer on PD0/PD1) you should see periodic
+   **H108 (0x108) / H109 (0x109)** frames every 100 ms with standby status + zero output, and the
+   app parses injected H100/H101/H102. **No contactor should click and no HV should appear** — if
+   anything energises, stop immediately.
 
 ## Recovery (bricking-safe)
 
@@ -102,16 +113,18 @@ that mass-erases). See REPORT §5.19.
 
 Built up in incremental, independently-testable layers; power-stage drive stays GATED last.
 
-**Done (safe bootstrap):**
+**Done (safe bootstrap + CAN1 message layer):**
 - Clocks — `rcc_init` restores SYSCLK 168 MHz (§5.8.1).
 - §5.20 — 100 Hz SysTick OS tick + 100 kHz TIM2 timebase (`src/tick.c`).
 - §5.5c — GPIO **safe-state** init (`src/gpio.c`, active levels via `analyze86`): all power pins
   de-asserted, contactors open. (Asserted drive is a later, gated layer.)
+- §5.8.2/§5.18 — CAN1 transport (`src/can.c`, 500k) + CHAdeMO message layer (`src/chademo.c`):
+  RX H100/H101/H102 parse (byte→field via `analyze87`), periodic H108/H109 **standby** TX (zero
+  output until measurement exists), per-message + whole-bus watchdog timestamps.
 
 **Remaining layers:**
 - §5.21 — `get_hv` measurement (Vrefint-calibrated ADC → NV two-point cal → `outvol=get_hv()/10`).
   Note: the custom app lacks the factory NV cal data — needs bench calibration or reading stock cal.
-- §5.18 — CAN1 init + H100/H101/H102 RX + H108/H109 TX (BTR 500k=`0x00270006`, /1000 scaling, 450 clamp).
 - §5.17 — CHAdeMO charge state machine + state-17 voltage-engagement guard
   (`outvol ∈ [ress_vol−10, ress_vol+5]`) + safety interlocks + CAN watchdogs.
 - §5.21 — H102 vehicle-request → output-current control law (`setpara(4)`, struct `0x20000780`).
