@@ -13,7 +13,9 @@
  *        target_v = voltage_limit                              -> ctx.target_v   (+0x1c)
  *
  *   scale(raw, factor) = (uint16)((uint32)raw * converter(factor) / 1000)   (muls + udiv #1000)
- *   converter(code)    = (code < 7) ? code : 0xFF   (sxtb + signed blt; 0x0804E786)
+ *   converter(code)    = power-of-10 TABLE[code] for code in [0,6], else 0xFF   (0x0804E786)
+ *                        (CORRECTS analyze89: the blt path is a table lookup, not identity;
+ *                         real value = raw*10^(factor-3), factor = multiplier+3 — see din70121.c)
  *
  * The zero-skip paths are preserved: a zero min(request,avail) leaves the current setpoint
  * unchanged, and a zero target voltage leaves the target voltage unchanged (the firmware
@@ -56,10 +58,10 @@ void current_ctrl_init(void);
 void current_ctrl_step(const current_ctrl_inputs_t *in);
 const current_ctrl_t *current_ctrl_get(void);
 
-/* Pure, host-testable helpers (byte-exact vs the firmware). */
-/* 0x0804E786: sxtb then `cmp #7; blt keep; movs #0xff`. Signed compare on the sign-extended byte. */
+/* Pure, host-testable helpers (byte-exact vs the firmware; delegate to din70121.c scaling). */
+/* 0x0804E786: `cmp #7; blt -> pow10 table[code]; movs #0xff`. pow10[code] for code in [0,6]. */
 int32_t  current_ctrl_converter(int8_t code);
-/* muls raw*converter(factor) (low 32) ; udiv /1000 ; strh (low 16). */
+/* muls raw*pow10(factor) (low 32) ; udiv /1000 ; strh (low 16). real = raw*10^(factor-3). */
 uint16_t current_ctrl_scale(uint16_t raw, int8_t factor);
 
 #endif /* CURRENT_CTRL_H */

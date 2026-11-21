@@ -730,6 +730,77 @@ GPIO; bare-metal single-loop: no RTOS mutex, `tick_delay_ms` IWDG-fed during bri
 packet-header parse math); built-image constants disasm-verified (`.qwen/tmp/ccs2_re/verify_qca.py`).
 Re-derived from C013 bytes by `analyze91.py`. This is the foundation the SLAC/SDP/DIN layers build on.
 
+**Upper-layer addendum — SLAC + CP/PP + SDP/V2GTP + DIN70121 EVCC subsystem (`analyze92`, custom_fw CCS2
+layers).** Above the QCA7005 transport sits the CCS2 EVSE-side (EVCC) subsystem that introduces the adapter
+to the EVSE and supplies the CHAdeMO charge state machine's EVSE handshake inputs + the output-current
+control's EVSE measurements + the `CurrentDemandReq` actuation. Re-derived from C013 bytes by `analyze92.py`
+and replicated **INERT** in `custom_fw/src/{slac,cp,sdp,v2gtp,din70121,ccs2}.c` (communication only — drives
+**no** power-stage GPIO).
+
+- **SLAC (ISO15118-3 matching)** — two-layer state machine: top MATCH `0x08021FCE` (ctx `0x20002AC4`, state
+  0..33) + subprocess `0x0802166E` (ctx[0x1c]). MME sequence `PARM.REQ 0x6064`→`CNF 0x6065`→
+  `START_ATTEN_CHAR.IND 0x606A`→`ATTEN_CHAR.IND 0x606E`→`RSP 0x606F`→`MNBC_SOUND.IND 0x6076`×10→
+  `MATCH.REQ 0x607C`→`CNF 0x607D`→`SET_KEY.REQ 0x6008`→`CNF 0x6009`. Frame header: dest[0..5] broadcast
+  `FF×6`, src[6..0xb] EV MAC, EtherType[0xC..0xD]=`0x88E1`, MMV[0xE]=1, MMTYPE lo[0xF]/hi[0x10],
+  AppType[0x13]/SecType[0x14]=0. `MATCH.CNF` handler `0x08021AE4` (`adds r5,#9` → absolute offsets): NID@+0x55[7],
+  NMK@+0x5D[16]. `PARM.CNF` validator: dest==ourMAC, len≥44, [0x22]=[0x23]=0, [0x19]=10/[0x1a]=6/[0x1b]=1,
+  RunID@0x24. PRNG LCG `0x08022C9C`: `n=(9*seed+7)&0xFFFF` twice, ret `(n2<<16)|n1`. Timers (ticks):
+  PARM/MATCH 200, post-PARM 80, ATTEN 20, atten-window 1200, link-supervision 17000; retries 3. Outputs:
+  NID@`0x20002AA1`, NMK@`0x20002AA9`, link flag@`0x20002AB9`, EVSE MAC ctx[0x1e]/[0x44].
+- **CP/PP analog signaling** — `AD_PP 0x08088850`=`raw*3300/65520` mV; `AD_CPD 0x08088878`=`raw*3300/32760`;
+  CP analog `0x08088864`=`raw*6600/32760`. `CP_ST 0x08052914`: fault→'F' (stubbed), duty==0→'E', PD11!=0→'C',
+  else 'B'. duty-5 `0x08052804`: duty∈[30,70]→'5' (ISO15118 digital mode). PP plug-in `0x080527B0`:
+  ≤2146 mV×4→plugged, ≥2296 mV×4→unplugged (hysteresis + 4-debounce, **binary presence — no resistance→
+  ampacity table** in C013). BCB=PD11 (B→C→B 200 ms, gated). D_LINK=PB12 (`0x080884BA`). CP duty/freq captured
+  by TIM4 PD12 (duty×10@`0x20000A00`, freq@`0x200009FE`; ISR/init anchors shifted from C009, not re-pinned).
+- **SDP / V2GTP / appHandshake** — SDP SM `0x08020468` (ctx `0x20000BBC`). Security select `0x080204FA`:
+  request security=`0x10` (TLS) iff `(RootCertCount&0xFF)==0` else `0x00` (**low-byte-only** `tst #0xff`);
+  cert-count accessor `0x08051AAC` (base `0x20018A6C−0x28`, `ldrb[+0x24]<<24 | ldr[+0x20]`, `bfi #24,#8`).
+  SDP req wire `01 FE 90 00 00 00 00 02 <SEC> 00` (10 B), dest `ff02::1` IPv6 multicast, port 15118; retry 50,
+  500 ms initial then 250 ms. SDP res 28 B: `01 FE 90 01 00 00 00 14` + SECC IPv6[16]@+8 + port u16 BE@+0x18 +
+  security@+0x1a + transport@+0x1b. Validator `0x080212E0`: type `0x9001`, len 28, transport 0, security∈{0,0x10},
+  IP≠0, port≠0. **TLS iff SECC security≠0** (`0x080207BC`). V2GTP header [0]=01,[1]=FE,[2..3]=type BE,[4..7]=len
+  BE; types `0x8001` EXI / `0x9000` SDP-req / `0x9001` SDP-res; parser `0x080212C2` returns byte-swapped type.
+  appHandshake `0x08033B4E`: DIN `urn:din:70121:2012:MsgDef` Priority1/SchemaID1 (preferred), ISO
+  `urn:iso:15118:2:2013:MsgDef` Priority2/SchemaID2, both Major2/Minor0; set-protocol `0x08023A8C`
+  (selected@`0x200137CC`, 1=DIN/2=ISO). TCP lwIP raw pcb@`0x200009A8`, mbedTLS ctx `0x200203F0` (full stack
+  **not** in the bare-metal app — gated). Log labels 'TLS'/'NO TLS' are inverted vs the wire — follow the wire.
+- **DIN70121 measurement + CurrentDemand actuation** — meas BASE `0x20007570` (EVCC handler `0x080353B2`),
+  `evcc_sta`=meas−0x90=`0x200074E0`, `precharge_flag`=evcc_sta+0x23F=`0x2000771F`. Measurement map:
+  +0x3D08/0A EVSEMaxVoltage, +0x3D14/16 EVSEPresentCurrent, +0x3D18/1A EVSEPresentVoltage, +0x3D20/22
+  EVSEMaxCurrent, +0x3D1B/1C/1D Current/Voltage/PowerLimitAchieved. `CurrentDemandRes` decoder `0x0802DC0A`
+  (EXI offsets: presentV[0x0E]/[0x0C], presentI[0x12]/[0x10], maxV[0x22]/[0x20] present-flag[0x24]bit0,
+  maxI[0x28]/[0x26] present-flag[0x2A]bit0, achieved[0x14]/[0x1C]/[0x18], status[7]/[9]/[6]; **stored factor =
+  wire+3**; optional-absent keeps previous). EV targets meas[0x3CE0]=EVTargetCurrent / [0x3CE2]=EVTargetVoltage /
+  [0x3CE4/CE5] factors; parameter-setter `0x0802B768` arm 0x606 (`0x0802B8F6`): command{+4 current u16, +6
+  voltage u16, +8 packed factors bits0-2 current / bits3-5 voltage}. `CurrentDemandReq` encoder `0x0802C2CE`
+  (excerpt `0x0802C406`): meas[0x3CE0]→EXI[0x18] / [0x3CE4]−3→EXI[0x14], meas[0x3CE2]→EXI[0x68] / [0x3CE5]−3→
+  EXI[0x64], DC_EVStatus meas[0x3CB7]→EXI[0x40] / [0x3CB8]→EXI[0x48] / EXI[0x44]=1, first_demand_sent
+  meas[0x243]; TX buf `0x20013698` len 108. Isolation struct `0x20000868`{+0 valid,+1 level,+2 mode} getter
+  `0x0805206C`. CPD Res writer `0x0802BEC0`.
+- **PhysicalValueType converter CORRECTION (load-bearing, corrects `analyze89`).** The converter `0x0804E786`
+  is a **power-of-10 TABLE lookup**, *not* `(code<7)?code:0xFF`: `cmp r0,#7; blt → ldr r0,[0x20000808 + code*4]`
+  (pow10 table) `; else movs r0,#0xff`. Returns `pow10[code]` for code∈[0,6] (table =
+  {1,10,100,1000,10000,100000,1000000}), else `0xFF` (255). The `sxtb` is in the **caller** (state-30
+  `0x08044D4C`), not the converter. The DIN helper `0x0802B92C` indexes the same pow10 table (@`0x20000400`) by
+  signed mult∈[−3,3] (`cmp #4`/`cmn #−4` range check, else `0xFFFF`). Hence
+  `scale(raw,factor)=(u16)(raw*pow10[factor]/1000)`, **real value = raw·10^(factor−3)**, stored factor byte =
+  wire multiplier + 3. The committed `current_ctrl` converter was corrected to delegate to `din_pow10`/
+  `din_scale` (the min/cap law was already correct and is unchanged).
+
+**Integration into the gated CHAdeMO layers.** `ccs2_evse()` supplies `charge_stm_inputs_t` EVSE handshake
+fields (plug_in←CP/PP, isolation/precharge_flag/cablecheck_fin/chgparam_ok/ev_contactor/precharge_relay←DIN
+session); `ccs2_fill_current_ctrl()` supplies `current_ctrl_inputs_t` EVSE measurements (max/avail current +
+pow10 factors from meas+0x3D20/22 & +0x3D14/16, voltage limit from meas+0x3D08/0A); `ccs2_demand(setpoint)`
+encodes the `CurrentDemandReq` EXI image (the asserted current drive is realized upstream as this CCS2 PLC
+message — §5.21 F — not a local PWM/DAC). **GATED / not recovered:** the full DIN EXI bit-level grammar, the
+distributed session state-machine timers/retries + FAILED→shutdown branch, the live UDP/TCP/IPv6 + mbedTLS
+transport, the exact EVSEIsolationStatus→level 3/4 mapping, and the CP/PP analog front-end acquisition (TIM4 CP
+capture anchors). The confirmed measurement + actuation field maps are wired; the autonomous EXI session +
+network transport stay gated until those layers are recovered/bench-validated. Host-tested
+(`test_{slac,cp,sdp,v2gtp,din70121,ccs2}.c`); built-image power-GPIO safety + pow10 table disasm-verified
+(`custom_fw/verify_ccs2.py`).
+
 > **Method note:** strings/peripherals in this image are referenced **PC-relative (ADR T1/T3, LDR
 > literal T1/T2)** into inline rodata tables — *not* movw/movt immediates. LDR-literal T2's U-bit is
 > **bit 7** (mask `0xFF7F`). `analyze27/34.py` decoded T2 correctly but omitted LDR T1/ADR; `hs3–hs13`
@@ -1684,8 +1755,12 @@ if p[+0x216] != 0 && p[+0x216] <= target_v: target_v = p[+0x216]   -> ctx[+0x1c]
 ```
 
 `scale(raw,factor) = (uint16)((uint32)raw * converter(factor) / 1000)` — `muls` + `udiv fp,#0x3e8` + `strh`
-(low 16). **Converter `0x0804E786`** = `sxtb` then `cmp r0,#7; blt keep; movs r0,#0xff` → `(code<7)?code:0xFF`
-(signed; codes 0..6 pass through, ≥7 clamp to 255). **Zero-skip:** a zero `min(request,avail)` (`cbz r0`)
+(low 16). **Converter `0x0804E786`** = `cmp r0,#7; blt → ldr r0,[0x20000808 + code*4]` (power-of-10 TABLE)
+`; else movs r0,#0xff` → `pow10[code]` for code∈[0,6] (table {1,10,100,1000,10000,100000,1000000}), else 255.
+**CORRECTED by `analyze92` (§5.9 upper-layer addendum):** the earlier analyze89 reading `(code<7)?code:0xFF`
+(identity pass-through) was a mis-decode — the converter returns the pow10 *table word*, not the code; the
+`sxtb` is in the caller (state-30 `0x08044D4C`), not the converter. Hence real value = raw·10^(factor−3),
+stored factor = wire multiplier + 3. The min/cap law below is unaffected. **Zero-skip:** a zero `min(request,avail)` (`cbz r0`)
 skips the current stores (keeps the previous setpoint); a zero target voltage (`cbz r1`) skips the voltage
 stores; `cap` (`+0x1a`) is written unconditionally. The capped value lands in `+0x16`/`+0x1c`, the uncapped
 in `+0x18`/`+0x1e`. **Overcurrent protection:** the setpoint never exceeds the EVSE's available current, the
@@ -2104,6 +2179,19 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   EtherType `0xE188`, param `0xB000`+'R', template `0x080AFDCC`); reset pulse `0x08089624`. Replicated INERT
   in `custom_fw/src/qca7005.c` (host-tested `test_qca7005.c` 26 checks; built-image constants disasm-verified).
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze91.py'`.
+- `analyze92.py` — **CCS2 EVCC upper-layer decoder (§5.9 upper-layer addendum, custom_fw CCS2 layers)**:
+  re-derives the SLAC + CP/PP + SDP/V2GTP + DIN70121 subsystem above the QCA7005 transport. Decodes the SLAC
+  two-layer SM (`0x08021FCE`/`0x0802166E`) + MME sequence + `MATCH.CNF` NID/NMK handler `0x08021AE4` + PRNG
+  LCG `0x08022C9C`; CP/PP scaling getters (`AD_PP 0x08088850`, `CP_ST 0x08052914`, PP plug `0x080527B0`);
+  SDP security select `0x080204FA` (low-byte-only cert-count test) + accessor `0x08051AAC` + res validator
+  `0x080212E0` + V2GTP parser `0x080212C2`; DIN measurement map (meas BASE `0x20007570`) + `CurrentDemandRes`
+  decoder `0x0802DC0A` + `CurrentDemandReq` encoder `0x0802C2CE` + EV-target setter arm 0x606. **Corrects the
+  `analyze89` converter mis-decode**: `0x0804E786` is a power-of-10 TABLE lookup (`pow10[code]`, code∈[0,6],
+  else 0xFF), not `(code<7)?code:0xFF`; real value = raw·10^(factor−3), stored factor = wire+3. Replicated
+  INERT in `custom_fw/src/{slac,cp,sdp,v2gtp,din70121,ccs2}.c` (host-tested 307 checks total; built-image
+  power-GPIO safety + pow10 table disasm-verified `custom_fw/verify_ccs2.py`). Autonomous EXI grammar +
+  session timers + live UDP/TCP/IPv6+TLS transport + CP front-end acquisition stay GATED (not recovered).
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze92.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -2140,31 +2228,49 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   interlocks [whole-bus 1525→450, per-msg 100, H102 fault→300, emergency→40, bms/hw→600, CurrentDemand
   isolation==3], records but does NOT execute `STM_ACT_*` power actions; EVSE-side handshake inputs
   safe-stubbed until the CCS2 PLC/DIN layer; host-unit-tested `test_charge_stm.c` 47 checks);
-  **inert H102 current control (§5.21 E-addendum, analyze89)**: `src/current_ctrl.c` (shadow setpoint —
-  byte-exact state-30 law `setpoint=min(request,EVSE avail)` capped by EVSE max, `target_v=min(target,limit)`,
-  `scale=raw*converter/1000` + converter `(code<7)?code:0xFF`, zero-skip keep-previous; drives NO power
-  stage; EVSE-side measurements safe-stubbed 0 → avail 0 → setpoint held 0; host-unit-tested
-  `test_current_ctrl.c` 42 checks);
+  **inert H102 current control (§5.21 E-addendum, analyze89; converter corrected by analyze92)**:
+  `src/current_ctrl.c` (shadow setpoint — byte-exact state-30 law `setpoint=min(request,EVSE avail)` capped by
+  EVSE max, `target_v=min(target,limit)`, `scale=raw*pow10[factor]/1000` + converter `0x0804E786` =
+  **power-of-10 TABLE[code]** for code∈[0,6] else 0xFF [corrects the analyze89 `(code<7)?code:0xFF` mis-decode;
+  delegates to `din_pow10`/`din_scale`], zero-skip keep-previous; drives NO power stage; EVSE-side measurements
+  now supplied by `ccs2_fill_current_ctrl` from the DIN meas struct [hold 0 until a live CurrentDemandRes is
+  decoded → avail 0 → setpoint held 0]; host-unit-tested `test_current_ctrl.c` 46 checks);
   **CCS2 QCA7005 PLC transport (§5.9 transport addendum, analyze91)**: `src/qca7005.c` (SPI1 `CR1=0x0357`
   Mode 3 /8 master, CS=PA4 / reset=PC5 / IRQ=PC4 polled; reg read `0xC000|addr` / write `0x4000|addr`;
   reg-init sig `0xAA55` + `0x1200=0xC5B`/`0xC00=0x447`/`0xD00=0x41`; buf-WRITE pad-to-60 + 4×`0xAA` + len LE
   + 2×`0x55`; MAC-read MME `0xA000`/`0xA001`; 4096 B RX ring + per-frame callback; **communication only,
   drives NO power GPIO**; bare-metal: no RTOS mutex, IWDG-fed bring-up delays, RX polled from
-  `qca7005_service`; host-unit-tested `test_qca7005.c` 26 checks); `main.c`
+  `qca7005_service`; host-unit-tested `test_qca7005.c` 26 checks);
+  **CCS2 EVCC upper layers (§5.9 upper-layer addendum, analyze92)**: `src/v2gtp.c` (V2GTP framing
+  `01 FE type BE len BE`, types 0x8001/0x9000/0x9001), `src/slac.c` (ISO15118-3 matching SM + MME
+  builders/validators + PRNG LCG → NID/NMK/EVSE-MAC/link-up), `src/cp.c` (CP/PP scaling + CP-state +
+  duty-5 + PP plug-in hysteresis/debounce; BCB recorded only), `src/sdp.c` (SECC discovery SM + security
+  select + req/res build/validate/parse + appHandshake protocol select), `src/din70121.c` (DIN measurement
+  struct + pow10 converter/scale + CurrentDemandRes decode + EV-target setter + CurrentDemandReq encode),
+  `src/ccs2.c` (EVCC controller glue: RX EtherType dispatch + session sequencing + `ccs2_evse()` handshake
+  outputs + `ccs2_fill_current_ctrl()` EVSE measurements + `ccs2_demand()` CurrentDemandReq actuation image);
+  **communication only, drives NO power GPIO**; autonomous EXI grammar + session timers + live UDP/TCP/IPv6+
+  TLS transport + CP front-end acquisition GATED (not recovered); host-unit-tested `test_{v2gtp,slac,cp,sdp,
+  din70121,ccs2}.c` (14/54/32/31/36/21 checks); built-image power-GPIO safety + pow10 table disasm-verified
+  `verify_ccs2.py`; `main.c`
   (rcc→gpio_safe→**hv**→can→chademo→**charge_stm**→**current_ctrl**→tick→`cpsie i`→**qca7005_init**
-  [blocking IWDG-fed bring-up, publish `ccs2_qca_ok`], then 100 Hz loop: IWDG feed
-  + `heartbeat` + publish `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + **charge_stm_step** (publish
-  `stm_state/stm_interlock/stm_engage/stm_action`) + **current_ctrl_step** in state-30 (publish `cc_setpoint/
-  cc_cap/cc_target_v`) + periodic TX + can_service + **qca7005_service** [publish `ccs2_mac_valid/
-  ccs2_rx_frames`]; **no ASSERTED power-stage drive**),
-  `build.sh`/`verify_pad.py`/`README.md`. Built + verified (8552 B code, vectors
+  [blocking IWDG-fed bring-up, publish `ccs2_qca_ok`]→**ccs2_init**, then 100 Hz loop: IWDG feed
+  + `heartbeat` + publish `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + **cp_step** [CP front-end
+  stubbed unplugged] + **ccs2_step** + **charge_stm_step** with EVSE inputs from `ccs2_evse()` (publish
+  `stm_state/stm_interlock/stm_engage/stm_action`) + **current_ctrl_step** in state-30 with EVSE measurements
+  from `ccs2_fill_current_ctrl()` (publish `cc_setpoint/cc_cap/cc_target_v`) + **ccs2_demand** inert
+  CurrentDemandReq EXI image in state-30 (publish `ccs2_cd_req/ccs2_cd_req_len`) + periodic TX + can_service
+  + **qca7005_service**→`ccs2_rx` [publish `ccs2_mac_valid/ccs2_rx_frames/ccs2_st/ccs2_link/ccs2_secc/
+  ccs2_proto`]; **no ASSERTED power-stage drive**),
+  `build.sh`/`verify_pad.py`/`verify_ccs2.py`/`README.md`. Built + verified (11948 B code / 5460 B bss, vectors
   `MSP=0x20030000`/`reset=0x080201AD`, SysTick + CAN1_RX0 + DMA2_Stream0 strong overrides at IRQ15/IRQ20/
   IRQ56 confirmed, adc_init/spi4_init/hv_get_raw register writes + interpolation + engagement-guard compares
-  disasm-checked, charge_stm_step + current_ctrl_step have no peripheral/GPIO stores, CRC residue 0).
+  disasm-checked, charge_stm_step + current_ctrl_step + the pure-logic CCS2 modules have no peripheral/GPIO
+  stores, pow10 converter table present, CRC residue 0, app verbatim + stock round-trip).
   `outvol` accuracy must be bench-verified vs a reference before the gated engagement/power layer.
-  Power-stage drive stays GATED behind a compile-time safety flag until bench-validated; grow via the CCS2
-  EVSE-side subsystem (PLC/DIN, supplies the stm + current-control EVSE inputs). Build outputs git-ignored;
-  `CUSTOM.UPG` is a bench-flash candidate (untracked).
+  Power-stage drive stays GATED behind a compile-time safety flag until bench-validated; the CCS2 EVSE-side
+  subsystem now supplies the stm + current-control EVSE inputs and the CurrentDemandReq actuation (autonomous
+  session transport still gated). Build outputs git-ignored; `CUSTOM.UPG` is a bench-flash candidate (untracked).
 - `SERVICE.UPG` / `SERVICE_DUMP.UPG` / `SERVICE_DUMP_APP5.UPG` — built service images (§5.13e/f/i):
   `SERVICE.UPG` = byte-identical stock round-trip (safe recovery); `SERVICE_DUMP.UPG` = stock + one-shot
   bootloader-dump cave on the in-place `f_close` anchor (598 156 B, valid CRCs, **bench-confirmed working**

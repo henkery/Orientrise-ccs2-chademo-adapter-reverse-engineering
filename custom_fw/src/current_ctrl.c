@@ -3,25 +3,23 @@
  * (analyze89). Computes the output-current setpoint + target voltage; drives NO power stage.
  */
 #include "current_ctrl.h"
+#include "din70121.h"
 
 static current_ctrl_t cc;
 
 int32_t current_ctrl_converter(int8_t code)
 {
-    /* 0x0804E786: sxtb r0,r0 ; cmp r0,#7 ; blt keep ; movs r0,#0xff ; bx lr */
-    int32_t x = (int32_t)code;   /* sxtb: sign-extend the byte */
-    if (x < 7) {                 /* blt (signed) */
-        return x;
-    }
-    return 0xFF;
+    /* 0x0804E786: cmp #7 ; blt -> power-of-10 TABLE[code] ; else movs #0xff. The sxtb is in the
+     * CALLER (state-30 0x08044D4C), not here. CORRECTS analyze89's "(code<7)?code:0xFF" reading:
+     * the blt path is a table lookup (ldr [0x20000808 + code*4]), pow10[code] for code in [0,6].
+     * Delegates to the shared DIN PhysicalValueType scaling (din70121.c). */
+    return (int32_t)din_pow10(code);
 }
 
 uint16_t current_ctrl_scale(uint16_t raw, int8_t factor)
 {
-    /* muls r0,r1,r0 (32-bit low word) ; udiv r0,r0,fp (#1000) ; strh (low 16) */
-    uint32_t f = (uint32_t)current_ctrl_converter(factor);
-    uint32_t prod = (uint32_t)raw * f;   /* low 32 bits of the product */
-    return (uint16_t)(prod / 1000u);
+    /* muls raw*pow10(factor) (low 32) ; udiv /1000 ; strh low16. real = raw*10^(factor-3). */
+    return din_scale(raw, factor);
 }
 
 void current_ctrl_init(void)

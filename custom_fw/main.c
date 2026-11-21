@@ -25,9 +25,17 @@
  * SWD-readable state-machine results and cc_* are SWD-readable current-control results.
  * Still NO asserted power-stage drive.
  *
- * Next layers (see README): CCS2 EVSE-side subsystem (PLC/DIN, supplies the stm + current-control
- * EVSE inputs) -> gated power-stage drive (LAST, behind a safety flag). EVSE-side handshake inputs
- * stay safe-stubbed until that subsystem is built.
+ * CCS2 EVSE-side subsystem (§5.9) is now built and wired: QCA7005 PLC SPI1 transport -> SLAC
+ * matching (slac) -> CP/PP signaling (cp) -> SDP discovery (sdp/v2gtp) -> DIN70121 measurement +
+ * CurrentDemand actuation (din70121), glued by the EVCC controller (ccs2). ccs2_evse() supplies the
+ * charge_stm EVSE handshake inputs and ccs2_fill_current_ctrl() supplies the current_ctrl EVSE
+ * measurements; ccs2_demand() encodes the CurrentDemandReq EXI image from the setpoint. The
+ * autonomous EXI session + live UDP/TCP/IPv6+TLS transport and the CP/PP analog front-end stay
+ * GATED (grammar/timers/acquisition not recovered), so the EVSE inputs hold safe 0 and no current
+ * is commanded. Communication only — still NO asserted power-stage drive.
+ *
+ * Next layer (see README): gated power-stage drive (LAST, behind a safety flag), after the CCS2
+ * session transport + CP front-end are recovered and outvol is bench-verified.
  */
 #include <stdint.h>
 #include "rcc.h"
@@ -40,6 +48,8 @@
 #include "charge_stm.h"
 #include "current_ctrl.h"
 #include "qca7005.h"
+#include "ccs2.h"
+#include "cp.h"
 
 #define IWDG_KR   (*(volatile uint32_t *)0x40003000u)
 #define IWDG_FEED 0x0000AAAAu
@@ -63,17 +73,28 @@ volatile uint32_t cc_setpoint = 0;   /* capped output-current setpoint (A)      
 volatile uint32_t cc_cap      = 0;   /* EVSE max-current cap (A)                */
 volatile uint32_t cc_target_v = 0;   /* capped target battery voltage (V)       */
 
-/* CCS2 EVSE-side subsystem — QCA7005 PLC transport (SWD-readable; communication only, no power).
- * The SLAC/SDP/DIN layers above the transport are built next; until then the RX callback just
- * counts received Ethernet frames for bench proof-of-life. */
+/* CCS2 EVSE-side subsystem (SWD-readable; communication only, no power). Full stack now built:
+ * QCA7005 PLC transport -> SLAC matching -> SDP discovery -> DIN70121 measurement/actuation,
+ * glued by the ccs2 controller (§5.9). The autonomous EXI session + live UDP/TCP/IPv6+TLS
+ * transport stay GATED (grammar/timers not recovered); the confirmed measurement + actuation
+ * field maps are wired and feed the inert charge_stm + current_ctrl EVSE inputs. */
 volatile uint32_t ccs2_qca_ok    = 0;  /* QCA7005 bring-up result (1 = PIB MAC read ok) */
 volatile uint32_t ccs2_mac_valid = 0;  /* 1 if the modem PIB MAC was resolved           */
 volatile uint32_t ccs2_rx_frames = 0;  /* Ethernet frames received from the PLC modem   */
+volatile uint32_t ccs2_st        = 0;  /* CCS2 EVCC session state (CCS2_*)              */
+volatile uint32_t ccs2_link      = 0;  /* SLAC matched (NID/NMK established)            */
+volatile uint32_t ccs2_secc      = 0;  /* SDP resolved SECC address+port                */
+volatile uint32_t ccs2_proto     = 0;  /* selected app protocol (1=DIN, 2=ISO)          */
 
-static void ccs2_rx_count(const uint8_t *frame, uint16_t len)
+/* CurrentDemandReq actuation image (SWD-readable; INERT — produced from the current_ctrl setpoint
+ * but the live TCP/TLS send is gated). Mirrors charge_stm recording stm_action without executing. */
+volatile uint8_t  ccs2_cd_req[108];    /* DIN CurrentDemandReq EXI field image          */
+volatile uint32_t ccs2_cd_req_len = 0; /* encoded length (108 when in CurrentDemand)    */
+
+static void ccs2_rx_dispatch(const uint8_t *frame, uint16_t len)
 {
-    (void)frame; (void)len;
-    ccs2_rx_frames++;   /* placeholder dispatcher; replaced by the CCS2 session layer */
+    ccs2_rx_frames++;
+    ccs2_rx(frame, len);   /* EtherType dispatch: MME 0x88E1 -> SLAC (IP -> gated transport) */
 }
 
 static void enable_irq(void)
@@ -98,7 +119,8 @@ void main(void)
      * pin. If no modem is present it times out (~4 s) and reports failure; the app continues.
      * The SLAC/SDP/DIN session layers above it are built next. */
     ccs2_qca_ok = (qca7005_init() == 0);
-    qca7005_set_rx_cb(ccs2_rx_count);
+    qca7005_set_rx_cb(ccs2_rx_dispatch);
+    ccs2_init();         /* SLAC + CP + SDP + DIN70121 + EVCC controller (communication only) */
 
     uint32_t next = tick_get();
     for (;;) {
@@ -121,18 +143,30 @@ void main(void)
         /* Inert charge state machine (§5.17): shadow controller — evaluates the safe-charge
          * sequence + the byte-exact state-17 engagement guard + interlocks + CAN watchdogs, and
          * records the power action each state WOULD drive, but executes NO GPIO. EVSE-side
-         * handshake inputs (isolation/precharge_flag/plug_in/…) come from the CCS2 PLC/DIN
-         * subsystem that is not built yet -> safe stubs (0), so the machine holds in the early
-         * states and the engagement guard cannot pass. outvol is the measured HV (get_hv()/10). */
+         * handshake inputs (isolation/precharge_flag/plug_in/…) now come from the CCS2 EVCC
+         * controller (ccs2_evse, §5.9); with the CP front-end stubbed unplugged and the autonomous
+         * EXI session gated they hold 0, so the machine stays in the early states and the
+         * engagement guard cannot pass. outvol is the measured HV (get_hv()/10). */
+        /* CCS2 EVSE-side subsystem step (§5.9): CP/PP signaling + SLAC + SDP + DIN session
+         * sequencing. Communication only — no power drive. The CP/PP analog front-end (PP/CPD
+         * ADC channels + TIM4 CP capture) is not acquired yet, so cp_step is fed a safe
+         * "unplugged / no PWM" stub (pp_raw=0xFFFF -> 3300 mV >= unplug threshold, duty 0 ->
+         * state 'E'), holding plug_in=0 until that measurement layer is built. The autonomous
+         * EXI session + live network transport stay GATED; the session flag setters allow bench
+         * injection. ccs2_evse() supplies the confirmed EVSE handshake outputs below. */
+        cp_step(0xFFFFu, 0, 0, 0, 0, 0);
+        ccs2_step(now);
+        const ccs2_evse_t *evse = ccs2_evse();
+
         charge_stm_inputs_t si;
         si.outvol          = (hv_outvol > 0) ? (uint16_t)hv_outvol : 0u;
-        si.isolation       = 0;   /* EVSE-side stub (engage needs 4, CurrentDemand needs 3) */
-        si.precharge_flag  = 0;   /* EVSE-side stub [r6+0x23F] (engage needs 1) */
-        si.plug_in         = 0;   /* GET_AD_CPD stub */
-        si.cablecheck_fin  = 0;   /* EVSE CableCheck-finished stub */
-        si.chgparam_ok     = 0;   /* EVSE ChargeParameterDiscovery-OK stub */
-        si.ev_contactor    = 0;   /* H102.VehicleStatus EV-contactor stub */
-        si.precharge_relay = 0;   /* get_precharge_relay feedback stub */
+        si.isolation       = evse->isolation;       /* DIN EVSE isolation (engage 4 / CD 3) */
+        si.precharge_flag  = evse->precharge_flag;  /* DIN evcc_sta+0x23F (engage needs 1)  */
+        si.plug_in         = evse->plug_in;         /* CP/PP connector presence             */
+        si.cablecheck_fin  = evse->cablecheck_fin;  /* DIN CableCheck finished OK           */
+        si.chgparam_ok     = evse->chgparam_ok;     /* DIN ChargeParameterDiscovery OK      */
+        si.ev_contactor    = evse->ev_contactor;    /* EV contactor closed                  */
+        si.precharge_relay = evse->precharge_relay; /* precharge relay feedback             */
         si.emergency       = 0;
         si.bms_error       = 0;
         si.hw_fault        = 0;
@@ -147,19 +181,18 @@ void main(void)
         /* Inert H102 current control (§5.21 E): in CurrentDemand (state 30) compute the
          * output-current setpoint = min(H102 request, EVSE available) capped by the EVSE max,
          * and target voltage = min(H102 target, limit). SHADOW — drives NO power stage. The
-         * EVSE-side measurements (max/avail current + range-code factors, voltage limit) come
-         * from the CCS2 PLC/DIN subsystem not built yet -> safe stubs (0), so avail==0 and the
-         * min(request,0)==0 zero-skip holds the setpoint at 0: no current is ever commanded. */
+         * EVSE-side measurements (max/avail current + power-of-10 range factors, voltage limit)
+         * now come from the DIN70121 measurement struct via ccs2_fill_current_ctrl (§5.9,
+         * meas+0x3D20/22 max, +0x3D14/16 present/avail, +0x3D08/0A max voltage). Until a live
+         * CurrentDemandRes is decoded those fields hold 0, so avail==0 and the min(request,0)==0
+         * zero-skip holds the setpoint at 0: no current is ever commanded. The asserted current
+         * drive is realized upstream as a CCS2 CurrentDemandReq (ccs2_demand), not a local PWM/DAC. */
         if (stm_state == STM_CURRENTDEMAND) {
             const chademo_vehicle_t *veh = chademo_vehicle();
             current_ctrl_inputs_t ci;
             ci.current_request   = veh->current_request;   /* H102 byte3 */
             ci.target_voltage    = veh->target_voltage;    /* H102 byte1-2 */
-            ci.evse_max_raw      = 0;   /* EVSE max-current raw @0x3D20 — stub */
-            ci.evse_max_factor   = 0;   /* EVSE max-current range code @0x3D22 — stub */
-            ci.evse_avail_raw    = 0;   /* EVSE present/available raw — stub */
-            ci.evse_avail_factor = 0;   /* EVSE present range code — stub */
-            ci.voltage_limit     = 0;   /* p[+0x216] output-voltage limit — stub */
+            ccs2_fill_current_ctrl(&ci);   /* EVSE max/avail current + factors + voltage limit */
             current_ctrl_step(&ci);
         }
         const current_ctrl_t *cc = current_ctrl_get();
@@ -167,13 +200,30 @@ void main(void)
         cc_cap      = cc->cap;
         cc_target_v = cc->target_v;
 
+        /* CCS2 CurrentDemand actuation (§5.9 / §5.21 F): encode the setpoint (cc_setpoint A /
+         * cc_target_v V) into a DIN CurrentDemandReq EXI image — the asserted current drive is
+         * realized upstream as this CCS2 PLC message (EVSE regulates), NOT a local PWM/DAC. INERT:
+         * the image is produced for SWD readout but the live TCP/TLS send is gated, so nothing is
+         * commanded. Only built while in CurrentDemand; otherwise the length stays 0. */
+        if (stm_state == STM_CURRENTDEMAND) {
+            ccs2_cd_req_len = ccs2_demand((uint16_t)cc_setpoint, (uint16_t)cc_target_v,
+                                          (uint8_t *)ccs2_cd_req);
+        } else {
+            ccs2_cd_req_len = 0;
+        }
+
         chademo_tx_periodic(now);  /* H108/H109 standby report every 100 ms     */
         can_service();             /* bus-off recovery / error check            */
 
         /* CCS2 QCA7005 PLC transport: poll the modem IRQ (PC4) + reg 0xC00, drain RX frames
-         * (communication only — no power drive). The session layers above it are built next. */
+         * into ccs2_rx_dispatch (communication only — no power drive). Publish the EVCC session
+         * state for SWD bench readout. */
         qca7005_service();
         ccs2_mac_valid = (qca7005_mac() != 0);
+        ccs2_st    = ccs2_state();
+        ccs2_link  = evse->link_up;
+        ccs2_secc  = evse->secc_found;
+        ccs2_proto = evse->protocol;
 
         next++;                              /* advance one 10 ms tick */
         while ((int32_t)(tick_get() - next) < 0) { }

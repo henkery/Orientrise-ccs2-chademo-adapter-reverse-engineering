@@ -1,13 +1,14 @@
 /* test_current_ctrl.c — host unit test for the INERT H102 output-current control law
  * (custom_fw/src/current_ctrl.c, REPORT §5.21 E, byte-derived 0x08044D42–0x08044DBC).
  *
- * Build + run (host gcc, no ARM target needed):
+ * Build + run (host gcc; links the shared DIN PhysicalValueType scaling din70121.c):
  *   nix-shell -p gcc --run 'gcc -O2 -Wall -Wextra -Isrc -o test_current_ctrl \
- *       test_current_ctrl.c src/current_ctrl.c && ./test_current_ctrl'
+ *       test_current_ctrl.c src/current_ctrl.c src/din70121.c && ./test_current_ctrl'
  *
- * Verifies: the scaling converter (sxtb + signed blt clamp >=7 -> 0xFF), the muls/udiv/strh
- * /1000 scaling, the min(request,avail) + EVSE-max cap law, the target-voltage min limit, the
- * zero-skip "keep previous" paths, and the inert-safety property (EVSE stubs -> setpoint 0).
+ * Verifies: the power-of-10 scaling converter (0x0804E786 table lookup, CORRECTED from
+ * analyze89's identity reading), the muls/udiv/strh /1000 scaling (real = raw*10^(factor-3)),
+ * the min(request,avail) + EVSE-max cap law, the target-voltage min limit, the zero-skip
+ * "keep previous" paths, and the inert-safety property (EVSE stubs -> setpoint 0).
  */
 #include <stdio.h>
 #include <stdint.h>
@@ -32,23 +33,27 @@ static current_ctrl_inputs_t in_zero(void)
 
 int main(void)
 {
-    /* --- converter 0x0804E786: sxtb ; cmp #7 ; blt keep ; movs #0xff --- */
-    CHECK(current_ctrl_converter(0) == 0,    "converter(0)==0");
-    CHECK(current_ctrl_converter(6) == 6,    "converter(6)==6");
-    CHECK(current_ctrl_converter(7) == 0xFF, "converter(7)==0xFF");
-    CHECK(current_ctrl_converter(100) == 0xFF, "converter(100)==0xFF");
-    CHECK(current_ctrl_converter(127) == 0xFF, "converter(127)==0xFF");
-    CHECK(current_ctrl_converter(-1) == -1,  "converter(-1)==-1 (signed blt)");
-    CHECK(current_ctrl_converter(-128) == -128, "converter(-128)==-128 (signed blt)");
+    /* --- converter 0x0804E786: cmp #7 ; blt -> pow10 TABLE[code] ; else 0xFF --- */
+    CHECK(current_ctrl_converter(0) == 1,       "converter(0)==pow10[0]==1");
+    CHECK(current_ctrl_converter(1) == 10,      "converter(1)==pow10[1]==10");
+    CHECK(current_ctrl_converter(3) == 1000,    "converter(3)==pow10[3]==1000");
+    CHECK(current_ctrl_converter(6) == 1000000, "converter(6)==pow10[6]==1000000");
+    CHECK(current_ctrl_converter(7) == 0xFF,    "converter(7)==0xFF");
+    CHECK(current_ctrl_converter(100) == 0xFF,  "converter(100)==0xFF");
+    CHECK(current_ctrl_converter(127) == 0xFF,  "converter(127)==0xFF");
+    CHECK(current_ctrl_converter(-1) == 0xFF,   "converter(-1)==0xFF (out-of-table safe)");
+    CHECK(current_ctrl_converter(-128) == 0xFF, "converter(-128)==0xFF (out-of-table safe)");
 
-    /* --- scale: muls raw*converter(factor) ; udiv /1000 ; strh low16 --- */
-    CHECK(current_ctrl_scale(1000, 1) == 1,    "scale(1000,1)==1");
-    CHECK(current_ctrl_scale(1000, 6) == 6,    "scale(1000,6)==6");
-    CHECK(current_ctrl_scale(1000, 7) == 255,  "scale(1000,7)==255 (clamp)");
-    CHECK(current_ctrl_scale(0, 5) == 0,       "scale(0,5)==0");
-    CHECK(current_ctrl_scale(500, 1) == 0,     "scale(500,1)==0 (trunc)");
-    CHECK(current_ctrl_scale(65535, 7) == 16711, "scale(65535,7)==16711");
-    CHECK(current_ctrl_scale(2, -1) == 35127,  "scale(2,-1)==35127 (neg factor trunc)");
+    /* --- scale: muls raw*pow10(factor) ; udiv /1000 ; strh low16. real=raw*10^(factor-3) --- */
+    CHECK(current_ctrl_scale(1000, 3) == 1000,  "scale(1000,3)==1000 (mult 0 identity)");
+    CHECK(current_ctrl_scale(1000, 2) == 100,   "scale(1000,2)==100 (mult -1)");
+    CHECK(current_ctrl_scale(1000, 4) == 10000, "scale(1000,4)==10000 (mult +1)");
+    CHECK(current_ctrl_scale(1000, 0) == 1,     "scale(1000,0)==1 (mult -3)");
+    CHECK(current_ctrl_scale(0, 5) == 0,        "scale(0,5)==0");
+    CHECK(current_ctrl_scale(500, 2) == 50,     "scale(500,2)==50");
+    CHECK(current_ctrl_scale(1000, 7) == 255,   "scale(1000,7)==255 (clamp)");
+    CHECK(current_ctrl_scale(65535, 3) == 65535,"scale(65535,3)==65535");
+    CHECK(current_ctrl_scale(1000, 6) == 16960, "scale(1000,6)==16960 (low16 of 1000000)");
 
     /* --- inert safety: all EVSE stubs 0 -> avail 0 -> min 0 -> setpoint stays 0 --- */
     current_ctrl_init();
@@ -63,16 +68,16 @@ int main(void)
     CHECK(c->target_v == 400,   "target voltage passes through (no limit)");
     CHECK(c->target_v_raw == 400, "target_v_raw 400");
 
-    /* --- min(request,avail) then cap by EVSE max --- */
+    /* --- min(request,avail) then cap by EVSE max (factor 3 = mult 0 = identity scaling) --- */
     current_ctrl_init();
     in = in_zero();
     in.current_request   = 50;
-    in.evse_avail_raw    = 60000; in.evse_avail_factor = 1;  /* avail = 60 */
-    in.evse_max_raw      = 40000; in.evse_max_factor   = 1;  /* cap   = 40 */
+    in.evse_avail_raw    = 60; in.evse_avail_factor = 3;  /* avail = 60 */
+    in.evse_max_raw      = 40; in.evse_max_factor   = 3;  /* cap   = 40 */
     in.target_voltage    = 400;
     current_ctrl_step(&in);
     c = current_ctrl_get();
-    CHECK(c->cap == 40,          "cap = scale(40000,1) = 40");
+    CHECK(c->cap == 40,          "cap = scale(40,3) = 40");
     CHECK(c->setpoint_raw == 50, "setpoint_raw = min(50,60) = 50 (uncapped)");
     CHECK(c->setpoint == 40,     "setpoint capped 50 -> 40");
     CHECK(c->target_v == 400,    "target_v 400");
@@ -97,7 +102,7 @@ int main(void)
     current_ctrl_init();
     in = in_zero();
     in.current_request = 50;
-    in.evse_avail_raw  = 60000; in.evse_avail_factor = 1;  /* avail 60, cap 0 */
+    in.evse_avail_raw  = 60; in.evse_avail_factor = 3;  /* avail 60, cap 0 */
     current_ctrl_step(&in);
     c = current_ctrl_get();
     CHECK(c->cap == 0,           "cap 0");
@@ -137,8 +142,8 @@ int main(void)
     current_ctrl_init();
     in = in_zero();
     in.current_request = 50;
-    in.evse_avail_raw  = 60000; in.evse_avail_factor = 1;
-    in.evse_max_raw    = 40000; in.evse_max_factor   = 1;
+    in.evse_avail_raw  = 60; in.evse_avail_factor = 3;
+    in.evse_max_raw    = 40; in.evse_max_factor   = 3;
     in.target_voltage  = 400;
     current_ctrl_step(&in);       /* setpoint 40, target_v 400 */
     in.current_request = 0;       /* min(0,60)=0 -> skip current stores */
@@ -162,7 +167,7 @@ int main(void)
     in = in_zero();
     in.current_request   = 200;
     in.evse_avail_raw    = 1000; in.evse_avail_factor = 7;   /* avail = 255 */
-    in.evse_max_raw      = 60000; in.evse_max_factor  = 1;   /* cap = 60 */
+    in.evse_max_raw      = 60; in.evse_max_factor  = 3;      /* cap = 60 */
     current_ctrl_step(&in);
     c = current_ctrl_get();
     CHECK(c->setpoint_raw == 200, "min(200,255)=200");
