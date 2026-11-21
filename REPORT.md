@@ -793,13 +793,16 @@ fields (plug_in←CP/PP, isolation/precharge_flag/cablecheck_fin/chgparam_ok/ev_
 session); `ccs2_fill_current_ctrl()` supplies `current_ctrl_inputs_t` EVSE measurements (max/avail current +
 pow10 factors from meas+0x3D20/22 & +0x3D14/16, voltage limit from meas+0x3D08/0A); `ccs2_demand(setpoint)`
 encodes the `CurrentDemandReq` EXI image (the asserted current drive is realized upstream as this CCS2 PLC
-message — §5.21 F — not a local PWM/DAC). **GATED / not recovered:** the full DIN EXI bit-level grammar, the
-distributed session state-machine timers/retries + FAILED→shutdown branch, the live UDP/TCP/IPv6 + mbedTLS
-transport, the exact EVSEIsolationStatus→level 3/4 mapping, and the CP/PP analog front-end acquisition (TIM4 CP
-capture anchors). The confirmed measurement + actuation field maps are wired; the autonomous EXI session +
-network transport stay gated until those layers are recovered/bench-validated. Host-tested
-(`test_{slac,cp,sdp,v2gtp,din70121,ccs2}.c`); built-image power-GPIO safety + pow10 table disasm-verified
-(`custom_fw/verify_ccs2.py`).
+message — §5.21 F — not a local PWM/DAC). The full DIN EXI bit-level grammar + the distributed session
+state-machine timers/retries + FAILED→shutdown branch were **subsequently recovered by `analyze93`** (EXI
+grammar + session-SM addendum below) and replicated inert in `custom_fw/src/{exi,din_session}.c`. **Still
+GATED / not recovered:** the live UDP/TCP/IPv6 + mbedTLS transport (the network reassembly that feeds decoded
+Res frames), the exact Req-side EXI grammars / root-event numbering [?], the DIN-vs-ISO `DC_EVSEStatus` layout
+[?], the exact EVSEIsolationStatus→level 3/4 mapping, and the CP/PP analog front-end acquisition (TIM4 CP
+capture anchors). The confirmed measurement + actuation field maps + the autonomous session sequence/timers
+are wired; the live network transport stays gated until recovered/bench-validated. Host-tested
+(`test_{slac,cp,sdp,v2gtp,din70121,ccs2,exi,din_session}.c`); built-image power-GPIO safety + pow10 table +
+session timer constants disasm-verified (`custom_fw/verify_ccs2.py`).
 
 > **Method note:** strings/peripherals in this image are referenced **PC-relative (ADR T1/T3, LDR
 > literal T1/T2)** into inline rodata tables — *not* movw/movt immediates. LDR-literal T2's U-bit is
@@ -808,6 +811,76 @@ network transport stay gated until those layers are recovered/bench-validated. H
 > **fixed** (`1d26100`; `hs1/hs2` were always correct). A buggy-vs-fixed re-run of all nine scripts
 > gave byte-identical output, so the §5.9 conclusions are unaffected (they rest on disassembly + movw
 > + ADR). Reference scanner: `corrected_xref.py` (§7).
+
+**EXI grammar + session-SM addendum — DIN70121 bit-level codec + distributed session timers (`analyze93`,
+custom_fw `exi`/`din_session` layers).** The two layers `analyze92` left gated are recovered byte-exactly from
+C013 by `analyze93.py` and replicated **INERT** in `custom_fw/src/{exi,din70121,din_session}.c`, wired into
+`ccs2.c`/`main.c` (communication only — drives **no** power-stage GPIO; the asserted power drive stays the last
+gated layer).
+
+- **(E) EXI bit-level codec — generated grammar-table-driven OpenV2G (Siemens) style.** A merged
+  DIN+ISO+XMLDSIG root reads a **7-bit event** and `tbb`-dispatches to **81 productions** (root decoder
+  `0x0806997A`: pre-check `0x08093C66` + doc-init `0x08061BDE` + `readBits7` + `cmp #0x51` + `tbb 0x080699BC`);
+  each production is a `while`-loop `switch(grammar_id)` with state 4 = EE. Bit order is **MSB-first**.
+  `readBits` core `0x0809DA5E` (fetch `0x0809DA34`): single-byte `(curbyte>>(bitsleft−n))&(0xFF>>(8−n))`,
+  multi-byte `*out<<8|newbyte`; fetch `curbyte=buf[pos++]` when `bitsleft==0`, EOF if `pos>=cap`. `writeBits`
+  core `0x0809DAE2`: `curbyte=(curbyte<<n)|(val&mask_n)`, `bitsleft−=n`, flush `buf[pos++]=curbyte` when
+  `bitsleft==0`; init `curbyte=0/bitsleft=8`; **capacity checked only on flush**; the partial trailing byte is
+  **left-aligned** (`curbyte<<bitsleft`) at finish. Stream struct `{+0 cap, +4 buf, +8 &pos, +0xC curbyte,
+  +0xD bitsleft}`. Primitives: bool `0x080934BE` (1-bit, calls core), u16 varlen `0x08093404` (7-bit groups
+  LSB-first, bit7 continuation via `lsrs #7`), u32 `0x08093432`, signed `0x080934F0` (sign-bit via bool + u16
+  magnitude + `mvns` ones-complement), octet `0x080935D8`. **PhysicalValueType** decoder `0x08062070` wire order
+  **Multiplier(3-bit, wire=mult+3, `subs #3`→signed), Unit(2-bit choice; if 0: 4-bit + bit16 `orr #0x10000`
+  present), Value(signed)** — *not* schema order; encoder `0x0806A3AC`. Framing `[8B V2GTP][0x80 leading][7-bit
+  root event][body]`, payload `0x8001`; decode wrapper `0x08033C24` (cap `0x100`, scratch `0x200031D0`, strip 8);
+  encoder root `0x0806FA9C`; TX leading-0x80 `0x08093C92`; RX pre-check rejects `0x24` + bit5 (`lsls #0x1a bpl`).
+  EXI errors: −11 EOF, −108 unknown event, −110 empty, −137/−138 header.
+- **Load-bearing EV-MAP CORRECTION.** The agent-E event numbering is **+2-shifted for ev≥0x0e** (the b-thunk
+  region). Ground truth (following the actual `tbb` byte → stub → b-thunk → `bl` decoder + `orr` flag):
+  `CurrentDemandRes 0x0806471E`/flag `4148.7` = **ev0x12**; `DC_EVSEStatus 0x0806259E`/`4140.26` = **ev0x16**;
+  `DC_EVSEChargeParam 0x080650D2`/`4144.5` = **ev0x15**; CPD wrapper `0x080650AC` = **ev0x1d**; `SessionStop
+  0x08063C04`/`4144.6` = **ev0x1e**; `CableCheckRes 0x08066C5C`/`4144.24` = **ev0x05**; PreCharge/Welding
+  `0x08063A8A`/`4148.8` = **ev0x30**, `0x08062754`/`4144.30` = **ev0x4f**; ev0-type `0x08065FFC` = **ev0x00**.
+  The decoder **addresses + flag bits + field lists** E recovered are correct; only the event **numbers** were
+  shifted. `CurrentDemandRes` is a complete 10-field wire order (ResponseCode 5-bit, DC_EVSEStatus,
+  EVSEPresentVoltage PVT, EVSEPresentCurrent PVT, Current/Voltage/PowerLimitAchieved bools, optional
+  EVSEMaximumVoltage/Current/PowerLimit PVTs).
+- **(F) Distributed session state machine.** State variable = session ctx `0x2000B3B0[0]` (byte enum 0..13 =
+  "which Res is awaited"), first field of a `0x48`-byte ctx (`= 0x2000B3F8 − 0x48`); dispatch `tbh 0x08035444`
+  (gate `cmp #0xe`). Split across an **RX handler `0x080353B2`** (transition engine — advances only on a valid
+  Res) and a **poll task `0x08038192`** (timer/retry/re-send engine — never advances on success), driven by an
+  RTOS loop `0x08039AF8` (~10 ms) off a **TIM7 1 ms tick** (ISR `0x0808A198` → `[0x20000A54]` u32++, init
+  `0x0808A1AA` PSC=83/ARR=999, accessor `0x0808A236`). Init `0x08035198` timers: ctx+4 u16=**4000** (resp-wait,
+  re-armed every send), +8 u32=**120000**, +C u32=**150000**, +10 u16=**40000**, +12 u16=**14000**. The
+  120 s/150 s are session-**global** (f_24 compare `0x08038458`/`0x0803874E`, gate ctx+0x2A); the 40 s/14 s are
+  engagement/charging-**phase** (f_27 compare `0x08039002`/`0x0803940E`, clustered with the CD cadence) — they
+  must **not** preempt the early-handshake resp-wait/retry loop. **Retry cap 20**: `meas[0x244]++` (uxtb wrap)
+  `cmp #0x14` @`0x0803829C` → `bls` skip; else `meas[0x248]=1` + fault code 1. **CD cadence** PRIMARY
+  `meas[0xC]%fp==0` (`udiv`/`mls` @`0x080396F6`); fp getter `0x08088B6C`=`ldrh [0x200009FE]` runtime-negotiated
+  via config-registry `0x08088B9E` (table `0x200226E0`); SECONDARY ctx+0x44 interval / ctx+0x46 arm gated
+  @`0x08039698` (parameterized; set-site [?]). **Fault setter `0x0802C9D0`(code)** → `0x20000774[1]=code,[2]=1,
+  [0]=code`; CHAdeMO reads it to open the contactor (codes 1,2,7,9,11,14,16,40,42,46). **FAILED → SessionStopReq**
+  `0x08034F72` + state13; timeout → fault → PowerDelivery-stop `0x08034A78` → SessionStop → state13 → reset
+  `0x08035318`. Sequence **2→3**(RC==0)**→6**(DIN skips 4/5 [?])**→7→8**(isolation==1)**→9→10**(loop)**→11→12→13→0**;
+  CableCheckRes isolation ==1 Valid→advance `0x080366AE`, ==0→retry, ≥2→fault16. PreChargeRes decoder `0x0802C27A`
+  → `meas[0x3D18]` presentV / `[0x3D1A]` factor+3 / `[0x3D1E]=4`.
+- **Replication + verification.** `src/exi.c` (byte-exact MSB-first primitives + PVT + framing), `src/din70121.c`
+  grammar messages (`CurrentDemandRes` complete; CableCheck/PreCharge/SessionStop; `CurrentDemandReq` encode),
+  `src/din_session.c` (autonomous SM: state enum, timers, retry cap 20, CD modulo cadence, FAILED→shutdown + fault
+  post — **inert**, records the fault code, drives no GPIO). `ccs2_step` drives `din_session_step` and sources the
+  EVSE handshake flags from it while a session is active; decoded Res enter via the gated `ccs2_rx_exi` hook;
+  `main` publishes `din_st_state/fault/retry/active` (SWD-readable). Host-tested: `test_exi` **55**,
+  `test_din_session` **39**, `test_din70121` **36**, `test_ccs2` **21** (full suite **401 checks, 0 failures**).
+  Built image disasm-verified (`custom_fw/verify_ccs2.py`, **36 checks**): every CCS2/EXI/session pure-logic
+  function references **no** peripheral base `0x40000000–0x400FFFFF` (power-GPIO safe), the autonomous symbols +
+  `main→din_session_get` are present, and the five timer constants + retry cap 20 are compiled in (−O2 packs them
+  into LDR-literal pool words, e.g. `0x36B09C40` = the two u16 40000/14000). The session RX engine + EXI decode
+  primitives are `--gc-sections`-eliminated from the autonomous image (no live transport calls them yet) and
+  host-tested separately. `CUSTOM.UPG` re-wrapped (132102 B, CRC residue 0 + app-verbatim + stock round-trip).
+- **Still GATED:** the live UDP/TCP/IPv6 + mbedTLS transport (network reassembly feeding `ccs2_rx_exi`), the exact
+  Req-side EXI grammars / root-event numbering [?], the DIN-vs-ISO `DC_EVSEStatus` layout [?], the CD secondary
+  interval set-site [?], and the exact EVSEIsolationStatus→level 3/4 mapping. Partial optional-choice grammars are
+  marked [?] in the source; inert/gated so acceptable until bench-validated.
 
 ### 5.10 USB log stick — firmware-match proof & device provenance  [C unless noted]
 
@@ -2192,6 +2265,23 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   power-GPIO safety + pow10 table disasm-verified `custom_fw/verify_ccs2.py`). Autonomous EXI grammar +
   session timers + live UDP/TCP/IPv6+TLS transport + CP front-end acquisition stay GATED (not recovered).
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze92.py'`.
+- `analyze93.py` — **DIN70121 EXI bit-grammar codec + distributed session-SM decoder (§5.9 EXI grammar +
+  session-SM addendum, custom_fw `exi`/`din_session` layers)**: recovers the two layers `analyze92` left gated.
+  (E) EXI codec — generated grammar-table-driven OpenV2G-style; dumps the MSB-first `readBits 0x0809DA5E` /
+  `writeBits 0x0809DAE2` cores, varlen u16 `0x08093404` / signed `0x080934F0` / bool `0x080934BE` primitives,
+  PVT wire order decoder `0x08062070` (Multiplier,Unit,Value), root decoder `0x0806997A` (7-bit event → `tbb
+  0x080699BC`, 81 productions) + framing pre-check `0x08093C66`, and the key DIN DC productions
+  (`CurrentDemandRes 0x0806471E`, `DC_EVSEStatus 0x0806259E`, `CableCheckRes 0x08066C5C`, `SessionStop
+  0x08063C04`). **Rebuilds the ground-truth ev→decoder→flag map by following the actual `tbb` path**, correcting
+  agent-E's +2 event-number shift for ev≥0x0e (CurrentDemandRes=ev0x12, DC_EVSEStatus=ev0x16, CableCheckRes=
+  ev0x05, SessionStop=ev0x1e, PreCharge=ev0x30). (F) Session SM — dumps ctx init `0x08035198` (timers
+  4000/120000/150000/40000/14000 ms), TIM7 1 ms tick ISR `0x0808A198`, RX transition engine `0x080353B2`, retry
+  cap 20 `0x0803829C`, CD modulo cadence `0x080396F6` + secondary interval `0x08039698`, fault setter
+  `0x0802C9D0`→`0x20000774`, CableCheck isolation advance `0x080366AE`, session reset `0x08035318`. Replicated
+  INERT in `custom_fw/src/{exi,din70121,din_session}.c` + wired into `ccs2.c`/`main.c` (host-tested `test_exi` 55
+  / `test_din_session` 39 / full suite 401 checks; built-image power-GPIO safety + timer constants disasm-verified
+  `custom_fw/verify_ccs2.py` 36 checks). Live UDP/TCP/IPv6+TLS transport + Req-side grammars [?] stay GATED.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze93.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -2246,13 +2336,21 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   builders/validators + PRNG LCG → NID/NMK/EVSE-MAC/link-up), `src/cp.c` (CP/PP scaling + CP-state +
   duty-5 + PP plug-in hysteresis/debounce; BCB recorded only), `src/sdp.c` (SECC discovery SM + security
   select + req/res build/validate/parse + appHandshake protocol select), `src/din70121.c` (DIN measurement
-  struct + pow10 converter/scale + CurrentDemandRes decode + EV-target setter + CurrentDemandReq encode),
-  `src/ccs2.c` (EVCC controller glue: RX EtherType dispatch + session sequencing + `ccs2_evse()` handshake
-  outputs + `ccs2_fill_current_ctrl()` EVSE measurements + `ccs2_demand()` CurrentDemandReq actuation image);
-  **communication only, drives NO power GPIO**; autonomous EXI grammar + session timers + live UDP/TCP/IPv6+
-  TLS transport + CP front-end acquisition GATED (not recovered); host-unit-tested `test_{v2gtp,slac,cp,sdp,
-  din70121,ccs2}.c` (14/54/32/31/36/21 checks); built-image power-GPIO safety + pow10 table disasm-verified
-  `verify_ccs2.py`; `main.c`
+  struct + pow10 converter/scale + CurrentDemandRes decode + EV-target setter + CurrentDemandReq encode +
+  **EXI grammar messages**: CurrentDemandRes complete 10-field / CableCheck / PreCharge / SessionStop decode +
+  CurrentDemandReq grammar encode), `src/exi.c` (**EXI bit-level codec, analyze93 E**: byte-exact MSB-first
+  readBits/writeBits + varlen u16/u32 + signed ones-complement + octet + PhysicalValueType wire order +
+  V2GTP/0x80/7-bit-event framing), `src/din_session.c` (**autonomous DIN session SM, analyze93 F**: state enum
+  0..13 + timers 4000/120000/150000/40000/14000 ms + retry cap 20 + CD modulo cadence + FAILED→shutdown + fault
+  post — INERT, records the fault code, drives no GPIO), `src/ccs2.c` (EVCC controller glue: RX EtherType
+  dispatch + session sequencing driving `din_session_step` + `ccs2_evse()` handshake outputs sourced from the
+  session SM + `ccs2_fill_current_ctrl()` EVSE measurements + `ccs2_demand()` CurrentDemandReq actuation image +
+  gated `ccs2_rx_exi()` decoded-Res entry);
+  **communication only, drives NO power GPIO**; EXI grammar + session timers RECOVERED (analyze93); live
+  UDP/TCP/IPv6+TLS transport + Req-side grammars [?] + CP front-end acquisition still GATED; host-unit-tested
+  `test_{v2gtp,slac,cp,sdp,din70121,ccs2,exi,din_session}.c` (14/54/32/31/36/21/55/39 checks; full suite 401);
+  built-image power-GPIO safety + pow10 table + session timer constants disasm-verified `verify_ccs2.py`
+  (36 checks); `main.c`
   (rcc→gpio_safe→**hv**→can→chademo→**charge_stm**→**current_ctrl**→tick→`cpsie i`→**qca7005_init**
   [blocking IWDG-fed bring-up, publish `ccs2_qca_ok`]→**ccs2_init**, then 100 Hz loop: IWDG feed
   + `heartbeat` + publish `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + **cp_step** [CP front-end
@@ -2261,16 +2359,19 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   from `ccs2_fill_current_ctrl()` (publish `cc_setpoint/cc_cap/cc_target_v`) + **ccs2_demand** inert
   CurrentDemandReq EXI image in state-30 (publish `ccs2_cd_req/ccs2_cd_req_len`) + periodic TX + can_service
   + **qca7005_service**→`ccs2_rx` [publish `ccs2_mac_valid/ccs2_rx_frames/ccs2_st/ccs2_link/ccs2_secc/
-  ccs2_proto`]; **no ASSERTED power-stage drive**),
-  `build.sh`/`verify_pad.py`/`verify_ccs2.py`/`README.md`. Built + verified (11948 B code / 5460 B bss, vectors
+  ccs2_proto`] + **din_session_get** [publish `din_st_state/din_st_fault/din_st_retry/din_st_active`];
+  **no ASSERTED power-stage drive**),
+  `build.sh`/`verify_pad.py`/`verify_ccs2.py`/`README.md`. Built + verified (13332 B code / 5800 B bss, vectors
   `MSP=0x20030000`/`reset=0x080201AD`, SysTick + CAN1_RX0 + DMA2_Stream0 strong overrides at IRQ15/IRQ20/
   IRQ56 confirmed, adc_init/spi4_init/hv_get_raw register writes + interpolation + engagement-guard compares
-  disasm-checked, charge_stm_step + current_ctrl_step + the pure-logic CCS2 modules have no peripheral/GPIO
-  stores, pow10 converter table present, CRC residue 0, app verbatim + stock round-trip).
+  disasm-checked, charge_stm_step + current_ctrl_step + the pure-logic CCS2/EXI/session modules have no
+  peripheral/GPIO stores, pow10 converter table + session timer constants present, CRC residue 0, app verbatim
+  + stock round-trip).
   `outvol` accuracy must be bench-verified vs a reference before the gated engagement/power layer.
   Power-stage drive stays GATED behind a compile-time safety flag until bench-validated; the CCS2 EVSE-side
-  subsystem now supplies the stm + current-control EVSE inputs and the CurrentDemandReq actuation (autonomous
-  session transport still gated). Build outputs git-ignored; `CUSTOM.UPG` is a bench-flash candidate (untracked).
+  subsystem now supplies the stm + current-control EVSE inputs and the CurrentDemandReq actuation, and runs the
+  autonomous EXI session sequence/timers (analyze93; live network transport still gated). Build outputs
+  git-ignored; `CUSTOM.UPG` is a bench-flash candidate (untracked).
 - `SERVICE.UPG` / `SERVICE_DUMP.UPG` / `SERVICE_DUMP_APP5.UPG` — built service images (§5.13e/f/i):
   `SERVICE.UPG` = byte-identical stock round-trip (safe recovery); `SERVICE_DUMP.UPG` = stock + one-shot
   bootloader-dump cave on the in-place `f_close` anchor (598 156 B, valid CRCs, **bench-confirmed working**

@@ -1,9 +1,9 @@
 /* test_current_ctrl.c — host unit test for the INERT H102 output-current control law
  * (custom_fw/src/current_ctrl.c, REPORT §5.21 E, byte-derived 0x08044D42–0x08044DBC).
  *
- * Build + run (host gcc; links the shared DIN PhysicalValueType scaling din70121.c):
+ * Build + run (host gcc; links the shared DIN PhysicalValueType scaling din70121.c + exi.c):
  *   nix-shell -p gcc --run 'gcc -O2 -Wall -Wextra -Isrc -o test_current_ctrl \
- *       test_current_ctrl.c src/current_ctrl.c src/din70121.c && ./test_current_ctrl'
+ *       test_current_ctrl.c src/current_ctrl.c src/din70121.c src/exi.c && ./test_current_ctrl'
  *
  * Verifies: the power-of-10 scaling converter (0x0804E786 table lookup, CORRECTED from
  * analyze89's identity reading), the muls/udiv/strh /1000 scaling (real = raw*10^(factor-3)),

@@ -1,13 +1,19 @@
-/* ccs2.c — CCS2 EVCC top-level controller (REPORT §5.9, Agent B/C/D / analyze92).
+/* ccs2.c — CCS2 EVCC top-level controller (REPORT §5.9, Agent B/C/D/E/F / analyze92-93).
  * Integrates transport->SLAC->SDP->DIN and supplies the charge_stm + current_ctrl EVSE inputs.
- * INERT: communication only — no power-stage GPIO. The autonomous EXI session + live UDP/TCP/TLS
- * transport are GATED (grammar/timers not recovered); confirmed measurement + actuation paths wired.
+ * The autonomous DIN EXI session SM (din_session, Agent F timers/sequence) + the EXI grammar codec
+ * (exi/din70121, Agent E) are now BUILT and wired: ccs2_step drives din_session_step and, while a
+ * session is active, sources the EVSE handshake flags from it. INERT: communication only — no
+ * power-stage GPIO. The live UDP/TCP/IPv6+TLS transport stays GATED (not recovered); decoded Res
+ * enter via ccs2_rx_exi (bench injection / future transport). Confirmed measurement + actuation
+ * paths wired. The bench flag-setters remain an alternate injection path when no session is active.
  */
 #include "ccs2.h"
 #include "slac.h"
 #include "sdp.h"
 #include "cp.h"
 #include "din70121.h"
+#include "din_session.h"
+#include "exi.h"
 #include "qca7005.h"
 
 static uint8_t state;
@@ -22,7 +28,19 @@ void ccs2_init(void)
     slac_init();
     cp_init();
     din70121_init();
+    din_session_init();   /* autonomous DIN EXI session SM (Agent F timers/sequence; inert) */
     sdp_init(0);   /* Root-cert count 0 -> TLS request (config-side; gated until cert config wired) */
+}
+
+/* Sync the EVSE handshake outputs from the autonomous session SM (authoritative while active). */
+static void sync_evse_from_session(const din_session_t *ds)
+{
+    evse.cablecheck_fin  = ds->cablecheck_fin;
+    evse.chgparam_ok     = ds->chgparam_ok;
+    evse.precharge_flag  = ds->precharge_flag;
+    evse.ev_contactor    = ds->ev_contactor;
+    evse.precharge_relay = ds->precharge_relay;
+    evse.isolation       = ds->isolation;
 }
 
 void ccs2_step(uint32_t tick)
@@ -50,24 +68,54 @@ void ccs2_step(uint32_t tick)
             evse.secc_found = 1;
             evse.protocol = sdp_get()->selected_protocol;
             ccs2_session_start();
+            din_session_start(tick * 10u);   /* autonomous SM: SessionSetupReq -> await Res (ms) */
         }
         break;
     case CCS2_SESSION:
-        /* DIN session advances via the flag setters (decoded responses). Once CableCheck +
-         * ChargeParameterDiscovery + precharge are done, enter CurrentDemand. The autonomous
-         * EXI request TX + timers are gated. */
-        if (evse.cablecheck_fin && evse.chgparam_ok && evse.precharge_flag) {
-            state = CCS2_CURRENT_DEMAND;
+    case CCS2_CURRENT_DEMAND: {
+        /* Drive the autonomous DIN session SM (timer/retry/re-send engine, Agent F). The 100 Hz
+         * tick is 10 ms units -> ms = tick*10 (wrap-safe deltas inside din_session). */
+        din_session_step(tick * 10u);
+        const din_session_t *ds = din_session_get();
+        if (ds->session_active) {
+            /* Autonomous path: the session SM is authoritative for the EVSE handshake flags. */
+            sync_evse_from_session(ds);
+            if (ds->fault_flag)                              state = CCS2_FAILED;
+            else if (ds->state == DIN_ST_IDLE)               state = CCS2_STOP;
+            else if (ds->state >= DIN_ST_POWERDELIVERY_STOP) state = CCS2_STOP;
+            else if (ds->state == DIN_ST_CURRENTDEMAND_RES)  state = CCS2_CURRENT_DEMAND;
+            else                                             state = CCS2_SESSION;
+        } else if (state == CCS2_SESSION) {
+            /* Bench path (no autonomous session): the flag setters are authoritative; advance to
+             * CurrentDemand once CableCheck + ChargeParameterDiscovery + precharge are done. */
+            if (evse.cablecheck_fin && evse.chgparam_ok && evse.precharge_flag)
+                state = CCS2_CURRENT_DEMAND;
         }
         break;
-    case CCS2_CURRENT_DEMAND:
-        /* periodic CurrentDemandReq driven by main via ccs2_demand (current_ctrl setpoint). */
-        break;
+    }
     case CCS2_STOP:
     case CCS2_FAILED:
     default:
         break;
     }
+}
+
+/* Gated transport entry: a decoded DIN EXI Res frame (8-byte V2GTP header + leading 0x80 + 7-bit
+ * root event + body) -> the autonomous session RX transition engine. The live UDP/TCP/IPv6+TLS
+ * reassembly that produces these frames is NOT recovered (gated); this is the bench-injection /
+ * future-transport hook. Returns the din_session_rx result (EXI_OK / negative error). */
+int ccs2_rx_exi(const uint8_t *frame, uint16_t len, uint32_t now_ms)
+{
+    if (len <= EXI_V2GTP_HDR_LEN) return EXI_ERR_HEADER;
+    exi_stream_t s;
+    exi_decode_init(&s, frame + EXI_V2GTP_HDR_LEN, len - EXI_V2GTP_HDR_LEN);
+    uint8_t ev;
+    int r = exi_decode_header(&s, &ev);
+    if (r) return r;
+    /* body = remaining stream bytes after the leading 0x80 + 7-bit event (2 bytes consumed). */
+    const uint8_t *body = frame + EXI_V2GTP_HDR_LEN + s.pos;
+    uint16_t body_len = (uint16_t)(len - EXI_V2GTP_HDR_LEN - s.pos);
+    return din_session_rx(ev, body, body_len, now_ms);
 }
 
 void ccs2_rx(const uint8_t *frame, uint16_t len)

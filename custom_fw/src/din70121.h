@@ -39,6 +39,7 @@
 #ifndef DIN70121_H
 #define DIN70121_H
 #include <stdint.h>
+#include "exi.h"
 
 /* CurrentDemandRes EXI field offsets (decoded-msg struct field area). */
 #define DIN_CDR_EXI_PRESENT_V   0x0Eu   /* u16 EVSEPresentVoltage value      */
@@ -112,5 +113,56 @@ void din_cd_req_encode(din_meas_t *m, uint8_t *exi);
 void din70121_init(void);
 const din_meas_t *din70121_meas(void);
 din_meas_t *din70121_meas_mut(void);
+
+/* ---- EXI grammar message codec (Agent E / analyze93; bit-level via exi.c primitives) ----
+ * The stock codec is a generated grammar-table-driven processor (OpenV2G style): root reads a
+ * 7-bit event, tbb-dispatches to 81 productions; each production decodes/encodes its fields with
+ * the shared primitive layer (exi.c). These functions replicate the DIN DC message field lists
+ * recovered byte-exactly (CurrentDemandRes complete; CableCheck/PreCharge/SessionStop confirmed),
+ * operating on the EXI BODY (after the 8-byte V2GTP header + leading 0x80 + 7-bit event, which the
+ * session layer handles via exi_decode_header/exi_encode_header). Root events use the CORRECTED
+ * ground-truth numbering (exi.h EXI_EV_*; E §1 was +2-shifted in the b-thunk region).
+ *
+ * DC_EVSEStatus (0x0806259E): DIN {EVSEIsolationStatus(opt), EVSENotification, EVSEStatusCode}.
+ * The byte movements are confirmed (2-bit + 4-bit enums + u32 + 1-bit gates); the DIN-vs-ISO
+ * layout / exact field-name attribution is [?] (E §5). The replica extracts the isolation status
+ * (load-bearing for the charge_stm engagement guard) + notification + status code. */
+typedef struct {
+    uint8_t  isolation_status;   /* EVSEIsolationStatus: 0 invalid/1 valid/2 warning/3 fault */
+    uint8_t  isolation_present;
+    uint8_t  notification;       /* EVSENotification (2-bit enum)                          */
+    uint8_t  status_code;        /* EVSEStatusCode (4-bit enum)                            */
+    uint32_t notification_max_delay; /* u32 (ISO variant present [?])                     */
+} din_dc_evse_status_t;
+
+/* Decode DC_EVSEStatus from the body stream (advances s). Returns EXI_OK / negative error. */
+int din_dc_evse_status_decode(exi_stream_t *s, din_dc_evse_status_t *out);
+
+/* CurrentDemandRes grammar decoder 0x0806471E (ev0x12, 10 fields): ResponseCode(5-bit),
+ * DC_EVSEStatus, EVSEPresentVoltage PVT, EVSEPresentCurrent PVT, Current/Voltage/PowerLimitAchieved
+ * bools, optional EVSEMaximumVoltage/Current/PowerLimit PVTs. Populates meas (factor = mult+3).
+ * `response_code` returns the 5-bit ResponseCode (0 = OK). The optional max-limit choice chain
+ * (state 0x23 readBits3 / 0x24-0x25 readBits2) follows the recovered wire order [? exact grammar]. */
+int din_cd_res_decode_exi(const uint8_t *body, uint16_t len, din_meas_t *m, uint8_t *response_code);
+
+/* CableCheckRes grammar decoder 0x08066C5C (ev0x05): ResponseCode(5-bit), DC_EVSEStatus,
+ * EVSEProcessingState(1-bit). Returns isolation status via DC_EVSEStatus; processing 0=finished/
+ * 1=ongoing. `response_code`/`processing`/`isolation` outputs. */
+int din_cablecheck_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *response_code,
+                                  uint8_t *processing, din_dc_evse_status_t *status);
+
+/* PreChargeRes grammar decoder 0x08063A8A (ev0x30): ResponseCode(5-bit), DC_EVSEStatus,
+ * EVSEPresentVoltage PVT -> meas.evse_present_voltage (+factor). */
+int din_precharge_res_decode_exi(const uint8_t *body, uint16_t len, din_meas_t *m,
+                                 uint8_t *response_code, din_dc_evse_status_t *status);
+
+/* SessionStopRes grammar decoder 0x08063C04 (ev0x1e): EMPTY message (1-bit choice 0=empty/1=err). */
+int din_sessionstop_res_decode_exi(const uint8_t *body, uint16_t len);
+
+/* CurrentDemandReq grammar encoder (ev for the Req production; D application field map 0x0802C2CE
+ * + exi primitives): framing (leading 0x80 + 7-bit event) + DC_EVStatus + EVTargetCurrent/Voltage
+ * PVTs + EVMaximum* limits. Writes into buf (cap bytes, 8-byte V2GTP header reserved at [0..7]);
+ * returns total encoded length (header + body) or negative EXI error. INERT: image only, send gated. */
+int din_cd_req_encode_exi(din_meas_t *m, uint8_t *buf, uint16_t cap, uint8_t req_ev);
 
 #endif /* DIN70121_H */

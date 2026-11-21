@@ -63,7 +63,7 @@ def main():
     md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
     md.detail = True
 
-    prefixes = ("ccs2_", "slac_", "sdp_", "cp_", "din_", "v2gtp_")
+    prefixes = ("ccs2_", "slac_", "sdp_", "cp_", "din_", "v2gtp_", "exi_")
     ccs2_funcs = {n: a for n, a in syms.items() if n.startswith(prefixes)}
     checks = failures = 0
 
@@ -76,18 +76,26 @@ def main():
 
     check(len(ccs2_funcs) >= 25, "CCS2 functions linked (%d found)" % len(ccs2_funcs))
     # Wired autonomous paths (referenced from main / ccs2_step / ccs2_rx) — MUST be present.
+    # din_session_init/step/start/get are driven by ccs2_init/ccs2_step/main; din_cd_req_encode_exi
+    # is the autonomous CurrentDemandReq grammar encoder reached via the din_session default TX hook.
     for want in ("ccs2_init", "ccs2_step", "ccs2_rx", "ccs2_fill_current_ctrl", "ccs2_demand",
                  "slac_init", "slac_step", "sdp_init", "sdp_step", "cp_step", "cp_plug_in",
-                 "din_scale", "din_cd_req_encode", "din_set_ev_target", "v2gtp_encode"):
+                 "din_scale", "din_cd_req_encode", "din_set_ev_target", "v2gtp_encode",
+                 "din_session_init", "din_session_step", "din_session_start", "din_session_get",
+                 "din_cd_req_encode_exi"):
         check(want in syms, "wired symbol present: " + want)
     # din_pow10 is small + -O2-inlined into din_scale/current_ctrl_converter; its LOGIC is verified
     # below via the pow10 table blob (the analyze89 correction), not a standalone symbol.
-    # Gated bench-injection / live-IP-RX APIs (host-tested in test_din70121/test_sdp/test_ccs2) are
-    # --gc-sections-eliminated from the autonomous image until the live EXI transport calls them.
-    # Report their status informationally (NOT failures): din_cd_res_decode / v2gtp_parse /
-    # ccs2_currentdemand_res / the session-flag setters.
+    # Gated bench-injection / live-IP-RX APIs (host-tested in test_din70121/test_sdp/test_ccs2/
+    # test_exi/test_din_session) are --gc-sections-eliminated from the autonomous image until the
+    # live EXI transport calls them: the session RX engine + EXI decode primitives + grammar Res
+    # decoders + ccs2_rx_exi (no live UDP/TCP/TLS reassembly feeds them yet). Report informationally
+    # (NOT failures). The EXI ENCODE path stays (autonomous CurrentDemandReq via the TX hook).
     gated = ("din_cd_res_decode", "v2gtp_parse", "ccs2_currentdemand_res",
-             "ccs2_cablecheck_done", "ccs2_chgparam_done", "ccs2_precharge_ready")
+             "ccs2_cablecheck_done", "ccs2_chgparam_done", "ccs2_precharge_ready",
+             "din_session_rx", "ccs2_rx_exi", "exi_decode_header", "exi_read_bits",
+             "din_cd_res_decode_exi", "din_cablecheck_res_decode_exi",
+             "din_precharge_res_decode_exi", "din_sessionstop_res_decode_exi")
     present_gated = [g for g in gated if g in syms]
     print("info: gated bench APIs gc-eliminated from autonomous image (host-tested): %s"
           % ", ".join(g for g in gated if g not in syms))
@@ -164,7 +172,8 @@ def main():
                 bl_targets.add(ins.operands[0].imm)
         addr_to_name = {a: n for n, a in syms.items()}
         called = {addr_to_name.get(t, "") for t in bl_targets}
-        for want in ("ccs2_init", "ccs2_step", "ccs2_fill_current_ctrl", "cp_step"):
+        for want in ("ccs2_init", "ccs2_step", "ccs2_fill_current_ctrl", "cp_step",
+                     "din_session_get"):
             check(want in called, "main calls " + want)
         # ccs2_rx is wired via qca7005_set_rx_cb (function pointer), check it is referenced
         check("ccs2_rx_dispatch" in syms or "ccs2_rx" in called, "ccs2 RX dispatcher present")
@@ -174,6 +183,62 @@ def main():
     tab = [1, 10, 100, 1000, 10000, 100000, 1000000]
     blob = b"".join(v.to_bytes(4, "little") for v in tab)
     check(blob in fw, "pow10 converter table {1..1000000} present in image")
+
+    # --- session timer constants compiled into din_session (Agent F ctx init 0x08035198) ---
+    # Collect every constant a function materializes: IMM operands + reconstructed MOVW/MOVT pairs
+    # + dereferenced LDR-literal pool words (T1/T2). -O2 packs the ctx-init timeouts into a .rodata
+    # pool (e.g. 120000=0x1D4C0, 150000=0x249F0 as words; 40000/14000 packed as the two u16 halves
+    # of 0x36B09C40), so the pool words AND their low/high u16 halves are added (encoding-agnostic).
+    def func_imms(name):
+        addr = syms.get(name)
+        if addr is None:
+            return set()
+        size = func_size(name)
+        vals = set()
+        movw = {}
+
+        def add_word(w):
+            vals.add(w & 0xFFFFFFFF)
+            vals.add(w & 0xFFFF)          # packed u16 low half
+            vals.add((w >> 16) & 0xFFFF)  # packed u16 high half
+
+        for ins in md.disasm(fw[off(addr):off(addr) + size], addr):
+            mn = ins.mnemonic.split(".")[0]
+            for op in ins.operands:
+                if op.type == 2:
+                    vals.add(op.imm & 0xFFFFFFFF)
+            if mn in ("movw", "movt") and len(ins.operands) == 2:
+                rt = ins.operands[0].reg
+                imm = ins.operands[1].imm & 0xFFFF
+                if mn == "movw":
+                    movw[rt] = imm
+                    vals.add(imm)
+                elif rt in movw:
+                    vals.add((imm << 16) | movw[rt])
+            h = int.from_bytes(ins.bytes[:2], "little")
+            # LDR-literal T1: (h & 0xF800) == 0x4800
+            if (h & 0xF800) == 0x4800:
+                p = ((ins.address + 4) & ~3) + (h & 0xFF) * 4
+                w = pool_word(p)
+                if w is not None:
+                    add_word(w)
+            # LDR-literal T2 wide: (h & 0xFF7F) == 0xF85F
+            if (h & 0xFF7F) == 0xF85F and len(ins.bytes) >= 4:
+                u = (h >> 7) & 1
+                imm12 = int.from_bytes(ins.bytes[2:4], "little") & 0xFFF
+                p = (ins.address + 4) + (imm12 if u else -imm12)
+                w = pool_word(p)
+                if w is not None:
+                    add_word(w)
+        return vals
+
+    init_imms = func_imms("din_session_init")
+    timers = {4000: "resp-wait 4000ms", 120000: "total 120000ms", 150000: "150000ms",
+              40000: "phase 40000ms", 14000: "phase 14000ms"}
+    for v, label in timers.items():
+        check(v in init_imms, "din_session_init carries timer constant " + label)
+    step_imms = func_imms("din_session_step")
+    check(20 in step_imms, "din_session_step carries retry cap 20 (cmp #0x14)")
 
     print("%d checks, %d failures" % (checks, failures))
     return 1 if failures else 0

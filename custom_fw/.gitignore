@@ -13,3 +13,5 @@ test_cp
 test_sdp
 test_din70121
 test_ccs2
+test_exi
+test_din_session

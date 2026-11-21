@@ -50,6 +50,7 @@
 #include "qca7005.h"
 #include "ccs2.h"
 #include "cp.h"
+#include "din_session.h"
 
 #define IWDG_KR   (*(volatile uint32_t *)0x40003000u)
 #define IWDG_FEED 0x0000AAAAu
@@ -90,6 +91,14 @@ volatile uint32_t ccs2_proto     = 0;  /* selected app protocol (1=DIN, 2=ISO)  
  * but the live TCP/TLS send is gated). Mirrors charge_stm recording stm_action without executing. */
 volatile uint8_t  ccs2_cd_req[108];    /* DIN CurrentDemandReq EXI field image          */
 volatile uint32_t ccs2_cd_req_len = 0; /* encoded length (108 when in CurrentDemand)    */
+
+/* Autonomous DIN EXI session SM results (SWD-readable; INERT — din_session, Agent F / analyze93).
+ * The session sequence/timers/retries run but drive NO power GPIO; the fault code is recorded
+ * (stock fault setter 0x0802C9D0 -> 0x20000774) for the CHAdeMO side to read, not actuated here. */
+volatile uint32_t din_st_state  = 0;   /* DIN session state enum 0..13 (which Res awaited) */
+volatile uint32_t din_st_fault  = 0;   /* posted fault code (0 none / 1 retry / 2 timeout / 16 iso / 40 resp) */
+volatile uint32_t din_st_retry  = 0;   /* resp-wait retry counter (cap 20)                 */
+volatile uint32_t din_st_active = 0;   /* 1 while a session is in progress                 */
 
 static void ccs2_rx_dispatch(const uint8_t *frame, uint16_t len)
 {
@@ -224,6 +233,15 @@ void main(void)
         ccs2_link  = evse->link_up;
         ccs2_secc  = evse->secc_found;
         ccs2_proto = evse->protocol;
+
+        /* Autonomous DIN EXI session SM (din_session, §5.9 / analyze93): publish the state /
+         * fault / retry for SWD bench readout. INERT — the SM records the fault code each path
+         * would post (0x20000774) but drives no power GPIO; the asserted drive stays gated. */
+        const din_session_t *ds = din_session_get();
+        din_st_state  = ds->state;
+        din_st_fault  = ds->fault_code;
+        din_st_retry  = ds->retry;
+        din_st_active = ds->session_active;
 
         next++;                              /* advance one 10 ms tick */
         while ((int32_t)(tick_get() - next) < 0) { }

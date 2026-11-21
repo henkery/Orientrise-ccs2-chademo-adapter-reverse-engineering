@@ -112,3 +112,182 @@ void din70121_init(void)
 
 const din_meas_t *din70121_meas(void) { return &meas; }
 din_meas_t *din70121_meas_mut(void) { return &meas; }
+
+/* ---- EXI grammar message codec (Agent E / analyze93; bit-level via exi.c) ---- */
+
+/* PVT -> meas value + factor (application convention: stored factor = signed mult + 3). */
+static void pvt_to_meas(const exi_pvt_t *p, uint16_t *val, int8_t *factor)
+{
+    *val = p->value;
+    *factor = (int8_t)(p->mult + 3);
+}
+
+/* DC_EVSEStatus 0x0806259E — DIN layout {EVSEIsolationStatus(opt 2-bit), EVSENotification(2-bit),
+ * EVSEStatusCode(4-bit)}. The merged stock codec also carries the ISO variant (u32
+ * NotificationMaxDelay); the DIN-vs-ISO layout / exact gate sequence is [?] (E §5). The replica
+ * uses the DIN schema-informed grammar: 1-bit isolation presence, then the bounded enums. */
+int din_dc_evse_status_decode(exi_stream_t *s, din_dc_evse_status_t *out)
+{
+    uint8_t present;
+    int r = exi_read_bool(s, &present);
+    if (r) return r;
+    out->isolation_present = present;
+    out->isolation_status = 0;
+    if (present) {
+        uint32_t iso;
+        r = exi_read_bits(s, 2, &iso);
+        if (r) return r;
+        out->isolation_status = (uint8_t)iso;
+    }
+    uint32_t notif;
+    r = exi_read_bits(s, 2, &notif);
+    if (r) return r;
+    out->notification = (uint8_t)notif;
+    uint32_t code;
+    r = exi_read_bits(s, 4, &code);
+    if (r) return r;
+    out->status_code = (uint8_t)code;
+    out->notification_max_delay = 0;   /* ISO u32 not present in the DIN layout [?] */
+    return EXI_OK;
+}
+
+/* CurrentDemandRes 0x0806471E (ev0x12) — 10-field wire order (E §3, COMPLETE). Mandatory fields
+ * byte-exact; the optional max-limit choice chain (state 0x23 readBits3 / 0x24-0x25 readBits2) is
+ * modeled here with per-field 1-bit presence [? exact grammar-id transitions not fully recovered]. */
+int din_cd_res_decode_exi(const uint8_t *body, uint16_t len, din_meas_t *m, uint8_t *response_code)
+{
+    exi_stream_t s;
+    exi_decode_init(&s, body, len);
+    uint32_t rc;
+    int r = exi_read_bits(&s, 5, &rc);          /* 1 ResponseCode (5-bit enum) */
+    if (r) return r;
+    *response_code = (uint8_t)rc;
+    din_dc_evse_status_t st;
+    r = din_dc_evse_status_decode(&s, &st);     /* 2 DC_EVSEStatus */
+    if (r) return r;
+    exi_pvt_t p;
+    r = exi_read_pvt(&s, &p);                   /* 3 EVSEPresentVoltage */
+    if (r) return r;
+    pvt_to_meas(&p, &m->evse_present_voltage, &m->evse_present_voltage_f);
+    r = exi_read_pvt(&s, &p);                   /* 4 EVSEPresentCurrent */
+    if (r) return r;
+    pvt_to_meas(&p, &m->evse_present_current, &m->evse_present_current_f);
+    r = exi_read_bool(&s, &m->current_limit_achieved);   /* 5 */
+    if (r) return r;
+    r = exi_read_bool(&s, &m->voltage_limit_achieved);   /* 6 */
+    if (r) return r;
+    r = exi_read_bool(&s, &m->power_limit_achieved);     /* 7 */
+    if (r) return r;
+    uint8_t present;                            /* 8 EVSEMaximumVoltageLimit (opt) [?] */
+    r = exi_read_bool(&s, &present);
+    if (r) return r;
+    if (present) {
+        r = exi_read_pvt(&s, &p);
+        if (r) return r;
+        pvt_to_meas(&p, &m->evse_max_voltage, &m->evse_max_voltage_f);
+    }
+    r = exi_read_bool(&s, &present);            /* 9 EVSEMaximumCurrentLimit (opt) [?] */
+    if (r) return r;
+    if (present) {
+        r = exi_read_pvt(&s, &p);
+        if (r) return r;
+        pvt_to_meas(&p, &m->evse_max_current, &m->evse_max_current_f);
+    }
+    r = exi_read_bool(&s, &present);            /* 10 EVSEMaximumPowerLimit (opt) [?] */
+    if (r) return r;
+    if (present) {
+        exi_pvt_t pw;
+        r = exi_read_pvt(&s, &pw);
+        if (r) return r;
+        (void)pw;   /* power limit not stored in din_meas_t (no field); consumed for wire alignment */
+    }
+    return EXI_OK;
+}
+
+/* CableCheckRes 0x08066C5C (ev0x05): ResponseCode(5) + DC_EVSEStatus + EVSEProcessingState(1). */
+int din_cablecheck_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *response_code,
+                                  uint8_t *processing, din_dc_evse_status_t *status)
+{
+    exi_stream_t s;
+    exi_decode_init(&s, body, len);
+    uint32_t rc;
+    int r = exi_read_bits(&s, 5, &rc);
+    if (r) return r;
+    *response_code = (uint8_t)rc;
+    r = din_dc_evse_status_decode(&s, status);
+    if (r) return r;
+    uint32_t proc;
+    r = exi_read_bits(&s, 1, &proc);            /* EVSEProcessingState: 0 finished / 1 ongoing */
+    if (r) return r;
+    *processing = (uint8_t)proc;
+    return EXI_OK;
+}
+
+/* PreChargeRes 0x08063A8A (ev0x30): ResponseCode(5) + DC_EVSEStatus + EVSEPresentVoltage PVT. */
+int din_precharge_res_decode_exi(const uint8_t *body, uint16_t len, din_meas_t *m,
+                                 uint8_t *response_code, din_dc_evse_status_t *status)
+{
+    exi_stream_t s;
+    exi_decode_init(&s, body, len);
+    uint32_t rc;
+    int r = exi_read_bits(&s, 5, &rc);
+    if (r) return r;
+    *response_code = (uint8_t)rc;
+    r = din_dc_evse_status_decode(&s, status);
+    if (r) return r;
+    exi_pvt_t p;
+    r = exi_read_pvt(&s, &p);
+    if (r) return r;
+    pvt_to_meas(&p, &m->evse_present_voltage, &m->evse_present_voltage_f);
+    return EXI_OK;
+}
+
+/* SessionStopRes 0x08063C04 (ev0x1e): EMPTY (1-bit choice 0=empty/valid, 1=err -110). */
+int din_sessionstop_res_decode_exi(const uint8_t *body, uint16_t len)
+{
+    exi_stream_t s;
+    exi_decode_init(&s, body, len);
+    uint32_t choice;
+    int r = exi_read_bits(&s, 1, &choice);
+    if (r) return r;
+    return choice ? EXI_ERR_EMPTY : EXI_OK;
+}
+
+/* CurrentDemandReq grammar encoder (D application field map 0x0802C2CE + exi primitives). Framing
+ * (8-byte V2GTP reserved + leading 0x80 + 7-bit req_ev) then DC_EVStatus {EVReady, EVErrorCode} +
+ * EVTargetCurrent PVT + EVTargetVoltage PVT + ChargingComplete bool. The full DIN Req optional
+ * field set (EVMaximum* limits, BulkChargingComplete, RemainingTime*) is [?] (E §3 partial); the
+ * recovered actuation fields (EVTargetCurrent/Voltage, DC_EVStatus) are emitted byte-faithfully.
+ * INERT: produces the EXI image; the live TCP/TLS send is gated. Returns total length or error. */
+int din_cd_req_encode_exi(din_meas_t *m, uint8_t *buf, uint16_t cap, uint8_t req_ev)
+{
+    exi_stream_t s;
+    exi_encode_init(&s, buf, cap, EXI_V2GTP_HDR_LEN);
+    int r = exi_encode_header(&s, req_ev);
+    if (r < 0) return r;
+    /* DC_EVStatus: EVReady (bool), EVErrorCode (2-bit enum: NO_ERROR=0). */
+    r = exi_write_bool(&s, m->ev_ready);
+    if (r < 0) return r;
+    r = exi_write_bits(&s, 2, m->ev_error_code & 3u);
+    if (r < 0) return r;
+    /* EVTargetCurrent PVT (meas factor -> signed mult = factor-3). */
+    exi_pvt_t p;
+    p.mult = (int8_t)(m->ev_target_current_f - 3);
+    p.unit = 1;            /* DIN unit enum: A (ampere) [?] */
+    p.unit_present = 1;
+    p.value = m->ev_target_current;
+    r = exi_write_pvt(&s, &p);
+    if (r < 0) return r;
+    /* EVTargetVoltage PVT. */
+    p.mult = (int8_t)(m->ev_target_voltage_f - 3);
+    p.unit = 3;            /* DIN unit enum: V (volt) [?] */
+    p.unit_present = 1;
+    p.value = m->ev_target_voltage;
+    r = exi_write_pvt(&s, &p);
+    if (r < 0) return r;
+    /* ChargingComplete (bool) — terminates the demand loop when set. */
+    r = exi_write_bool(&s, 0);
+    if (r < 0) return r;
+    m->first_demand_sent = 1u;
+    return (int)exi_encode_finish(&s);
+}

@@ -22,12 +22,17 @@
  *   CurrentDemandReq actuation: current_ctrl setpoint (ctx+0x16/+0x1c) -> din_set_ev_target
  *                               (meas+0x3CE0/2) -> din_cd_req_encode -> EXI TX (gated transport)
  *
- * GATED / unresolved (Agent D §7): the full DIN EXI bit-level grammar, the distributed session
- * state machine timers/retries + FAILED->shutdown branch, the live UDP/TCP/IPv6 + mbedTLS transport,
- * and the exact EVSEIsolationStatus->level 3/4 mapping are NOT recovered. This controller wires the
- * CONFIRMED measurement + actuation field maps and exposes explicit session-flag setters (driven by
- * decoded DIN responses / bench injection); the autonomous EXI session + network transport stay
- * GATED until those layers are recovered/bench-validated. INERT: communication only, no power GPIO.
+ * RECOVERED + BUILT (Agent E/F, analyze93): the DIN EXI bit-level grammar codec (exi.c primitives +
+ * din70121 grammar messages) and the distributed session state machine (din_session.c: state enum
+ * 0..13, timers 4000/120000/150000/40000/14000 ms, retry cap 20, CD modulo cadence, FAILED->shutdown
+ * + fault post). ccs2_step drives din_session_step and sources the EVSE handshake flags from it while
+ * a session is active; decoded Res enter via ccs2_rx_exi. INERT: communication only, no power GPIO.
+ *
+ * STILL GATED / unresolved: the live UDP/TCP/IPv6 + mbedTLS transport (network reassembly that feeds
+ * ccs2_rx_exi), the exact Req-side EXI grammars / root-event numbering [?], the DIN-vs-ISO
+ * DC_EVSEStatus layout [?], and the exact EVSEIsolationStatus->level 3/4 mapping. The bench
+ * flag-setters remain an alternate injection path when no autonomous session is active. The asserted
+ * power-stage drive stays the last gated layer (charge_stm engagement).
  */
 #ifndef CCS2_H
 #define CCS2_H
@@ -64,6 +69,11 @@ void ccs2_init(void);
 void ccs2_step(uint32_t tick);
 /* QCA7005 RX callback: dispatch by EtherType (MME 0x88E1 -> SLAC; IP -> SDP/DIN when wired). */
 void ccs2_rx(const uint8_t *frame, uint16_t len);
+/* Gated transport entry: a decoded DIN EXI Res frame (8-byte V2GTP + leading 0x80 + 7-bit event +
+ * body) -> the autonomous session RX engine (din_session_rx). The live UDP/TCP/IPv6+TLS reassembly
+ * that produces these frames is gated; this is the bench-injection / future-transport hook.
+ * `now_ms` is the millisecond timestamp. Returns EXI_OK / negative EXI error. */
+int ccs2_rx_exi(const uint8_t *frame, uint16_t len, uint32_t now_ms);
 const ccs2_evse_t *ccs2_evse(void);
 uint8_t ccs2_state(void);
 

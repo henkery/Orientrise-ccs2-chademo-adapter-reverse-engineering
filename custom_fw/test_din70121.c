@@ -1,8 +1,8 @@
 /* test_din70121.c — host unit test for the DIN70121 measurement + actuation field maps and the
  * corrected power-of-10 PhysicalValueType scaling (custom_fw/src/din70121.c, REPORT §5.9).
- * Build + run:
+ * Build + run (links exi.c — the grammar message codec references the EXI primitives):
  *   nix-shell -p gcc --run 'gcc -O2 -Wall -Wextra -Isrc -o test_din70121 \
- *       test_din70121.c src/din70121.c && ./test_din70121'
+ *       test_din70121.c src/din70121.c src/exi.c && ./test_din70121'
  */
 #include <stdio.h>
 #include <stdint.h>

@@ -1,9 +1,10 @@
 /* test_ccs2.c — host unit test for the CCS2 EVCC controller glue (custom_fw/src/ccs2.c, §5.9).
  * Tests the confirmed integration: current_ctrl EVSE-measurement fill, CurrentDemand actuation,
  * DIN session flag setters -> charge_stm EVSE outputs, CurrentDemandRes decode. QCA7005 stubbed.
- * Build + run:
+ * Build + run (links exi.c + din_session.c — the autonomous session SM wired into ccs2_step):
  *   nix-shell -p gcc --run 'gcc -O2 -Wall -Wextra -Isrc -o test_ccs2 test_ccs2.c \
- *       src/ccs2.c src/slac.c src/sdp.c src/cp.c src/din70121.c src/v2gtp.c && ./test_ccs2'
+ *       src/ccs2.c src/slac.c src/sdp.c src/cp.c src/din70121.c src/exi.c src/din_session.c \
+ *       src/v2gtp.c && ./test_ccs2'
  */
 #include <stdio.h>
 #include <stdint.h>
