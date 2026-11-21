@@ -38,9 +38,10 @@ static void reset_all(void)
     memset(&in, 0, sizeof in);
     g_bus_fresh = 1;
     t = 0;
-    veh.target_voltage = 400;      /* ress_vol = 400 V */
+    veh.target_voltage = 400;      /* H102 full-charge target (NOT the engagement reference) */
     veh.current_request = 50;      /* >0 A */
-    in.outvol = 400;               /* EVSE output matched to battery */
+    in.evse_present_voltage = 400; /* ress_vol = EVSE PresentVoltage = 400 V (engagement reference) */
+    in.outvol = 400;               /* EVSE output matched to the present voltage */
 }
 
 /* walk IDLE -> 13 -> 14 -> 15 -> 16 -> 17 using the handshake inputs */
@@ -180,10 +181,52 @@ static void test_no_engage_on_mismatch(void)
     reset_all();
     walk_to_volt_match();
     in.phase_status = 4; in.precharge_flag = 1;
-    in.outvol = 357;                 /* ~43 V below the 400 V battery — outside [390,405] */
+    in.outvol = 357;                 /* ~43 V below the 400 V present voltage — outside [390,405] */
     for (int i = 0; i < 430; i++) step();
     CHECK(charge_stm_state() != STM_PRECHG_RELAY, "mismatch: never engages at outvol=357/ress=400");
     CHECK(charge_stm_state() == STM_WAIT_ERROR, "mismatch: stalls then wait-timeout -> 450");
+}
+
+/* ZE1 regression — the engagement reference is the EVSE PresentVoltage (≈ battery during precharge),
+ * NOT the H102 TargetBatteryVoltage. Captured ZE1 session: target 410 V, EVSE present/battery ~364 V.
+ * C013 (ress_vol = present voltage) engages when outvol ramps to ~364; the old replica reference
+ * (ress_vol = target 410) puts the window at [400,415], which 364 V can never satisfy -> state-17
+ * stalls to timeout -> 450 (the C009 abort). Provenance: C013 0x0804AADA-0x0804AAEE (sl =
+ * scale(meas+0x3D18/1A)) + dual log 0x0804AB40 (ress_vol vs TargetBatteryVoltage printed separately). */
+static void test_ze1_present_voltage_reference(void)
+{
+    /* guard math: at the precharge battery voltage 364 V, the present-voltage reference engages
+     * but the target-voltage reference (410 V) cannot — this is the abort root cause. */
+    CHECK(charge_stm_engage_ok(364, 364, 250, 4, 1) == 1, "ze1: outvol=364 vs present=364 engages");
+    CHECK(charge_stm_engage_ok(364, 410, 250, 4, 1) == 0, "ze1: outvol=364 vs target=410 NEVER engages");
+
+    /* sequence: target 410, EVSE present 364; outvol ramps 346 -> 364 and engages at the battery
+     * voltage even though it is far below the 410 V target. */
+    reset_all();
+    veh.target_voltage = 410;        /* H102 full-charge target (must NOT be the reference) */
+    in.evse_present_voltage = 364;   /* EVSE PresentVoltage ≈ ZE1 battery during precharge */
+    walk_to_volt_match();
+    in.phase_status = 4; in.precharge_flag = 1;
+    in.outvol = 346;                 /* below the [354,369] window — EVSE still ramping */
+    for (int i = 0; i < 200; i++) step();
+    CHECK(charge_stm_state() == STM_VOLT_MATCH, "ze1: holds 17 while outvol=346 below window");
+    CHECK(charge_stm_engage_result() == 0, "ze1: no engagement at 346 V");
+    in.outvol = 364;                 /* EVSE reached the battery/present voltage */
+    for (int i = 0; i < 49; i++) step();
+    CHECK(charge_stm_state() == STM_VOLT_MATCH, "ze1: still 17 before 250 total dwell");
+    step();                          /* 250th dwell tick */
+    CHECK(charge_stm_state() == STM_PRECHG_RELAY, "ze1: engages at outvol=364 (present), not 410 (target)");
+    CHECK(charge_stm_engage_result() == 1, "ze1: guard result 1 at the present voltage");
+
+    /* with the WRONG target reference the same ramp would stall to timeout (C009 abort). */
+    reset_all();
+    veh.target_voltage = 410;
+    in.evse_present_voltage = 410;   /* simulate the old bug: reference = target */
+    walk_to_volt_match();
+    in.phase_status = 4; in.precharge_flag = 1;
+    in.outvol = 364;                 /* EVSE at battery voltage, below the [400,415] target window */
+    for (int i = 0; i < 430; i++) step();
+    CHECK(charge_stm_state() == STM_WAIT_ERROR, "ze1: target-reference bug stalls 364 V -> timeout 450");
 }
 
 int main(void)
@@ -193,6 +236,7 @@ int main(void)
     test_sequence_engage();
     test_interlocks();
     test_no_engage_on_mismatch();
+    test_ze1_present_voltage_reference();
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

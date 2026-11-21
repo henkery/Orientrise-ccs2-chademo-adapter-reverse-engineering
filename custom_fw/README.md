@@ -56,14 +56,20 @@ This foundation is **safe-by-construction** (contactors open, no HV):
 - **Inert charge state machine**: `charge_stm_step` runs the C013 safe-charge sequence + the **byte-exact
   state-17 engagement guard** + interlocks + CAN watchdogs (§5.17, `analyze80`) as a **shadow controller** —
   it computes the state and *records* the power action each state would drive (`STM_ACT_*`) but **executes
-  no GPIO**. The engagement guard only passes when `flag==1 && isolation==4 && outvol ∈ [ress_vol−10,
-  ress_vol+5] && dwell≥250`; the EVSE-side handshake inputs (isolation/precharge_flag/plug_in/…) are now
+  no GPIO**. The engagement guard only passes when `flag==1 && phase_status==4 && outvol ∈ [ress_vol−10,
+  ress_vol+5] && dwell≥250`. **`ress_vol` is the EVSE PresentVoltage** (`din_scale(meas+0x3D18/1A)`,
+  `ccs2_evse()->evse_present_voltage`), **NOT the H102 TargetBatteryVoltage** — proven byte-exact from C013
+  `0x0804AADA–0x0804AAEE` (`udiv sl = scale(EVSEPresentVoltage)`) and the dual log `0x0804AB40` which prints
+  `ress_vol` and `TargetBatteryVoltage` as separate values. During precharge the EVSE reports the *battery*
+  voltage here (~364 V on a ZE1), not the full-charge target (410 V); using the target as the reference puts
+  the window at [400,415], which the precharge output can never reach → state-17 stalls to timeout → 450
+  (the C009 abort). The EVSE-side handshake inputs (phase_status/precharge_flag/plug_in/…) are
   **supplied by the CCS2 EVCC controller** (`ccs2_evse()`, §5.9) — `plug_in` now reflects the measured PP
-  voltage (the real CP/PP front-end, `analyze95`), but the DIN-derived handshake inputs (isolation/precharge/
+  voltage (the real CP/PP front-end, `analyze95`), but the DIN-derived handshake inputs (precharge/
   cablecheck/…) hold 0 until a live EXI session, so the machine holds in the early states and **cannot
   engage**. Interlocks (whole-bus 1525-tick / per-message 100-tick CAN watchdogs, H102 fault,
   emergency, bms/hw fault, CurrentDemand isolation==3) force a safe stop state. Host-unit-tested
-  (`test_charge_stm.c`, 47 checks). State/interlock/engage/action are SWD-readable (`stm_*`).
+  (`test_charge_stm.c`, 55 checks incl. the ZE1 present-voltage-reference regression). State/interlock/engage/action are SWD-readable (`stm_*`).
 - **Inert H102 current control**: `current_ctrl_step` runs the C013 state-30 CurrentDemand output-current
   law (§5.21 E, `analyze89`; converter corrected by `analyze92`) as a **shadow setpoint** — `setpoint =
   min(H102.ChargingCurrentRequest, EVSE available)` capped by the EVSE max-current, `target_v =
@@ -112,7 +118,7 @@ This foundation is **safe-by-construction** (contactors open, no HV):
   transport is ESTABLISHED (gated TCP connect/TLS handshake), so nothing is commanded in normal operation.
   Host-unit-tested (`test_{v2gtp,slac,cp,cp_capture,cp_adc,sdp,din70121,ccs2,exi,din_session,v2g_net,ca_store}.c`,
   14/54/32/42/42/31/74/23/85/42/90/45 checks; `test_tls_mbedtls` 21 validates the real-library TLS handshake;
-  full host suite 714). `ccs2_st`/`ccs2_link`/`ccs2_secc`/`ccs2_proto` +
+  full host suite 722). `ccs2_st`/`ccs2_link`/`ccs2_secc`/`ccs2_proto` +
   `din_st_state`/`din_st_fault`/`din_st_retry`/`din_st_active` + `v2g_net_st`/`v2g_net_mode`/`v2g_net_rx`/
   `v2g_net_tx` are SWD-readable.
 - **IWDG**: the loop feeds the watchdog key (`0x40003000`) — harmless whether or not the IWDG is
@@ -216,7 +222,7 @@ then `#define MBEDTLS_SSL_SRV_C` for the harness server — the firmware config 
 | `src/adc.c/.h` | HV ADC front-end: ADC1 8×ch8 (PB0) + ADC2 8×ch9 (PB1) regular-simultaneous (`CCR=0x2A006`), DMA2 stream0 circular (`CR=0x5518`), TIM8 125 kHz trigger; `DMA2_Stream0_IRQHandler` (IRQ56) accumulates the PB0−PB1 differential over 3125 events → `live_raw` (§5.21) |
 | `src/hv.c/.h` | `hv_init` (spi4+nv_cal+adc); `get_hv` two-point interpolation `eng_lo+(live_raw−raw_lo)(eng_hi−eng_lo)/(raw_hi−raw_lo)`; `outvol=get_hv()/10` (§5.21) |
 | `src/charge_stm.c/.h` | **inert** CHAdeMO charge state machine (shadow): safe-charge sequence 13→…→30 + stop/shutdown skeleton, byte-exact state-17 engagement guard (`charge_stm_engage_ok`), interlocks + CAN watchdogs; records `STM_ACT_*` but drives no GPIO; EVSE-side inputs from `ccs2_evse()` (§5.17, `analyze80`) |
-| `test_charge_stm.c` | host unit test (gcc, no hardware): engagement-guard window/thresholds + unsigned wrap, sequence walk/stall/engagement, interlocks, C009-mismatch never-engages — 47 checks |
+| `test_charge_stm.c` | host unit test (gcc, no hardware): engagement-guard window/thresholds + unsigned wrap, sequence walk/stall/engagement, interlocks, C009-mismatch never-engages, ZE1 present-voltage-reference regression (ress_vol = EVSE PresentVoltage, not H102 target) — 55 checks |
 | `src/current_ctrl.c/.h` | **inert** H102 output-current control law (shadow setpoint): state-30 `setpoint=min(request,EVSE avail)` capped by EVSE max, `target_v=min(target,limit)`, byte-exact `/1000` scale + converter `0x0804E786`=pow10 TABLE[code] (corrects analyze89; delegates to `din_pow10`/`din_scale`), zero-skip keep-previous; drives no power stage; EVSE measurements from `ccs2_fill_current_ctrl()` (§5.21 E, `analyze89`/`analyze92`) |
 | `test_current_ctrl.c` | host unit test (gcc, no hardware): pow10 converter/scale, min/cap law, target-voltage limit, zero-skip, EVSE-stub safety (setpoint held 0) — 46 checks |
 | `src/qca7005.c/.h` | QCA7005 PLC SPI1 host driver + MME/Ethernet transport: `CR1=0x0357` (Mode 3/master//8/8bit/MSB/SSM), CS=PA4, reset=PC5, IRQ=PC4 polled; reg read `0xC000\|addr` / write `0x4000\|addr`; reg-init (sig `0xAA55` + `0x1200=0xC5B`/`0xC00=0x447`/`0xD00=0x41`); `0xAA`/`0x55`-framed buffer TX/RX; MAC-read MME `0xA000`/`0xA001`; 4096 B RX ring + per-frame callback; communication only, no power GPIO (§5.9, `analyze91`) |
@@ -244,7 +250,7 @@ then `#define MBEDTLS_SSL_SRV_C` for the harness server — the firmware config 
 | `test_tls_mbedtls.c` + `test_mbedtls_config.h` | host integration test (gcc, no hardware; **real** mbedTLS client/server memory-bio handshake): negotiates 0xC023, VERIFY_REQUIRED enforced (empty-CA→−0x2700/0x08), 0xC025 alt, encrypted app-data round-trip — 21 checks; `test_mbedtls_config.h` = host-only wrapper (`#include "mbedtls_config.h"` + `MBEDTLS_SSL_SRV_C` for the harness server; firmware config stays client-only) |
 | `src/ca_store.c/.h` | **PnC CA cert store** (`analyze96`, communication only): ext-SPI master hdr@`0x1F8000` (magic `0xCEA155E1`/version1/size/byte-sum) validate + data@`0x1F8010` read via `spi4_read` → compact NULL-term Root(0x8101) ptr-array of {der_len,DER} entry+4 pointers (808 B entries, der_len≤800); `ca_store_root_count` feeds the SDP No-TLS gate; ext-SPI→RAM directly (no internal A/B management), no power GPIO (§5.9) |
 | `test_ca_store.c` | host unit test (gcc, no hardware; `spi4_read` stubbed, RAM flash image): header validate, byte-sum, entry/contract validators, compact ptr-array populate (slots 0/2/4→3 roots, NULL-term, {len,DER} deref), `ca_store_init` (hdr+cksum+populate, root_count gate, bad-cksum/magic/version rejected) — 45 checks |
-| `test_v2gtp.c` / `test_slac.c` / `test_cp.c` / `test_sdp.c` / `test_din70121.c` / `test_ccs2.c` / `test_exi.c` / `test_din_session.c` | host unit tests (gcc, no hardware; QCA7005 stubbed where needed): V2GTP framing 14, SLAC sequence walk 54, CP/PP scaling/state/plug 32, SDP security/req/res/protocol 31, DIN pow10/CD-res/CD-req/DC_EVSEStatus-grammar + B2 DIN-document codec round-trips 74, CCS2 integration 23, EXI primitives/PVT/framing + DIN-doc framing 85, session sequence/timers/retry/cadence/faults 42 checks (full host suite **714** with `test_v2g_net` 90 + `test_ca_store` 45 + `test_cp_capture` 42 + `test_cp_adc` 42 + `test_charge_stm` 47 + `test_current_ctrl` 46 + `test_qca7005` 26 + `test_tls_mbedtls` 21) |
+| `test_v2gtp.c` / `test_slac.c` / `test_cp.c` / `test_sdp.c` / `test_din70121.c` / `test_ccs2.c` / `test_exi.c` / `test_din_session.c` | host unit tests (gcc, no hardware; QCA7005 stubbed where needed): V2GTP framing 14, SLAC sequence walk 54, CP/PP scaling/state/plug 32, SDP security/req/res/protocol 31, DIN pow10/CD-res/CD-req/DC_EVSEStatus-grammar + B2 DIN-document codec round-trips 74, CCS2 integration 23, EXI primitives/PVT/framing + DIN-doc framing 85, session sequence/timers/retry/cadence/faults 42 checks (full host suite **722** with `test_v2g_net` 90 + `test_ca_store` 45 + `test_cp_capture` 42 + `test_cp_adc` 42 + `test_charge_stm` 55 + `test_current_ctrl` 46 + `test_qca7005` 26 + `test_tls_mbedtls` 21) |
 | `main.c` | rcc→gpio_safe→hv→ca_store_init→cp_capture_init→cp_adc_init→can→chademo→charge_stm→current_ctrl→tick→`cpsie i`→qca7005_init→hw_rng_init→`v2g_stack_set_rng(hw_rng_f_rng)`→ccs2_init→`v2g_net_set_local_mac` [EUI-64 from PIB MAC], then 100 Hz loop (feed IWDG + `heartbeat` + publish `hv_*` + RX parse + cp_step [real CP/PP front-end: cp_capture duty/period + cp_adc PP/CPD raw + PD11/D_LINK; publish `cp_cap_*`/`cp_plug`/`cp_state`/`cp_pp_mv`/`cp_cpd_mv`/`cp_bat_mv`/`cp_pp_raw`/`cp_cpd_raw`/`cp_d_link`/`cp_pd11`] + ccs2_step [drives din_session_step + v2g_net_step] + `charge_stm_step` with EVSE inputs from `ccs2_evse()` [publish `stm_*`] + `current_ctrl_step` in state-30 from `ccs2_fill_current_ctrl()` [publish `cc_*`] + `ccs2_demand` inert CD-req image + `v2g_net_tcp_send` [inert, only when ESTABLISHED; publish `ccs2_cd_req*`] + periodic TX + can_service + `qca7005_service`→ccs2_rx [publish `ccs2_*`] + `din_session_get` [publish `din_st_*`] + `v2g_net_get` [publish `v2g_net_st/mode/rx/tx`] + `v2g_stack_poll` [lwIP nd6_tmr + TCP timers driven inside v2g_net_step] + `ca_store_get/root_count` [publish `ca_root_count/ca_store_present`]); no asserted power drive |
 | `build.sh` | builds via `nix-shell -p gcc-arm-embedded python3` → `app.elf`/`app.bin`, verifies vectors, pads to sector 5 |
 | `verify_pad.py` | checks `vector[0]==0x20030000`, `vector[1]` is an in-app Thumb address; pads `app.bin` → `app_padded.bin` (128 KB, `0xFF` tail) |
@@ -316,7 +322,7 @@ gcc -O2 -Wall -Wextra -Isrc -o test_ca_store  test_ca_store.c  src/ca_store.c   
 ```
 
 Expected: `14 / 54 / 32 / 42 / 42 / 31 / 74 / 85 / 42 / 23 / 90 / 45 checks, 0 failures` respectively (this
-block **574**; the full host suite is **714** with `test_charge_stm` 47 + `test_current_ctrl` 46 +
+block **574**; the full host suite is **722** with `test_charge_stm` 55 + `test_current_ctrl` 46 +
 `test_qca7005` 26 + `test_tls_mbedtls` 21).
 `test_slac.c` and `test_ccs2.c` provide their own `qca7005_frame_send`/`qca7005_mac` stubs (do **not** link
 `src/qca7005.c` into those — it collides with the stubs); `test_ccs2.c` also stubs `tick_get`. `test_din70121.c`/

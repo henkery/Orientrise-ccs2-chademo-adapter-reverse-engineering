@@ -8,8 +8,10 @@
  * de-asserted level (gpio_safe_init), so contactors remain open and no HV can appear.
  *
  * Stock state numbers are kept (p->state halfword @+0x02; transitions `strh rX,[p,#2]`). The
- * state-17 engagement guard is byte-exact (0x0804AF08–0x0804AF30): flag==1 && isolation==4 &&
- * outvol ∈ [ress_vol−10, ress_vol+5] (unsigned) && engage counter >= 250. EVSE-side handshake
+ * state-17 engagement guard is byte-exact (0x0804AF08–0x0804AF30): flag==1 && phase_status==4 &&
+ * outvol ∈ [ress_vol−10, ress_vol+5] (unsigned) && engage counter >= 250. ress_vol is the EVSE
+ * PresentVoltage (meas+0x3D18/1A scaled, 0x0804AADA-0x0804AAEE), NOT the H102 TargetBatteryVoltage
+ * (p+0x1da) — the dual log 0x0804AB40 prints them as separate values. EVSE-side handshake
  * inputs (isolation / precharge_flag / plug_in / cablecheck_fin / chgparam_ok / ev_contactor /
  * precharge_relay) come from the CCS2 PLC/DIN subsystem that is NOT built yet — main feeds safe
  * stubs (0) so the machine holds in the early/wait states. The guard itself is a pure function and
@@ -80,6 +82,13 @@
  * request fields (ress_vol/current_request/faults) + CAN freshness are read from chademo_vehicle_t. */
 typedef struct {
     uint16_t outvol;          /* EVSE output voltage V = get_hv()/10 (measurement layer) */
+    uint16_t evse_present_voltage; /* EVSE PresentVoltage V = din_scale(meas+0x3D18,+0x3D1A) — the
+                                    * state-17 engagement reference (ress_vol). NOT the H102 target:
+                                    * C013 0x0804AADA-0x0804AAEE computes sl=scale(EVSEPresentVoltage)
+                                    * and the dual log 0x0804AB40 prints ress_vol(sl) and
+                                    * TargetBatteryVoltage(p+0x1da) as separate values. During
+                                    * precharge the EVSE reports the battery voltage here (~364 V on
+                                    * a ZE1), not the full-charge target (410 V). */
     uint16_t phase_status;    /* EVSE charge-phase meas+0x3D1E (engage==4) — analyze103 */
     uint16_t chademo_isolation_level; /* CHAdeMO hw isolation level (CurrentDemand==3) */
     uint8_t  precharge_flag;  /* EVSE precharge-ready flag meas+0x23F (engage==1) */
@@ -96,8 +105,9 @@ typedef struct {
 } charge_stm_inputs_t;
 
 void charge_stm_init(void);
-/* Advance one 100 Hz tick. `veh` supplies ress_vol/target_voltage, current_request, fault bytes and
- * the CAN RX timestamps used by the watchdogs. INERT: computes state/guards/interlocks only. */
+/* Advance one 100 Hz tick. `in->evse_present_voltage` supplies the state-17 engagement reference
+ * (ress_vol = EVSE PresentVoltage); `veh` supplies current_request, fault bytes and the CAN RX
+ * timestamps used by the watchdogs. INERT: computes state/guards/interlocks only. */
 void charge_stm_step(uint32_t tick, const charge_stm_inputs_t *in, const chademo_vehicle_t *veh);
 uint16_t charge_stm_state(void);
 uint8_t  charge_stm_interlock(void);   /* active interlock bitmask (STM_IL_*) */

@@ -108,7 +108,14 @@ void charge_stm_step(uint32_t tick, const charge_stm_inputs_t *in, const chademo
      * recorded stop reason (e.g. the one-shot phase timeout) for readout — do not overwrite it. */
     if (is_active(stm.state)) stm.interlock = il;
 
-    uint16_t ress_vol = veh->target_voltage;   /* car-side battery voltage (H102 byte1-2) */
+    /* Engagement reference = EVSE PresentVoltage (meas+0x3D18/1A scaled), NOT the H102 target.
+     * C013 0x0804AADA-0x0804AAEE: ldrb factor@[sp+0x24]=meas+0x3D1A -> sxtb -> converter 0x0804E786
+     * (pow10) -> ldrh raw@[sp+0x1c]=meas+0x3D18 -> muls -> udiv sl,#1000 = din_scale(presentV). The
+     * guard 0x0804AF1E/24 compares outvol(p+0x16) against sl. The dual log 0x0804AB40 (fmt
+     * 0x080AB80C) prints ress_vol=sl AND TargetBatteryVoltage=p[+0x1da] separately — proving they
+     * differ. During precharge the EVSE reports the battery voltage (~364 V ZE1), not the 410 V
+     * full-charge target; using the target as the reference stalls state 17 to timeout (C009 abort). */
+    uint16_t ress_vol = in->evse_present_voltage;
 
     switch (stm.state) {
     case STM_IDLE:
@@ -144,7 +151,8 @@ void charge_stm_step(uint32_t tick, const charge_stm_inputs_t *in, const chademo
         }
         break;
 
-    case STM_VOLT_MATCH: { /* 17: THE engagement guard — C013 stalls until EVSE reaches target */
+    case STM_VOLT_MATCH: { /* 17: THE engagement guard — C013 stalls until outvol matches the EVSE
+                            * PresentVoltage (ress_vol ≈ battery during precharge), NOT the target */
         stm.engage_cnt++;              /* p[+0x0A] dwell counter */
         stm.wait_cnt++;                /* p[+0x14] wait counter */
         stm.engage_ok = (uint8_t)charge_stm_engage_ok(in->outvol, ress_vol, stm.engage_cnt,
@@ -166,7 +174,10 @@ void charge_stm_step(uint32_t tick, const charge_stm_inputs_t *in, const chademo
         }
         break;
 
-    case STM_WAIT_TARGET:  /* 19: close inner relay; wait outvol reaches TargetBatteryVoltage */
+    case STM_WAIT_TARGET:  /* 19: close inner relay. C013 0x08044608 gates on relay feedback + a
+                            * dwell counter (sl is a timeout there; TargetBatteryVoltage p+0x1da is
+                            * only logged). Replica simplification: advance once the relay is closed
+                            * and outvol has reached the engagement reference (EVSE PresentVoltage). */
         if (in->precharge_relay && in->outvol >= ress_vol)
             goto_state(STM_CD_PREP, tick, STM_ACT_CHARGE);
         else if (stm.phase_cnt > STM_D2_TOUT) {

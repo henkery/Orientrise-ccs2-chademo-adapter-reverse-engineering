@@ -66,6 +66,9 @@ typedef struct {
     uint16_t phase_status;     /* EVSE charge-phase meas+0x3D1E (engage ==4)  */
     uint16_t chademo_isolation_level; /* CHAdeMO hw isolation level (CD ==3)  */
     uint16_t din_isolation;    /* DIN wire EVSEIsolationStatus 0..3 (session) */
+    uint16_t evse_present_voltage; /* EVSE PresentVoltage V = din_scale(meas+0x3D18/1A) — the
+                                    * charge_stm state-17 engagement reference (ress_vol), NOT the
+                                    * H102 target (C013 0x0804AADA-0x0804AAEE / dual log 0x0804AB40) */
     uint8_t  secc_found;       /* SDP resolved SECC address+port              */
     uint8_t  protocol;         /* selected app protocol (1=DIN, 2=ISO)        */
 } ccs2_evse_t;

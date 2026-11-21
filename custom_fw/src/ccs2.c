@@ -67,6 +67,10 @@ void ccs2_step(uint32_t tick)
 {
     evse.plug_in = cp_plug_in();
     evse.link_up = slac_link_up();
+    /* Engagement reference for charge_stm state 17 = EVSE PresentVoltage (meas+0x3D18/1A scaled),
+     * populated by PreChargeRes/CurrentDemandRes/WeldingRes decoders. NOT the H102 target. Read each
+     * tick so both the autonomous-session and bench-injection paths supply the same reference. */
+    evse.evse_present_voltage = din_evse_present_voltage_v(din70121_meas());
     v2g_net_step(tick * 10u);   /* transport carriage: TCP connect timeout / idle close / TLS progress */
 
     switch (state) {

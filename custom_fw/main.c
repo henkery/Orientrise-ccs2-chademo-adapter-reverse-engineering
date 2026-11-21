@@ -236,6 +236,10 @@ void main(void)
 
         charge_stm_inputs_t si;
         si.outvol          = (hv_outvol > 0) ? (uint16_t)hv_outvol : 0u;
+        /* state-17 engagement reference = EVSE PresentVoltage (meas+0x3D18/1A scaled), NOT the H102
+         * TargetBatteryVoltage — C013 0x0804AADA-0x0804AAEE / dual log 0x0804AB40 (ress_vol[364] vs
+         * TargetBatteryVoltage[410] on a ZE1). 0 until a PreChargeRes/CurrentDemandRes is decoded. */
+        si.evse_present_voltage = evse->evse_present_voltage;
         /* three-signal split (analyze103): the engagement guard tests the EVSE charge-phase
          * marker phase_status==4 (PreChargeRes writer), NOT the DIN isolation wire (0..3); the
          * CurrentDemand interlock tests the CHAdeMO hw isolation level==3 (hardware-sourced via
