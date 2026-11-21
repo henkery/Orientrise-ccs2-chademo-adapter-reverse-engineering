@@ -8,10 +8,13 @@ byte-exact C013 decoders (`analyze91`–`analyze100`, REPORT §5.9). No firmware
 **Bottom line.** The CCS2 stack is **structurally complete** end-to-end — PLC transport → SLAC → CP/PP →
 SDP/V2GTP → EXI bit-codec → DIN session SM → live lwIP/mbedTLS carriage → PnC CA store → controller glue —
 all **inert / communication-only** (no power-stage GPIO; disasm-verified `verify_ccs2.py`). The remaining
-functional work is concentrated in **one layer: the EXI application-message codec** (Req-side grammars +
-root-event numbering, and the DIN `DC_EVSEStatus` / isolation mapping). The library network/crypto layers are
-**done** (vendored, byte-faithful config); their residual `[?]` notes are fidelity references, not blockers.
-The asserted power-stage drive is intentionally **GATED LAST**.
+functional work was concentrated in **one layer: the EXI application-message codec** — and that layer's RE is
+now **DONE**: G1–G5 are recovered byte-exact by `analyze101.py` (Req encoder, 157 checks), `analyze102.py`
+(Res field lists, 170 checks), `analyze103.py` (DC_EVSEStatus + isolation/phase mapping, 167 checks), REPORT
+§5.9 EXI application-message addendum. **What remains is the firmware integration** of those recovered
+grammars + the three-signal split into `exi.c`/`din70121.c`/`din_session.c`/`ccs2.c`/`charge_stm.c` (inert,
+host-tested), plus the minor G6–G8 fidelity items and the bench-only G9. The library network/crypto layers are
+**done** (vendored, byte-faithful config). The asserted power-stage drive is intentionally **GATED LAST**.
 
 ---
 
@@ -53,7 +56,12 @@ skeleton walks the whole DIN DC charge sequence; what is partial is the **EXI me
 These are the items that must be recovered/implemented for the adapter to interoperate with a real CCS2 EVSE.
 All are **C013-decodable** (the stock encoder/decoder bytes exist) except where noted as bench-only.
 
-### G1 — Req-side EXI root-event numbering `[?]`  **(critical path)**
+### G1 — Req-side EXI root-event numbering — **RESOLVED (RE, `analyze101`)**  *(was critical path)*
+**Resolution:** DIN does **not** use per-message 7-bit root events. All nine Req (and Res) messages ride a
+**single 7-bit root event `0x4D` (77) + a 6-bit message-choice code** (encoder root `0x0806FA9C` → ev4d
+`0x080706F6` → ev03 dispatcher `0x0806D6D2`; choice/subev/production/builder table in REPORT §5.9 EXI addendum).
+The placeholder constants below are superseded; integration replaces them with root `0x4D` + the per-message
+choice. *Historical gap:*
 `din_session.c:16–24` — all nine Req root events are **symbolic placeholders**:
 `SESSIONSETUP_REQ 0x01`, `SERVICEDISCOVERY_REQ 0x03`, `CPD_REQ 0x07`, `CABLECHECK_REQ 0x09`,
 `PRECHARGE_REQ 0x0B`, `POWERDELIVERY_REQ 0x0D`, `CURRENTDEMAND_REQ 0x0F`, `WELDING_REQ 0x11`,
@@ -64,7 +72,14 @@ encoder root events are not**. Decode from the C013 EXI **encoder root `0x0806FA
 grammar table (TX leading-0x80 `0x08093C92`); the Req productions are the encode-side siblings of the
 recovered Res decoders. **Impact:** without correct Req events the SECC rejects every request.
 
-### G2 — Req-side EXI grammars / bodies `[?]`  **(critical path)**
+### G2 — Req-side EXI grammars / bodies — **RESOLVED (RE, `analyze101`)**  *(was critical path)*
+**Resolution:** all nine Req bodies recovered (REPORT §5.9 EXI addendum): SessionSetup = EVCCID hexBinary6;
+ServiceDiscovery = opt scope/category; CPD = 3-bit EnergyTransferMode + AC/DC choice (DC ev13 `0x0806CC3A`);
+CableCheck/Welding = DC_EVStatus ev17 `0x0806A936`; PreCharge = DC_EVStatus + 2 PVT; PowerDelivery DIN ev2d =
+varlen-enum ChargeProgress; SessionStop = empty. **CurrentDemandReq ev11 full grammar** recovered incl. the
+opt EVMaximum* limits / BulkChargingComplete@0x40 / ChargingComplete@0x48 / RemainingTime*; target-current
+@0x14 (factor @0x18), target-voltage @0x64 (factor @0x68) — packer `0x0802C2CE`. Integration adds the 8 missing
+Req encoders + corrects the CD-req offsets. *Historical gap:*
 `din_session.c:34` — the TX hook produces framing (8-byte V2GTP + leading `0x80` + 7-bit event) but
 **`[? body]`** for all Req except CurrentDemand. `din70121.h` exposes exactly **one** Req grammar encoder:
 `din_cd_req_encode_exi` (CurrentDemandReq). **Missing Req encoders (8):** SessionSetupReq, ServiceDiscoveryReq,
@@ -73,7 +88,16 @@ Even CurrentDemandReq's full field set is partial — `din70121.c:259` "EVMaximu
 RemainingTime* is `[?]` (E §3 partial)". Decode the encode-side productions from the same grammar table
 (application field maps already located, e.g. CurrentDemandReq `0x0802C2CE`). **Impact:** no valid Req bodies.
 
-### G3 — Res-side full field lists for handshake messages `[?]`
+### G3 — Res-side full field lists for handshake messages — **RESOLVED (RE, `analyze102`)**
+**Resolution:** five Res grammars recovered (REPORT §5.9 EXI addendum): SessionSetupRes ev41 `0x08062B1E`
+(RC + EVSEID + opt timestamp); ServiceDiscoveryRes ev3d `0x08063370` (RC + ChargeServiceList + ServiceList +
+opt EnergyTransferModeList); CPDRes **ev0c `0x08065BFC`** (RC + 1-bit processing flag @body+1 + AC/DC choice →
+DCparam ev15 `0x080650D2` 8-PVT limits); PowerDeliveryRes ev2e `0x08063DBA` (RC + EVSEStatus choice →
+DC_EVSEStatus); WeldingDetectionRes ev4f `0x08062754` (RC + DC_EVSEStatus + EVSEPresentVoltage PVT). Leading
+1-bit gate convention + subev dispatch (SessionSetup=30/ServiceDiscovery=26/CPD=8/PowerDelivery=20/Welding=34/
+SessionStop=32/CableCheck=2/PreCharge=22/CurrentDemand=14). **Corrections:** CPD is ev0c (not the ev1d
+wrapper); SessionStopRes = ev43 `0x08062A7E` (not ev1e). Integration adds 5 Res decoders + explicit RX cases.
+*Historical gap:*
 `din_session.c:262–290` (default branch) — SessionSetupRes / ServiceDiscoveryRes / ChargeParameterDiscoveryRes /
 PowerDeliveryRes / WeldingDetectionRes advance on **ResponseCode only** (`read_rc`, first 5-bit field);
 "full field lists partial (E §3)". Full grammar decoders exist only for CurrentDemandRes / CableCheckRes /
@@ -82,13 +106,28 @@ e.g. CPD wrapper `0x080650AC`, DC_EVSEChargeParam `0x080650D2` — so the full f
 **Impact:** handshake Res payloads (charge params, service/payment options, EVSE processing state) are not
 extracted; the session advances blind on ResponseCode.
 
-### G4 — DIN-vs-ISO `DC_EVSEStatus` layout `[?]`
+### G4 — DIN-vs-ISO `DC_EVSEStatus` layout — **RESOLVED (RE, `analyze103`)**
+**Resolution:** `0x0806259E` is a **single merged grammar with NO DIN/ISO flag**. Order =
+isolation_status(2) → status_code(4) → **NotificationMaxDelay(u32, MANDATORY — present in DIN)** →
+notification(2); isolation gated by a **2-bit** presence code E0 (0=present/1=absent/≥2=−110); 22 fixed bits
++ one u32, 12 one-bit gates all 0; out struct isolation@0/present@1.bit0/code@2/maxdelay@+4/notif@8. The
+replica's 1-bit presence gate, notification-before-code order, and hardcoded maxdelay=0 are all wrong;
+integration rewrites `din_dc_evse_status_decode`. *Historical gap:*
 `din70121.c:127,150` — byte movements confirmed (2-bit + 4-bit enums + u32 + 1-bit gates) but "DIN-vs-ISO
 layout / exact gate sequence is `[?]` (E §5)"; `notification_max_delay = 0` ("ISO u32 not present in DIN `[?]`").
 Decoder `0x0806259E` (ev `0x16`). **Impact:** EVSE notification/status-code attribution may be wrong; the
 isolation field (load-bearing) is extracted but its exact wire gate is unconfirmed.
 
-### G5 — `EVSEIsolationStatus` → charge-stm level 3/4 mapping  **(load-bearing for engagement)**
+### G5 — `EVSEIsolationStatus` → charge-stm level 3/4 mapping — **RESOLVED (RE, `analyze103`; premise corrected)**
+**Resolution:** the premise "DIN wire isolation → internal level 3/4" is **FALSE** — there is no such
+conversion. **Three distinct signals:** (a) **DIN wire isolation** (session byte `0x2000C808`, 0..3) gates
+only the session CableCheck rule `0x080365A4` (==1 advance/==0 retry/≥2 fault16 — replica already correct);
+(b) **EVSE charge-phase status** meas+0x3D1E halfword (3=CableCheckRes/4=PreChargeRes/7=error) is what the
+engagement guard `0x0804AF08` `==4` tests; (c) **CHAdeMO hardware isolation level** struct `0x20000868`
+(getter `0x0805206C`, 0..3 **never 4**) is what the CurrentDemand interlock `==3` reads. Feeding DIN isolation
+(≤3) into `==4` can **never** fire — the charge-abort root cause. Integration splits the replica's single
+`isolation` into `evse_phase_status` (engage ==4) / `chademo_isolation_level` (CD ==3) / `din_isolation`
+(session only); PreChargeRes sets phase_status=4. precharge_flag = meas+0x23F = `0x200077AF`. *Historical gap:*
 `ccs2.c:191` "exact 3/4 mapping gated (Agent D §7)"; `din_session.h` "isolation … raw; 3/4 level mapping gated".
 The raw enum is `0 invalid / 1 valid / 2 warning / 3 fault` (`din70121.h`), but the `charge_stm` engagement guard
 requires `isolation == 4` (REPORT §5.17). The mapping from the DIN `EVSEIsolationStatus` wire value to the
@@ -141,22 +180,25 @@ laws (REPORT §5.17/§5.18/§5.20/§5.21/§5.5c). Not a gap to close now — the
 
 ## 5. Next-build-step scoping (recommendation)
 
-The critical path to a *complete, live-interoperable* CCS2 message layer is **G1 + G2 + G3** (the EXI
-application-message codec), with **G5** (isolation mapping) load-bearing for engagement and **G4** close behind.
-All are **C013-decodable** from bytes already located by `analyze93` E:
+The critical-path **RE is DONE** — G1–G5 recovered byte-exact (`analyze101`/`analyze102`/`analyze103`, REPORT
+§5.9 EXI application-message addendum). What remains is the **inert firmware integration** of those recovered
+grammars + the three-signal split, then the minor fidelity items, then bench validation:
 
-1. **Req-side encoder recovery (G1/G2)** — decode the EXI encoder root `0x0806FA9C` + the encode-side productions
-   of the 81-production grammar table → the nine Req root events + field-list grammars. Subagent-decodable; mirrors
-   the Res-side recovery already done. Then implement the 8 missing Req encoders in `din70121.c` + correct the
-   `din_session.c` event constants.
-2. **Res-side full field lists (G3)** — decode the located handshake-Res decoders (CPD wrapper `0x080650AC`,
-   DC_EVSEChargeParam `0x080650D2`, SessionSetup/ServiceDiscovery/PowerDelivery/Welding productions) → full grammar
-   decoders replacing the ResponseCode-only advancement.
-3. **DC_EVSEStatus DIN layout + isolation mapping (G4/G5)** — decode `0x0806259E` gate sequence + the
-   `EVSEIsolationStatus`→level 3/4 path feeding the `charge_stm` state-17 guard.
+1. **Req-side encoder integration (G1/G2 — RE done)** — implement the corrected DIN framing (single root
+   `0x4D` + header gid 0x6c/0x6d + 6-bit choice) in `exi.c`, the 8 missing Req encoders + the full
+   CurrentDemandReq field set (corrected offsets) in `din70121.c`, and the corrected event/choice constants +
+   TX bodies in `din_session.c`.
+2. **Res-side full field lists (G3 — RE done)** — implement the 5 new Res decoders (SessionSetup/
+   ServiceDiscovery/CPD/PowerDelivery/Welding) with leading gates in `din70121.c`, the SessionStopRes ev43
+   dispatch, and explicit RX cases (states 2/3/6/9/11/12) in `din_session.c` replacing ResponseCode-only
+   advancement; CPD branches on the body+1 processing flag + applies DC limits.
+3. **DC_EVSEStatus + three-signal split (G4/G5 — RE done)** — rewrite `din_dc_evse_status_decode` (merged
+   grammar, 2-bit E0, mandatory u32 maxdelay); split `ccs2.c`/`charge_stm.c` single `isolation` into
+   `evse_phase_status` (engage ==4) / `chademo_isolation_level` (CD ==3) / `din_isolation` (session only);
+   PreChargeRes sets phase_status=4, CableCheckRes sets 3, error sets 7.
 4. **Minor fidelity (G6/G7/G8)** — CD secondary set-site, DIN 4/5 skip confirmation, optional-choice/unit enums.
 5. **Bench validation (G9)** — live SECC session capture (hardware: ESP32-S3 / Arduino Mega bench), then the
    GATED power-stage drive **last**.
 
-Steps 1–4 are documentation/RE + inert codec implementation (no power drive); step 5 needs hardware. This keeps
-the asserted power-stage drive GATED LAST throughout.
+Steps 1–3 are inert codec implementation + host tests + build/`verify_ccs2`/UPG re-wrap (no power drive);
+step 4 is minor fidelity; step 5 needs hardware. This keeps the asserted power-stage drive GATED LAST throughout.

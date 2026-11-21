@@ -766,7 +766,9 @@ and replicated **INERT** in `custom_fw/src/{slac,cp,sdp,v2gtp,din70121,ccs2}.c` 
   (selected@`0x200137CC`, 1=DIN/2=ISO). TCP lwIP raw pcb@`0x200009A8`, mbedTLS ctx `0x200203F0` (full stack
   **not** in the bare-metal app — gated). Log labels 'TLS'/'NO TLS' are inverted vs the wire — follow the wire.
 - **DIN70121 measurement + CurrentDemand actuation** — meas BASE `0x20007570` (EVCC handler `0x080353B2`),
-  `evcc_sta`=meas−0x90=`0x200074E0`, `precharge_flag`=evcc_sta+0x23F=`0x2000771F`. Measurement map:
+  `evcc_sta`=meas−0x90=`0x200074E0` (a separate session struct); `precharge_flag`=**meas**+0x23F=`0x200077AF`
+  (the engagement guard reads meas, not evcc_sta — `analyze103`; the earlier `0x2000771F` was off by 0x90).
+  Measurement map:
   +0x3D08/0A EVSEMaxVoltage, +0x3D14/16 EVSEPresentCurrent, +0x3D18/1A EVSEPresentVoltage, +0x3D20/22
   EVSEMaxCurrent, +0x3D1B/1C/1D Current/Voltage/PowerLimitAchieved. `CurrentDemandRes` decoder `0x0802DC0A`
   (EXI offsets: presentV[0x0E]/[0x0C], presentI[0x12]/[0x10], maxV[0x22]/[0x20] present-flag[0x24]bit0,
@@ -1228,6 +1230,115 @@ checks**), `analyze100.py` (mbedTLS crypto/X509, **52 checks**).
   deviations from upstream (ND6 NS-receive DELAY/counter 5 [`analyze96`], TLS 17-state enum /
   derive_keys-in-cert-verify) are internal SM quirks that do not change the wire protocol — the standard
   libraries interoperate. The asserted power-stage drive stays GATED LAST (§5.21/§7).
+
+#### EXI application-message codec (`analyze101.py` / `analyze102.py` / `analyze103.py`, byte-exact) — DIN framing + Req/Res grammars + DC_EVSEStatus + the three isolation/phase signals
+
+The DIN70121 application messages (above the EXI bitstream primitives of §5.9) are recovered byte-exact
+from C013. Three reproducible decoders re-derive every load-bearing event code, bit width, primitive
+call target, struct offset, and gate, and assert it: `analyze101.py` (Req-side encoder, **157 checks**),
+`analyze102.py` (Res-side handshake field lists, **170 checks**), `analyze103.py` (DC_EVSEStatus layout +
+isolation/phase signal mapping, **167 checks**).
+
+- **(DIN framing — single root event, NOT per-message roots)** Every DIN message — Req **and** Res — rides
+  **one 7-bit root event `0x4D` (77) + a 6-bit message-choice code**, not a distinct 7-bit root per message.
+  Encode: encoder root `0x0806FA9C` (flag-bit chain; W40 = doc+0x4140 bit1 is the DIN gate, `lsls #0x1e`
+  @`0x08070362` → `movs r2,#0x4d`) → `writeBits(7,0x4D)` (`0x08093AE4`) → **ev4d production `0x080706F6`**:
+  `writeBits(1,0)` + `bl` DIN-header-sub `0x0806F8FC` + `writeBits(1,0)` + `add.w r1,r4,#0x1400` (body base)
+  + `bl` ev03 dispatcher `0x0806D6D2` + `writeBits(1,0)` (EE). ev03 reads name words doc+0x4138/0x413C →
+  `writeBits(6,choice)` → sub-production. Decode mirrors: root decoder `0x0806997A` (`readBits7`, `cmp #0x51`,
+  tbb @`0x080699B8`/table `0x080699BC`, 81 productions) → ev4d DIN-document `0x0806A33E` → Header decode
+  `0x0806978A` → body dispatcher `0x08066DD0` (`readBits6` subev, `cmp #0x24`, tbb table `0x08066E06`, sets
+  name-flag bits) → name wrapper `0x08033CBC` (tests doc+0x4140 bit1 + name-word bits → app code). TX finalize
+  `0x08033AB0` (`*pos=8` before encode, `len=*pos−8`, send `0x0808522E`); decode wrapper `0x08033C24` (cap
+  0x100, scratch `0x200031D0`, strips the 8-byte V2GTP header). Wire frame after `[8B V2GTP][0x80][7-bit
+  0x4D]`: `g(1) | Header | g(1) | choice(6) | body | EE(1)`.
+- **(DIN header sub `0x0806F8FC`)** gid `0x6c` (SessionID octet field): `writeBits(1,0)`×2 + varlen-length
+  (`ldrh [doc+8]`, `0x0809392A`) + octet-string (len octets from doc+0, `0x08093B5E`) + `writeBits(1,0)` →
+  gid `0x6d`: gates `[doc+0x54]` bit7 (choice0 + ISO sub `0x0806F86A`@doc+0x0c) / `[doc+0x13F8]` bit7
+  (choice1 + ISO sub `0x0806F750`@doc+0x58) — **both ISO-only**; clear helper `0x08061D5C` (`str 0,[r0,#0x54];
+  str 0,[r0+0x1000,#0x3f8]`) is called by every builder ⇒ **DIN header always ends `writeBits(2,2)`**.
+  SessionID length/content is **per-builder**: SessionSetupReq sets `strb 0,[doc]; strh 1,[doc+8]` → 1-byte
+  `0x00` placeholder (SECC assigns the real SessionID in SessionSetupRes); post-setup builders copy the
+  negotiated SessionID. **EVCCID = 6 bytes (hexBinary6)** — SessionSetupReq builder `0x08034132` sets
+  body+0x08 = 6 and copies 6 bytes from the `0x080896C0` getter (the unit MAC `9CF6DD923FBF`, §5.9).
+- **(Nine Req messages — root `0x4D` for all; choice / subev / production / builder)** SessionSetupReq
+  `0x1D`/`0x40`/`0x0806ABEA`/`0x08034132`; ServiceDiscoveryReq `0x19`/`0x3C`/`0x0806B06A`/`0x08034230`;
+  ChargeParameterDiscoveryReq `0x07`/`0x0B`/`0x0806CEF0`/`0x080345CC`; CableCheckReq `0x01`/`0x04`/
+  `0x0806D698`/`0x08034774`; PreChargeReq `0x15`/`0x2F`/`0x0806B4DE`/`0x08034890`; PowerDeliveryReq `0x13`/
+  `0x2D`/`0x0806B814`/`0x08034A78`; CurrentDemandReq `0x0D`/`0x11`/`0x0806BDDC`/`0x08034C30`;
+  WeldingDetectionReq `0x21`/`0x4E`/`0x0806AA92`/`0x08034E70`; SessionStopReq `0x1F`/`0x42`/`0x0806AB0E`/
+  `0x08034F72`. Bodies: SessionSetup = EVCCID octet; ServiceDiscovery = opt scope/category; CPD = 3-bit
+  EnergyTransferMode + AC/DC choice (DC = ev13 `0x0806CC3A`: DC_EVStatus + maxCurrent/maxPower/maxVoltage +
+  EVEnergyCapacity); CableCheck/Welding = DC_EVStatus only; PreCharge = DC_EVStatus + 2 PVT @0x14/0x1C;
+  PowerDelivery DIN ev2d = varlen-enum ChargeProgress (`0x08093982`) + opt param; SessionStop = `writeBits(1,0)`
+  empty. DC_EVStatus ev17 `0x0806A936`: EVReady@0x00, EVErrorCode@0x04 (gate 0x08), EVRESSSOC 4-bit@0x11
+  (gate 0x10). **CurrentDemandReq ev11 full grammar**: DC_EVStatus@body+0x00 + PVT EVTargetCurrent@0x14 +
+  opt EVMaximumPowerLimit@0x1C (gate 0x24) / CurrentLimit@0x28 (gate 0x30) / VoltageLimit@0x34 (gate 0x3C) +
+  BulkChargingComplete@0x40 (gate 0x44) + ChargingComplete@0x48 + opt RemainingTimeToFullSOC@0x4C (gate 0x54) /
+  ToBulkSOC@0x58 (gate 0x60) + EVTargetVoltage@0x64. Packer `0x0802C2CE` (body base doc+0x1400):
+  meas[0x3CE0]/[0x3CE4]−3 → targetI; [0x3CE2]/[0x3CE5]−3 → targetV; limits meas[0x3CA4/6],[0x3C9E/9B],
+  [0x3CA0/2]; DC_EVStatus meas[0x3C97..9C]. **CORRECTION:** the target-current field is @0x14 (factor @0x18)
+  and target-voltage @0x64 (factor @0x68); the byte @0x40 is **BulkChargingComplete** and @0x48 is
+  **ChargingComplete** (not EVReady/EVErrorCode).
+- **(Five Res messages — subev / ev / app-code; leading-gate convention)** SessionSetupRes subev30 / ev41
+  `0x08062B1E` / code2 (RC, EVSEID len+bytes clamp32, opt EVSETimeStamp 8B); ServiceDiscoveryRes subev26 /
+  ev3d `0x08063370` / code3 (RC, ChargeServiceList count≤5 1-bit elems, ServiceList ev39 `0x0806316A`, opt
+  EnergyTransferModeList `0x0806A192` count≤8 stride84); CPDRes subev8 / **ev0c `0x08065BFC`** / code6 (RC,
+  1-bit processing flag @body+1 load-bearing, sched-choice state0x74 DIN=1 empty, AC/DC choice state0x75
+  DIN=1 → DCparam ev15 `0x080650D2`); PowerDeliveryRes subev20 / ev2e `0x08063DBA` / code9 LINEAR (RC,
+  EVSEStatus choice DIN=1 → DC_EVSEStatus@+0x20); WeldingDetectionRes subev34 / ev4f `0x08062754` / code0xC
+  (RC, DC_EVSEStatus@+4, EVSEPresentVoltage PVT@+0x10). Reference subevs: CableCheckRes=2 (ev05 `0x08066C5C`),
+  PreChargeRes=22 (ev30 `0x08063A8A`), CurrentDemandRes=14 (ev12 `0x0806471E`), **SessionStopRes=32 → ev43
+  `0x08062A7E`** (NOT ev1e `0x08063C04`, the empty 1-bit production). Name-wrapper bit→code: word0 bit2→2,
+  bit4→3, bit14→6, bit16→9, bit22→0xD, bit28→7, bit30→8; word1 bit0→0xA, bit2→0xC. **Every sub-production
+  field is bracketed by 1-bit event-code gates (all must be 0)**; optional fields use `readBits2` (0=present
+  +flag, 1=skip). CPD DCparam ev15 `0x080650D2`: DC_EVSEStatus@+0 + 8 PVT (maxCurrent req@+0xC, maxPower
+  opt@+0x14, maxVoltage req@+0x20, minCurrent req@+0x28, minVoltage req@+0x30, opt@+0x38, req@+0x44,
+  energy opt@+0x4C); writer `0x0802BEC0` body[1]→meas[0x3CF2], limits→meas[0x3D04..0x3D0E]/[0x3D20..].
+  RX engine `0x080353B2` (tbh @`0x08035444`/table `0x08035448`): case2→`0x080354FA`, case3→`0x08035652`,
+  case6→`0x08035FF6`, case9→`0x08037058`, case11→`0x08037A0E`, case12→`0x08037C36`; prologue r4=meas=
+  `0x20007570`, doc=`0x2000B3F8`, r6=doc+0x1400. Primitives: readBits wrapper `0x08093660`/core `0x0809DA5E`;
+  writeBits `0x08093AE4`/core `0x0809DAE2`; bool `0x080934BE`; u16 varlen `0x08093404`; u32 `0x08093432`;
+  signed `0x080934F0`; fixed-N-byte `0x08093550`; octet content `0x080936DE` (r0=stream,r1=length,r2=dest);
+  varlen-len-prefix `0x0809392A`; octet-string-enc `0x08093B5E`; enum-varlen-enc `0x08093982`; PVT dec
+  `0x08062070`/enc `0x0806A3AC` (Multiplier 3-bit wire=mult+3, Unit 2-bit choice if 0→4-bit+bit16, Value
+  signed). EXI errors: −11 EOF, −100 list overflow, −102 string too long, −108 unknown, −110 empty, −133,
+  −137/−138 header, −500.
+- **(DC_EVSEStatus `0x0806259E` — single merged grammar, NO DIN/ISO flag)** Field order is
+  **isolation_status(2) → status_code(4) → NotificationMaxDelay(u32) → notification(2)**. The isolation
+  element is the only optional one, gated by a **2-bit presence code E0** (0=present, 1=absent, ≥2=−110);
+  when present a present-flag is set (out[1].bit0, `orr #0x100`). **NotificationMaxDelay is a mandatory u32,
+  always read** (varlen `0x08093432`) — it IS present in DIN mode. Success stream (isolation present):
+  E0(2) G1(1) ISO(2) G2(1) G3(1) G4(1) CODE(4) G5(1) G6(1) G7(1) DELAY(u32) G8(1) G9(1) G10(1) NOTIF(2)
+  G11(1) G12(1) = **22 fixed bits + one u32** (12 one-bit gates, all 0). Out struct: isolation@out[0],
+  present@out[1].bit0, status_code@out[2], max_delay@out+4, notification@out[8]. Grammar 0x107→0x108→0xDA→
+  0xDB→4; errors −110/−133/−500. 7 callers (all DIN Res): CableCheckRes@`0x08066CF6` (out+4), PreChargeRes@
+  `0x08063B20`, CurrentDemandRes@`0x080647EA`, PowerDeliveryRes@`0x08063E52` (out+0x20), CPD DCparam@
+  `0x0806513E` (out+0), Welding@`0x080627EA` (out+4), `0x08069C36`. App handlers copy bytes +0/+2/+8 →
+  meas[0x3CFC/D/E] (telemetry; NOT read by the charge-stm). **CORRECTION:** a 1-bit presence gate,
+  notification-before-status_code order, or a hardcoded maxdelay=0 are all wrong.
+- **(THREE distinct isolation/phase signals — the engagement-guard root correction)** There is **NO
+  DIN-wire→level-3/4 conversion**. (a) **DIN wire isolation** (session byte `0x2000C808` = decode arena
+  ctx `0x2000B3F8`+0x1408+4+4; values 0..3) gates **only** the session CableCheck rule @`0x080365A4`
+  (==1 advance / ==0 retry / ≥2 fault16). (b) **EVSE charge-phase status** = **meas+0x3D1E halfword**
+  (meas=`0x20007570` → `0x2000B28E`): **3**=CableCheckRes writer `0x0802C168`, **4**=PreChargeRes writer
+  `0x0802C27A`, **7**=error setters `0x0802BA6C/80/94/A8` (Welding writer sets 6) — this is what the
+  engagement guard `==4` tests (+gates `0x08043CC4`/`0x08044214`). (c) **CHAdeMO hardware isolation level**
+  = struct `0x20000868`{+0 valid,+1 level,+2 mode} (base `0x20000878`−0x10), getter `0x0805206C` (28
+  callers); measurement `0x08051FE2` only `orr/bic #1/#2` ⇒ level ∈{0,1,2,3}, **never 4** — the CurrentDemand
+  interlock `==3` reads this (10 sites incl. `0x0804504C`/`0x0804BA3E`). **Engagement guard `0x0804AF08`
+  byte-exact**: `ldrb [meas+0x23F]==1` (precharge_flag = `0x200077AF`) && `ldrh phase-status==4` &&
+  `outvol+10≥ress_vol` && `outvol−5≤ress_vol` && dwell`[r4+0xa]≥250` → state `0x12`(18). Because DIN
+  isolation ≤3, feeding it into the `==4` check can **never** fire — the charge-abort root cause; C013's
+  precharge-wait fix is the phase-status marker (§5.11/§5.17). **CORRECTIONS:** the engagement "isolation==4"
+  is a mislabel for **phase-status==4**; precharge_flag base is **meas** (`0x20007570`), so
+  meas+0x23F = `0x200077AF` (the earlier `evcc_sta+0x23F=0x2000771F` was off by 0x90). A faithful replica
+  must split its single isolation field into `evse_phase_status` (engage ==4), `chademo_isolation_level`
+  (CurrentDemand ==3), and `din_isolation` (session only).
+- **Replication note.** These grammars are owned by the replica `src/exi.c` (bitstream primitives),
+  `src/din70121.c` (message field codec), and `src/din_session.c` (handshake SM); the decoders document the
+  stock implementation as a byte-exact fidelity reference. The asserted power-stage drive stays GATED LAST
+  (§5.21/§7).
 
 ### 5.10 USB log stick — firmware-match proof & device provenance  [C unless noted]
 
@@ -1806,7 +1917,9 @@ action steps. Per-message CAN watchdogs: H100/H101/H102 each **1 s**, whole-bus 
 
 **State-17 precharge voltage-match (engagement) guard — the safety-critical check C013 fixes**
 (`0x0804AF08`–`0x0804AF30`): with `outvol = p[+0x16]` (EVSE output voltage) and `ress_vol` in `r10`
-(car-side residual/battery voltage), the guard requires `[r6+0x23F]==1`, an isolation word `==4`,
+(car-side residual/battery voltage), the guard requires `[r6+0x23F]==1` (precharge_flag = meas+0x23F =
+`0x200077AF`), the **EVSE charge-phase status** halfword `meas+0x3D1E == 4` (set 4 by PreChargeRes — **NOT**
+DIN isolation and **NOT** the CHAdeMO hardware level; `analyze103` / §5.9 EXI addendum),
 **`outvol+10 >= ress_vol` AND `outvol-5 <= ress_vol`** (i.e. `outvol ∈ [ress_vol−10, ress_vol+5]`), and a
 counter `p[+0x0A] >= 0xFA (250)`. On match it clears the counters and sets `p->state=18`; otherwise it
 stalls in the wait state (450, `Precharge,wait out[%lu]reach ress_vol`). **C009** closed the precharge
@@ -1831,16 +1944,21 @@ sequence (states 13→14→15→16→17→18→19→20→30 + a stop/shutdown sk
 300/450/600) as a **shadow** controller: it evaluates the guards/interlocks and *records* the power action
 each state would drive (`STM_ACT_*`, mirroring §5.5c) but **executes no GPIO** — the asserted drive is the
 last gated layer. The **state-17 engagement guard is byte-exact** (`charge_stm_engage_ok`): `flag==1 &&
-isolation==4 && outvol+10>=ress_vol && outvol-5<=ress_vol` (unsigned 32-bit on zero-extended halfwords,
+phase_status==4 && outvol+10>=ress_vol && outvol-5<=ress_vol` (unsigned 32-bit on zero-extended halfwords,
 window `outvol ∈ [ress_vol−10, ress_vol+5]`) `&& dwell counter>=250`; state-17 wait counter times out at
-424. It is host-unit-tested (`custom_fw/test_charge_stm.c`, 47 checks: window bounds, dwell/isolation/flag
-thresholds, unsigned wrap, sequence walk/stall/engagement, interlocks, and the C009 mismatch never-engages
-case). **Interlocks:** whole-bus 1525-tick watchdog→450, per-message 100-tick, H102 byte4/5 fault→300,
-`emergency_flag`→40, bms/hw_fault→600, CurrentDemand requires isolation==3. **EVSE-side handshake inputs**
-(isolation / precharge_flag `[r6+0x23F]` / plug_in / cablecheck_fin / chgparam_ok / ev_contactor /
-precharge_relay) are parameterized and **safe-stubbed (0)** until the CCS2 PLC/DIN subsystem is built, so
-the machine holds in the early states and the engagement guard cannot pass. State/interlock/engage/action
-are published as SWD-readable `stm_*` globals; `outvol` is the measured `get_hv()/10`.
+424. The engagement input is the **EVSE charge-phase status** (meas+0x3D1E; 3=CableCheckRes / 4=PreChargeRes
+/ 7=error), **not** DIN isolation — the replica's earlier single-`isolation` conflation (DIN isolation ≤3 fed
+into `==4`, which can never fire) is split into three signals in the EXI codec integration (§5.9 EXI
+addendum / `analyze103`): `evse_phase_status` (engage ==4), `chademo_isolation_level` (CurrentDemand ==3),
+`din_isolation` (session CableCheck only). It is host-unit-tested (`custom_fw/test_charge_stm.c`: window
+bounds, dwell/phase-status/flag thresholds, unsigned wrap, sequence walk/stall/engagement, interlocks, and
+the C009 mismatch never-engages case). **Interlocks:** whole-bus 1525-tick watchdog→450, per-message
+100-tick, H102 byte4/5 fault→300, `emergency_flag`→40, bms/hw_fault→600, CurrentDemand requires the CHAdeMO
+hardware isolation level==3. **EVSE-side handshake inputs** (phase_status / precharge_flag `[r6+0x23F]` /
+plug_in / cablecheck_fin / chgparam_ok / ev_contactor / precharge_relay) are parameterized and
+**safe-stubbed (0)** until the CCS2 PLC/DIN subsystem is built, so the machine holds in the early states and
+the engagement guard cannot pass. State/interlock/engage/action are published as SWD-readable `stm_*`
+globals; `outvol` is the measured `get_hv()/10`.
 
 #### Power-stage drive + HV ADC front-end (C013, `analyze81`)  [C]
 
@@ -2491,7 +2609,8 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   walks the code region tracking movs/mov.w/movw immediates to extract each `p->state` transition write
   (`strh rX,[r4,#2]`, state halfword @+0x02) with its decoded next-state value, and disassembles the
   state-17 precharge voltage-match guard (outvol @+0x16 ∈ [ress_vol−10, ress_vol+5], counter @+0x0A ≥250,
-  isolation==4 → state 17→18). Lists the safety-stop/abort/isolation/welding/unlock interlocks. Run:
+  phase-status==4 → state 17→18; the `==4` field is the EVSE charge-phase marker, not DIN isolation —
+  `analyze103`). Lists the safety-stop/abort/isolation/welding/unlock interlocks. Run:
   `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze80.py'`.
 - `analyze81.py` — **C013 power-stage control mapper (§5.17/§5.5c/§8.5)**: ties the charge state-machine
   actions to the physical GPIO outputs + HV ADC measurement, re-derived from the **C013** bytes. Decodes
@@ -2745,6 +2864,33 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   ctr_drbg**. **CORRECTIONS:** AES BE vs SHA256/md_info LE vs curve MPI-LE-limb; md type 3/5/6 = standard
   MD5/SHA224/SHA256 (the "non-standard" note is retracted). **52 checks**.
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze100.py'`.
+- `analyze101.py` — **DIN70121 Req-side EXI encoder decoder (§5.9 EXI application-message addendum)**:
+  re-derives the nine Req messages from C013 — the single 7-bit root event `0x4D` + 6-bit choice framing
+  (encoder root `0x0806FA9C` → ev4d `0x080706F6` → ev03 dispatcher `0x0806D6D2`), the DIN header sub
+  `0x0806F8FC` (gid 0x6c SessionID varlen+octets / gid 0x6d ISO-only gates cleared → `writeBits(2,2)`),
+  each builder's name-word bit + W40 DIN gate, the per-message choice/subev/production table, and the full
+  CurrentDemandReq ev11 grammar (EVTargetCurrent@0x14 / EVTargetVoltage@0x64 / BulkChargingComplete@0x40 /
+  ChargingComplete@0x48) cross-checked against packer `0x0802C2CE`. **CORRECTIONS:** single root (not
+  per-message roots); EVCCID = 6 bytes; header SessionID per-builder. **157 checks**.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze101.py'`.
+- `analyze102.py` — **DIN70121 Res-side handshake field-list decoder (§5.9 EXI application-message addendum)**:
+  re-derives the five Res grammars — root tbb `0x080699BC` event→decoder, ev4d DIN-document `0x0806A33E`,
+  6-bit body dispatcher `0x08066DD0` subev→decoder+name-flag, name-wrapper `0x08033CBC` bit→code map,
+  per-message primitive call targets + bit widths + struct offsets + leading 1-bit gates, and the app
+  writer meas offsets. SessionSetupRes ev41 / ServiceDiscoveryRes ev3d / CPDRes **ev0c `0x08065BFC`** /
+  PowerDeliveryRes ev2e / WeldingDetectionRes ev4f; CPD DCparam ev15 `0x080650D2` 8-PVT limit list.
+  **CORRECTIONS:** CPD is ev0c (not the ev1d wrapper); SessionStopRes = ev43 `0x08062A7E` (not ev1e);
+  octet-content `0x080936DE` r1=length/r2=dest. **170 checks**.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze102.py'`.
+- `analyze103.py` — **DC_EVSEStatus layout + isolation/phase signal-mapping decoder (§5.9 EXI addendum /
+  §5.17)**: re-derives the merged DC_EVSEStatus grammar `0x0806259E` (2-bit E0 presence, order
+  isolation→status_code→NotificationMaxDelay(u32 mandatory)→notification, 22 fixed bits + u32, no DIN/ISO
+  flag, 7 callers) and the **three distinct signals** — DIN wire isolation `0x2000C808` (session rule
+  `0x080365A4` ==1/==0/≥2), EVSE charge-phase status meas+0x3D1E (3/4/7; engagement guard `0x0804AF08` ==4),
+  CHAdeMO hardware isolation level struct `0x20000868` (getter `0x0805206C`, 0..3 never 4; CurrentDemand
+  ==3). **CORRECTIONS:** engagement "isolation==4" is phase-status==4 (DIN isolation ≤3 can never fire it —
+  the charge-abort root cause); precharge_flag = meas+0x23F = `0x200077AF` (not evcc_sta+0x23F). **167 checks**.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze103.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -2777,9 +2923,9 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   `src/hv.c` (`get_hv` interpolation + `outvol=get_hv()/10`, libgcc `__aeabi_ldivmod`);
   **inert charge state machine (§5.17, analyze80/analyze85)**: `src/charge_stm.c` (shadow controller —
   safe-charge sequence 13→…→30 + stop/shutdown skeleton, **byte-exact state-17 engagement guard**
-  `charge_stm_engage_ok` [flag==1 && isolation==4 && outvol∈[ress_vol−10,ress_vol+5] unsigned && dwell≥250],
+  `charge_stm_engage_ok` [flag==1 && phase_status==4 && outvol∈[ress_vol−10,ress_vol+5] unsigned && dwell≥250],
   interlocks [whole-bus 1525→450, per-msg 100, H102 fault→300, emergency→40, bms/hw→600, CurrentDemand
-  isolation==3], records but does NOT execute `STM_ACT_*` power actions; EVSE-side handshake inputs
+  chademo_isolation_level==3], records but does NOT execute `STM_ACT_*` power actions; EVSE-side handshake inputs
   safe-stubbed until the CCS2 PLC/DIN layer; host-unit-tested `test_charge_stm.c` 47 checks);
   **inert H102 current control (§5.21 E-addendum, analyze89; converter corrected by analyze92)**:
   `src/current_ctrl.c` (shadow setpoint — byte-exact state-30 law `setpoint=min(request,EVSE avail)` capped by
