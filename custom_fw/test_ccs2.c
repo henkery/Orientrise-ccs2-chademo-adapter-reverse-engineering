@@ -87,8 +87,11 @@ int main(void)
     ccs2_precharge_ready();
     ccs2_ev_contactor_closed();
     ccs2_precharge_relay_closed();
+    ccs2_chademo_isolation(3);
     const ccs2_evse_t *e = ccs2_evse();
-    CHECK(e->cablecheck_fin == 1 && e->isolation == 4, "cablecheck done + isolation 4");
+    CHECK(e->cablecheck_fin == 1 && e->din_isolation == 4, "cablecheck done + din_isolation 4");
+    CHECK(e->phase_status == 4, "precharge ready -> phase_status 4 (engage prereq, analyze103)");
+    CHECK(e->chademo_isolation_level == 3, "chademo hw isolation level 3 (CD interlock)");
     CHECK(e->chgparam_ok == 1, "chgparam ok");
     CHECK(e->precharge_flag == 1, "precharge flag 1");
     CHECK(e->ev_contactor == 1 && e->precharge_relay == 1, "contactor + relay feedback");

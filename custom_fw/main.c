@@ -236,8 +236,14 @@ void main(void)
 
         charge_stm_inputs_t si;
         si.outvol          = (hv_outvol > 0) ? (uint16_t)hv_outvol : 0u;
-        si.isolation       = evse->isolation;       /* DIN EVSE isolation (engage 4 / CD 3) */
-        si.precharge_flag  = evse->precharge_flag;  /* DIN evcc_sta+0x23F (engage needs 1)  */
+        /* three-signal split (analyze103): the engagement guard tests the EVSE charge-phase
+         * marker phase_status==4 (PreChargeRes writer), NOT the DIN isolation wire (0..3); the
+         * CurrentDemand interlock tests the CHAdeMO hw isolation level==3 (hardware-sourced via
+         * ccs2_chademo_isolation, 0 until wired). din_isolation gates only the session CableCheck
+         * rule and is deliberately NOT fed here. */
+        si.phase_status    = evse->phase_status;            /* engage guard ==4 (analyze103)  */
+        si.chademo_isolation_level = evse->chademo_isolation_level; /* CD interlock ==3       */
+        si.precharge_flag  = evse->precharge_flag;  /* meas+0x23F (engage needs 1)            */
         si.plug_in         = evse->plug_in;         /* CP/PP connector presence             */
         si.cablecheck_fin  = evse->cablecheck_fin;  /* DIN CableCheck finished OK           */
         si.chgparam_ok     = evse->chgparam_ok;     /* DIN ChargeParameterDiscovery OK      */

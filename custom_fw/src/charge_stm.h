@@ -80,8 +80,9 @@
  * request fields (ress_vol/current_request/faults) + CAN freshness are read from chademo_vehicle_t. */
 typedef struct {
     uint16_t outvol;          /* EVSE output voltage V = get_hv()/10 (measurement layer) */
-    uint16_t isolation;       /* EVSE isolation status (engage==4, CurrentDemand==3) — stub */
-    uint8_t  precharge_flag;  /* EVSE precharge-ready flag [r6+0x23F] (engage==1) — stub */
+    uint16_t phase_status;    /* EVSE charge-phase meas+0x3D1E (engage==4) — analyze103 */
+    uint16_t chademo_isolation_level; /* CHAdeMO hw isolation level (CurrentDemand==3) */
+    uint8_t  precharge_flag;  /* EVSE precharge-ready flag meas+0x23F (engage==1) */
     uint8_t  plug_in;         /* GET_AD_CPD connector plug-in — stub */
     uint8_t  cablecheck_fin;  /* EVSE CableCheck finished OK — stub */
     uint8_t  chgparam_ok;     /* EVSE ChargeParameterDiscovery OK + VehicleChargingEnabled — stub */
@@ -103,10 +104,11 @@ uint8_t  charge_stm_interlock(void);   /* active interlock bitmask (STM_IL_*) */
 uint8_t  charge_stm_engage_result(void); /* last state-17 guard result (0/1) */
 uint8_t  charge_stm_action(void);      /* intended (GATED, not executed) power action STM_ACT_* */
 
-/* Pure, host-testable C013 state-17 engagement guard (0x0804AF08–0x0804AF30, analyze80):
- *   flag==1 && isolation==4 && (outvol+10 >= ress_vol) && (outvol-5 <= ress_vol) && cnt>=250.
- * Unsigned 32-bit arithmetic on zero-extended halfwords (matches add.w/subs + blo/bhi). */
+/* Pure, host-testable C013 state-17 engagement guard (0x0804AF08–0x0804AF30, analyze80/analyze103):
+ *   flag==1 && phase_status==4 && (outvol+10 >= ress_vol) && (outvol-5 <= ress_vol) && cnt>=250.
+ * phase_status is the EVSE charge-phase marker meas+0x3D1E (PreChargeRes sets 4) — NOT DIN
+ * isolation (<=3, which can never satisfy ==4). Unsigned 32-bit math on zero-extended halfwords. */
 int charge_stm_engage_ok(uint16_t outvol, uint16_t ress_vol, uint16_t cnt,
-                         uint16_t isolation, uint8_t flag);
+                         uint16_t phase_status, uint8_t flag);
 
 #endif /* CHARGE_STM_H */

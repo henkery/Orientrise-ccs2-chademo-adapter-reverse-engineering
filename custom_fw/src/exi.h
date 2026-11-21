@@ -27,6 +27,8 @@
 #define EXI_ERR_EVENT    (-108)  /* unknown event / grammar_id (mvn #0x6b)               */
 #define EXI_ERR_HEADER   (-137)  /* leading-byte pre-check reject 0x24 (mvn #0x89 path)  */
 #define EXI_ERR_EMPTY    (-110)  /* empty-message choice = 1 (mvn #0x6d)                 */
+#define EXI_ERR_GATE     (-133)  /* inter-field 1-bit event-code gate != 0 (mvn #0x84)   */
+#define EXI_ERR_GRAMMAR  (-500)  /* grammar-state gate error (0xFFFFFE0C)                */
 
 /* Root events (7-bit) for the DIN DC messages — CORRECTED ground-truth numbering (E §1 was
  * +2-shifted in the b-thunk region; rebuilt from the actual tbb path, rebuild_ev_map.py). */

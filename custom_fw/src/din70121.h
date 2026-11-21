@@ -54,14 +54,17 @@
 #define DIN_CDR_EXI_VOL_ACHIEVED 0x1Cu
 #define DIN_CDR_EXI_PWR_ACHIEVED 0x18u
 
-/* CurrentDemandReq EXI output field offsets. */
-#define DIN_CDQ_EXI_TARGET_I    0x18u   /* u16 EVTargetCurrent value         */
-#define DIN_CDQ_EXI_TARGET_I_F  0x14u   /* factor-3 (wire multiplier)        */
-#define DIN_CDQ_EXI_TARGET_V    0x68u   /* u16 EVTargetVoltage value         */
-#define DIN_CDQ_EXI_TARGET_V_F  0x64u
-#define DIN_CDQ_EXI_EVREADY     0x40u   /* DC_EVStatus.EVReady               */
-#define DIN_CDQ_EXI_EVSTATUS_TAG 0x44u  /* =1                                */
-#define DIN_CDQ_EXI_EVERROR     0x48u   /* DC_EVStatus.EVErrorCode           */
+/* CurrentDemandReq EXI output field offsets — CORRECTED by analyze101 (packer 0x0802C2CE / ev11
+ * grammar): EVTargetCurrent value @0x14 (factor @0x18), EVTargetVoltage value @0x64 (factor @0x68).
+ * The byte @0x40 is BulkChargingComplete (gate @0x44) and @0x48 is ChargingComplete — NOT
+ * DC_EVStatus.EVReady/EVErrorCode (those live in the DC_EVStatus sub-production @body+0x00). */
+#define DIN_CDQ_EXI_TARGET_I    0x14u   /* u16 EVTargetCurrent value         */
+#define DIN_CDQ_EXI_TARGET_I_F  0x18u   /* factor-3 (wire multiplier)        */
+#define DIN_CDQ_EXI_TARGET_V    0x64u   /* u16 EVTargetVoltage value         */
+#define DIN_CDQ_EXI_TARGET_V_F  0x68u
+#define DIN_CDQ_EXI_BULK_COMPLETE 0x40u /* BulkChargingComplete (bool)       */
+#define DIN_CDQ_EXI_BULK_GATE   0x44u   /* =1 (BulkChargingComplete gate)    */
+#define DIN_CDQ_EXI_CHG_COMPLETE 0x48u  /* ChargingComplete (bool)           */
 #define DIN_CDQ_TX_LEN          108u    /* 0x6C TX image length              */
 
 /* EVSE measurement + EV-target context (mirrors the stock meas field area). Factors are stored
@@ -82,8 +85,10 @@ typedef struct {
     uint16_t ev_target_voltage;      /* +0x3CE2 */
     uint8_t  ev_target_current_f;    /* +0x3CE4 (mult+3) */
     uint8_t  ev_target_voltage_f;    /* +0x3CE5 (mult+3) */
-    uint8_t  ev_ready;               /* +0x3CB7 DC_EVStatus.EVReady */
-    uint8_t  ev_error_code;          /* +0x3CB8 DC_EVStatus.EVErrorCode */
+    uint8_t  ev_ready;               /* DC_EVStatus.EVReady (ev17, meas+0x3C97 area) */
+    uint8_t  ev_error_code;          /* DC_EVStatus.EVErrorCode (ev17)               */
+    uint8_t  bulk_charging_complete; /* +0x3CB7 -> CDReq EXI[0x40] (analyze101)      */
+    uint8_t  charging_complete;      /* +0x3CB8 -> CDReq EXI[0x48] (analyze101)      */
     uint8_t  first_demand_sent;      /* +0x243 */
 } din_meas_t;
 
@@ -123,16 +128,19 @@ din_meas_t *din70121_meas_mut(void);
  * session layer handles via exi_decode_header/exi_encode_header). Root events use the CORRECTED
  * ground-truth numbering (exi.h EXI_EV_*; E §1 was +2-shifted in the b-thunk region).
  *
- * DC_EVSEStatus (0x0806259E): DIN {EVSEIsolationStatus(opt), EVSENotification, EVSEStatusCode}.
- * The byte movements are confirmed (2-bit + 4-bit enums + u32 + 1-bit gates); the DIN-vs-ISO
- * layout / exact field-name attribution is [?] (E §5). The replica extracts the isolation status
- * (load-bearing for the charge_stm engagement guard) + notification + status code. */
+ * DC_EVSEStatus (0x0806259E) — RESOLVED by analyze103: a SINGLE merged grammar with NO DIN/ISO
+ * mode flag. Wire order isolation_status(2) -> status_code(4) -> NotificationMaxDelay(u32,
+ * MANDATORY, present in DIN) -> notification(2); the isolation element is optional via a 2-bit
+ * presence code E0 (0=present/1=absent/>=2=err). 22 fixed bits + one u32, 12 one-bit gates all 0.
+ * The replica extracts isolation (load-bearing for the session CableCheck rule) + status code +
+ * notification + max delay. NOTE: the charge_stm engagement guard tests the EVSE charge-phase
+ * status (meas+0x3D1E ==4), NOT this DIN isolation — see the three-signal split (ccs2/charge_stm). */
 typedef struct {
     uint8_t  isolation_status;   /* EVSEIsolationStatus: 0 invalid/1 valid/2 warning/3 fault */
     uint8_t  isolation_present;
     uint8_t  notification;       /* EVSENotification (2-bit enum)                          */
     uint8_t  status_code;        /* EVSEStatusCode (4-bit enum)                            */
-    uint32_t notification_max_delay; /* u32 (ISO variant present [?])                     */
+    uint32_t notification_max_delay; /* u32 varlen, MANDATORY (analyze103)                 */
 } din_dc_evse_status_t;
 
 /* Decode DC_EVSEStatus from the body stream (advances s). Returns EXI_OK / negative error. */

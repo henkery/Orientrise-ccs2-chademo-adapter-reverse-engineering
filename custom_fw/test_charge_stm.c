@@ -67,10 +67,10 @@ static void test_guard(void)
     CHECK(charge_stm_engage_ok(400, rv, 249, 4, 1) == 0, "guard: cnt=249 fail");
     CHECK(charge_stm_engage_ok(400, rv, 250, 4, 1) == 1, "guard: cnt=250 pass");
     CHECK(charge_stm_engage_ok(400, rv, 65535, 4, 1) == 1, "guard: cnt large pass");
-    /* isolation must be exactly 4 */
-    CHECK(charge_stm_engage_ok(400, rv, 250, 3, 1) == 0, "guard: isolation=3 fail");
-    CHECK(charge_stm_engage_ok(400, rv, 250, 0, 1) == 0, "guard: isolation=0 fail");
-    CHECK(charge_stm_engage_ok(400, rv, 250, 5, 1) == 0, "guard: isolation=5 fail");
+    /* phase_status must be exactly 4 (EVSE charge-phase marker, NOT DIN isolation) */
+    CHECK(charge_stm_engage_ok(400, rv, 250, 3, 1) == 0, "guard: phase_status=3 fail");
+    CHECK(charge_stm_engage_ok(400, rv, 250, 0, 1) == 0, "guard: phase_status=0 fail");
+    CHECK(charge_stm_engage_ok(400, rv, 250, 5, 1) == 0, "guard: phase_status=5 fail");
     /* flag must be exactly 1 */
     CHECK(charge_stm_engage_ok(400, rv, 250, 4, 0) == 0, "guard: flag=0 fail");
     CHECK(charge_stm_engage_ok(400, rv, 250, 4, 2) == 0, "guard: flag=2 fail");
@@ -107,7 +107,7 @@ static void test_sequence_engage(void)
     walk_to_volt_match();
     CHECK(charge_stm_state() == STM_VOLT_MATCH, "seq2: reach state 17");
     /* valid EVSE-side inputs: isolation=4, flag=1, outvol in window -> engage after 250 dwell */
-    in.isolation = 4; in.precharge_flag = 1;
+    in.phase_status = 4; in.precharge_flag = 1;
     for (int i = 0; i < 249; i++) step();
     CHECK(charge_stm_state() == STM_VOLT_MATCH, "seq2: still 17 before 250 dwell");
     step();   /* 250th dwell tick */
@@ -119,7 +119,7 @@ static void test_sequence_engage(void)
     CHECK(charge_stm_state() == STM_WAIT_TARGET, "seq2: precharge relay feedback -> 19");
     step();   /* outvol(400) >= ress_vol(400) -> 20 */
     CHECK(charge_stm_state() == STM_CD_PREP, "seq2: wait target reached -> 20");
-    in.isolation = 3;   /* CurrentDemand requires isolation==3 */
+    in.chademo_isolation_level = 3;   /* CurrentDemand requires isolation==3 */
     step();
     CHECK(charge_stm_state() == STM_CURRENTDEMAND, "seq2: -> 30 CurrentDemand");
     CHECK(charge_stm_action() == STM_ACT_CHARGE, "seq2: intended action = charge (GATED, not executed)");
@@ -132,11 +132,11 @@ static void test_interlocks(void)
 {
     /* H102 fault from CurrentDemand -> 300 (h102_status error) */
     reset_all(); walk_to_volt_match();
-    in.isolation = 4; in.precharge_flag = 1;
+    in.phase_status = 4; in.precharge_flag = 1;
     for (int i = 0; i < 250; i++) step();      /* engage -> 18 */
     in.precharge_relay = 1; step();            /* -> 19 */
     step();                                    /* -> 20 */
-    in.isolation = 3; step();                  /* -> 30 */
+    in.chademo_isolation_level = 3; step();                  /* -> 30 */
     CHECK(charge_stm_state() == STM_CURRENTDEMAND, "il: in CurrentDemand");
     veh.h102_fault5 = 0x88;                    /* VoltageDeviation+CurrentDeviation */
     step();
@@ -145,31 +145,31 @@ static void test_interlocks(void)
 
     /* emergency_flag from CurrentDemand -> 40 (stop by charger) */
     reset_all(); walk_to_volt_match();
-    in.isolation = 4; in.precharge_flag = 1;
+    in.phase_status = 4; in.precharge_flag = 1;
     for (int i = 0; i < 250; i++) step();
     in.precharge_relay = 1; step(); step();
-    in.isolation = 3; step();
+    in.chademo_isolation_level = 3; step();
     in.emergency = 1; step();
     CHECK(charge_stm_state() == STM_STOP_CHARGER, "il: emergency -> 40");
     CHECK((charge_stm_interlock() & STM_IL_EMERGENCY) != 0, "il: emergency interlock recorded");
 
     /* whole-bus loss from CurrentDemand -> 450 (CAN-loss safe stop) */
     reset_all(); walk_to_volt_match();
-    in.isolation = 4; in.precharge_flag = 1;
+    in.phase_status = 4; in.precharge_flag = 1;
     for (int i = 0; i < 250; i++) step();
     in.precharge_relay = 1; step(); step();
-    in.isolation = 3; step();
+    in.chademo_isolation_level = 3; step();
     g_bus_fresh = 0; step();
     CHECK(charge_stm_state() == STM_WAIT_ERROR, "il: whole-bus loss -> 450");
     CHECK((charge_stm_interlock() & STM_IL_BUS_LOSS) != 0, "il: bus-loss interlock recorded");
 
     /* isolation != 3 in CurrentDemand -> 31 (stop by vehicle / isolation warning) */
     reset_all(); walk_to_volt_match();
-    in.isolation = 4; in.precharge_flag = 1;
+    in.phase_status = 4; in.precharge_flag = 1;
     for (int i = 0; i < 250; i++) step();
     in.precharge_relay = 1; step(); step();
-    in.isolation = 3; step();
-    in.isolation = 2; step();
+    in.chademo_isolation_level = 3; step();
+    in.chademo_isolation_level = 2; step();
     CHECK(charge_stm_state() == STM_STOP_VEH, "il: isolation!=3 in CurrentDemand -> 31");
     CHECK((charge_stm_interlock() & STM_IL_ISOLATION) != 0, "il: isolation interlock recorded");
 }
@@ -179,7 +179,7 @@ static void test_no_engage_on_mismatch(void)
     /* C009 failure mode: outvol far below ress_vol must NEVER engage even after long dwell */
     reset_all();
     walk_to_volt_match();
-    in.isolation = 4; in.precharge_flag = 1;
+    in.phase_status = 4; in.precharge_flag = 1;
     in.outvol = 357;                 /* ~43 V below the 400 V battery — outside [390,405] */
     for (int i = 0; i < 430; i++) step();
     CHECK(charge_stm_state() != STM_PRECHG_RELAY, "mismatch: never engages at outvol=357/ress=400");

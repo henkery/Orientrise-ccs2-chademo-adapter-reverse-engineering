@@ -83,17 +83,18 @@ void din_set_ev_target(din_meas_t *m, uint16_t current, uint16_t voltage, uint8_
 
 void din_cd_req_encode(din_meas_t *m, uint8_t *exi)
 {
-    /* 0x0802C2CE / excerpt 0x0802C406: EVTargetCurrent meas[0x3CE0]->EXI[0x18], factor-3->[0x14];
-     * EVTargetVoltage meas[0x3CE2]->EXI[0x68], factor-3->[0x64]; DC_EVStatus EVReady->[0x40],
-     * EVErrorCode->[0x48], [0x44]=1. Wire factor = stored factor - 3. */
+    /* 0x0802C2CE / excerpt 0x0802C406 (offsets CORRECTED by analyze101): EVTargetCurrent
+     * meas[0x3CE0]->EXI[0x14], factor-3->[0x18]; EVTargetVoltage meas[0x3CE2]->EXI[0x64],
+     * factor-3->[0x68]; BulkChargingComplete meas[0x3CB7]->EXI[0x40] (gate [0x44]=1),
+     * ChargingComplete meas[0x3CB8]->EXI[0x48]. Wire factor = stored factor - 3. */
     z(exi, DIN_CDQ_TX_LEN);
     st16(exi + DIN_CDQ_EXI_TARGET_I, m->ev_target_current);
     exi[DIN_CDQ_EXI_TARGET_I_F] = (uint8_t)(m->ev_target_current_f - 3u);
     st16(exi + DIN_CDQ_EXI_TARGET_V, m->ev_target_voltage);
     exi[DIN_CDQ_EXI_TARGET_V_F] = (uint8_t)(m->ev_target_voltage_f - 3u);
-    exi[DIN_CDQ_EXI_EVREADY]      = m->ev_ready;
-    exi[DIN_CDQ_EXI_EVSTATUS_TAG] = 1u;
-    exi[DIN_CDQ_EXI_EVERROR]      = m->ev_error_code;
+    exi[DIN_CDQ_EXI_BULK_COMPLETE] = m->bulk_charging_complete;
+    exi[DIN_CDQ_EXI_BULK_GATE]     = 1u;
+    exi[DIN_CDQ_EXI_CHG_COMPLETE]  = m->charging_complete;
     m->first_demand_sent = 1u;   /* meas[0x243] set on first encode (0x0802C436) */
 }
 
@@ -122,33 +123,75 @@ static void pvt_to_meas(const exi_pvt_t *p, uint16_t *val, int8_t *factor)
     *factor = (int8_t)(p->mult + 3);
 }
 
-/* DC_EVSEStatus 0x0806259E — DIN layout {EVSEIsolationStatus(opt 2-bit), EVSENotification(2-bit),
- * EVSEStatusCode(4-bit)}. The merged stock codec also carries the ISO variant (u32
- * NotificationMaxDelay); the DIN-vs-ISO layout / exact gate sequence is [?] (E §5). The replica
- * uses the DIN schema-informed grammar: 1-bit isolation presence, then the bounded enums. */
+/* Read a 1-bit inter-field event-code gate; it MUST be 0, else return the grammar's error code
+ * (the stock gates shunt to -110/-133/-500 depending on position; analyze103 gate table). */
+static int rd_gate(exi_stream_t *s, int err)
+{
+    uint32_t g;
+    int r = exi_read_bits(s, 1, &g);
+    if (r) return r;
+    return g ? err : EXI_OK;
+}
+
+/* DC_EVSEStatus 0x0806259E — RESOLVED merged grammar (analyze103), NO DIN/ISO mode flag.
+ * Wire order: E0(2 presence) [G1 ISO(2) G2] G3 G4 CODE(4) G5 G6 G7 DELAY(u32) G8 G9 G10 NOTIF(2)
+ * G11 G12. E0: 0=present, 1=absent, >=2=-110. NotificationMaxDelay is a MANDATORY u32 (varlen
+ * 0x08093432), present in DIN. 22 fixed bits + one u32 when isolation present; 12 one-bit gates
+ * all 0. Out: isolation@status, present flag, status_code, notification_max_delay, notification.
+ * Gate error codes per position: G1/G4/G7/G10=-133, G2/G5/G8/G11=-500, G3/G6/G9/G12=-110. */
 int din_dc_evse_status_decode(exi_stream_t *s, din_dc_evse_status_t *out)
 {
-    uint8_t present;
-    int r = exi_read_bool(s, &present);
-    if (r) return r;
-    out->isolation_present = present;
+    out->isolation_present = 0;
     out->isolation_status = 0;
-    if (present) {
+    out->notification = 0;
+    out->status_code = 0;
+    out->notification_max_delay = 0;
+
+    uint32_t e0;
+    int r = exi_read_bits(s, 2, &e0);          /* E0 isolation presence (2-bit) */
+    if (r) return r;
+    if (e0 >= 2u) return EXI_ERR_EMPTY;        /* >=2 -> -110 */
+    if (e0 == 0u) {                            /* present: G1 ISO G2 */
+        r = rd_gate(s, EXI_ERR_GATE);          /* G1 (-133) */
+        if (r) return r;
         uint32_t iso;
         r = exi_read_bits(s, 2, &iso);
         if (r) return r;
         out->isolation_status = (uint8_t)iso;
+        out->isolation_present = 1;
+        r = rd_gate(s, EXI_ERR_GRAMMAR);       /* G2 (-500) */
+        if (r) return r;
     }
-    uint32_t notif;
-    r = exi_read_bits(s, 2, &notif);
+    /* absent (E0==1) skips G1/ISO/G2; the rest is identical (analyze103 gate table). */
+    r = rd_gate(s, EXI_ERR_EMPTY);             /* G3 (-110) */
     if (r) return r;
-    out->notification = (uint8_t)notif;
+    r = rd_gate(s, EXI_ERR_GATE);              /* G4 (-133) */
+    if (r) return r;
     uint32_t code;
-    r = exi_read_bits(s, 4, &code);
+    r = exi_read_bits(s, 4, &code);            /* EVSEStatusCode (4-bit) */
     if (r) return r;
     out->status_code = (uint8_t)code;
-    out->notification_max_delay = 0;   /* ISO u32 not present in the DIN layout [?] */
-    return EXI_OK;
+    r = rd_gate(s, EXI_ERR_GRAMMAR);           /* G5 (-500) */
+    if (r) return r;
+    r = rd_gate(s, EXI_ERR_EMPTY);             /* G6 (-110) */
+    if (r) return r;
+    r = rd_gate(s, EXI_ERR_GATE);              /* G7 (-133) */
+    if (r) return r;
+    r = exi_read_u32(s, &out->notification_max_delay);  /* NotificationMaxDelay u32 MANDATORY */
+    if (r) return r;
+    r = rd_gate(s, EXI_ERR_GRAMMAR);           /* G8 (-500) */
+    if (r) return r;
+    r = rd_gate(s, EXI_ERR_EMPTY);             /* G9 (-110) */
+    if (r) return r;
+    r = rd_gate(s, EXI_ERR_GATE);              /* G10 (-133) */
+    if (r) return r;
+    uint32_t notif;
+    r = exi_read_bits(s, 2, &notif);           /* EVSENotification (2-bit) */
+    if (r) return r;
+    out->notification = (uint8_t)notif;
+    r = rd_gate(s, EXI_ERR_GRAMMAR);           /* G11 (-500) */
+    if (r) return r;
+    return rd_gate(s, EXI_ERR_EMPTY);          /* G12 (-110); ==0 -> OK */
 }
 
 /* CurrentDemandRes 0x0806471E (ev0x12) — 10-field wire order (E §3, COMPLETE). Mandatory fields

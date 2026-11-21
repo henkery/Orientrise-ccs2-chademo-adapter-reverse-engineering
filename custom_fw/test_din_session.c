@@ -31,10 +31,27 @@ static int spy_tx(uint8_t ev, uint8_t *buf, uint16_t cap)
 static void wr_dc_evse_status(exi_stream_t *s, uint8_t iso_present, uint8_t iso,
                               uint8_t notif, uint8_t code)
 {
-    exi_write_bool(s, iso_present);
-    if (iso_present) exi_write_bits(s, 2, iso);
-    exi_write_bits(s, 2, notif);
+    /* merged grammar (analyze103): E0(2) [G1 ISO(2) G2] G3 G4 CODE(4) G5 G6 G7 DELAY(u32=0)
+     * G8 G9 G10 NOTIF(2) G11 G12; all 1-bit gates 0. */
+    exi_write_bits(s, 2, iso_present ? 0u : 1u);   /* E0 presence */
+    if (iso_present) {
+        exi_write_bits(s, 1, 0);                   /* G1 */
+        exi_write_bits(s, 2, iso);
+        exi_write_bits(s, 1, 0);                   /* G2 */
+    }
+    exi_write_bits(s, 1, 0);                       /* G3 */
+    exi_write_bits(s, 1, 0);                       /* G4 */
     exi_write_bits(s, 4, code);
+    exi_write_bits(s, 1, 0);                       /* G5 */
+    exi_write_bits(s, 1, 0);                       /* G6 */
+    exi_write_bits(s, 1, 0);                       /* G7 */
+    exi_write_u32(s, 0);                           /* NotificationMaxDelay (mandatory) */
+    exi_write_bits(s, 1, 0);                       /* G8 */
+    exi_write_bits(s, 1, 0);                       /* G9 */
+    exi_write_bits(s, 1, 0);                       /* G10 */
+    exi_write_bits(s, 2, notif);
+    exi_write_bits(s, 1, 0);                       /* G11 */
+    exi_write_bits(s, 1, 0);                       /* G12 */
 }
 static void wr_pvt(exi_stream_t *s, int8_t mult, uint8_t unit, uint16_t value)
 {
@@ -126,9 +143,12 @@ static void test_sequence_walk(void)
     n = mk_cablecheck(b, 0, 1, 0); din_session_rx(EXI_EV_CABLECHECK_RES, b, n, now);
     CK(s->state == DIN_ST_PRECHARGE_RES && s->cablecheck_fin == 1 && s->precharge_flag == 1,
        "7->8 on CableCheck isolation==1 + cablecheck_fin + precharge_flag");
+    CK(s->din_isolation == 1 && s->phase_status == 3,
+       "CableCheckRes: din_isolation=1 (session) + phase_status=3 (analyze103)");
     n = mk_precharge(b, 0, 400); din_session_rx(EXI_EV_PRECHARGE_RES, b, n, now);
     CK(s->state == DIN_ST_POWERDELIVERY_START && s->precharge_relay == 1,
        "8->9 on PreChargeRes + precharge_relay");
+    CK(s->phase_status == 4, "PreChargeRes: phase_status=4 (engagement prerequisite, analyze103)");
     n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);          /* PowerDeliveryRes (start) */
     CK(s->state == DIN_ST_CURRENTDEMAND_RES && s->ev_contactor == 1,
        "9->10 on PowerDeliveryRes + ev_contactor");

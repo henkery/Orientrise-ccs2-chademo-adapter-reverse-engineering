@@ -91,6 +91,7 @@ static void post_fault(uint8_t code)
 {
     sess.fault_code = code;
     sess.fault_flag = 1;
+    sess.phase_status = 7;   /* error setters 0x0802BA6C/80/94/A8 -> meas+0x3D1E=7 (analyze103) */
 }
 
 /* Graceful shutdown: PowerDelivery-stop -> SessionStop -> state 13 (F §FAILED->shutdown). */
@@ -205,7 +206,8 @@ int din_session_rx(uint8_t ev, const uint8_t *body, uint16_t len, uint32_t now)
         r = din_cablecheck_res_decode_exi(body, len, &rc, &proc, &st);
         if (r) return r;
         if (!rc_ok(rc)) { post_fault(DIN_FAULT_RESPONSE); shutdown_seq(now); return EXI_OK; }
-        sess.isolation = st.isolation_status;
+        sess.din_isolation = st.isolation_status;  /* DIN wire isolation (session CableCheck rule only) */
+        sess.phase_status = 3;                     /* CableCheckRes writer 0x0802C168 -> meas+0x3D1E=3 */
         if (proc == 1u) {                          /* EVSEProcessingState ongoing -> re-send, stay 7 */
             send_req(DIN_EV_CABLECHECK_REQ, now);
             return EXI_OK;
@@ -229,6 +231,8 @@ int din_session_rx(uint8_t ev, const uint8_t *body, uint16_t len, uint32_t now)
         r = din_precharge_res_decode_exi(body, len, din70121_meas_mut(), &rc, &st);
         if (r) return r;
         if (!rc_ok(rc)) { post_fault(DIN_FAULT_RESPONSE); shutdown_seq(now); return EXI_OK; }
+        sess.phase_status = 4;                     /* PreChargeRes writer 0x0802C27A -> meas+0x3D1E=4
+                                                    * (the charge_stm engagement prerequisite) */
         sess.precharge_relay = 1;
         sess.state = DIN_ST_POWERDELIVERY_START;   /* 8->9 */
         send_req(DIN_EV_POWERDELIVERY_REQ, now);   /* PowerDelivery-start */

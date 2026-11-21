@@ -15,6 +15,34 @@ static int checks = 0, failures = 0;
 
 static void st16(uint8_t *p, uint16_t v) { p[0] = v & 0xFF; p[1] = v >> 8; }
 
+/* Synthesize the merged DC_EVSEStatus grammar (analyze103) for round-trip tests:
+ * E0(2) [G1 ISO(2) G2] G3 G4 CODE(4) G5 G6 G7 DELAY(u32) G8 G9 G10 NOTIF(2) G11 G12, gates 0. */
+static uint16_t mk_evse_status(uint8_t *buf, uint8_t present, uint8_t iso,
+                               uint8_t code, uint32_t maxdelay, uint8_t notif)
+{
+    exi_stream_t s; exi_encode_init(&s, buf, 64, 0);
+    exi_write_bits(&s, 2, present ? 0u : 1u);   /* E0 presence */
+    if (present) {
+        exi_write_bits(&s, 1, 0);               /* G1 */
+        exi_write_bits(&s, 2, iso);
+        exi_write_bits(&s, 1, 0);               /* G2 */
+    }
+    exi_write_bits(&s, 1, 0);                   /* G3 */
+    exi_write_bits(&s, 1, 0);                   /* G4 */
+    exi_write_bits(&s, 4, code);
+    exi_write_bits(&s, 1, 0);                   /* G5 */
+    exi_write_bits(&s, 1, 0);                   /* G6 */
+    exi_write_bits(&s, 1, 0);                   /* G7 */
+    exi_write_u32(&s, maxdelay);                /* NotificationMaxDelay (mandatory u32) */
+    exi_write_bits(&s, 1, 0);                   /* G8 */
+    exi_write_bits(&s, 1, 0);                   /* G9 */
+    exi_write_bits(&s, 1, 0);                   /* G10 */
+    exi_write_bits(&s, 2, notif);
+    exi_write_bits(&s, 1, 0);                   /* G11 */
+    exi_write_bits(&s, 1, 0);                   /* G12 */
+    return (uint16_t)exi_encode_finish(&s);
+}
+
 int main(void)
 {
     /* --- pow10 converter table (0x0804E786) --- */
@@ -78,17 +106,18 @@ int main(void)
     din_set_ev_target(&m, 10, 20, (2u) | (4u << 3));
     CHECK(m.ev_target_current_f == 2 && m.ev_target_voltage_f == 4, "packed factors split 2/4");
 
-    /* --- CurrentDemandReq encode (meas -> EXI, wire factor = stored-3) --- */
+    /* --- CurrentDemandReq encode (meas -> EXI, wire factor = stored-3; offsets analyze101) --- */
     din_set_ev_target(&m, 150, 420, (3u) | (3u << 3));
-    m.ev_ready = 1; m.ev_error_code = 0;
+    m.bulk_charging_complete = 1; m.charging_complete = 0;
     uint8_t out[DIN_CDQ_TX_LEN];
     din_cd_req_encode(&m, out);
-    CHECK(out[DIN_CDQ_EXI_TARGET_I] == 150 && out[DIN_CDQ_EXI_TARGET_I + 1] == 0, "targetI EXI[0x18]=150");
+    CHECK(out[DIN_CDQ_EXI_TARGET_I] == 150 && out[DIN_CDQ_EXI_TARGET_I + 1] == 0, "targetI EXI[0x14]=150");
     CHECK(out[DIN_CDQ_EXI_TARGET_I_F] == 0, "targetI wire factor 3-3=0");
     CHECK(out[DIN_CDQ_EXI_TARGET_V] == (420 & 0xFF) && out[DIN_CDQ_EXI_TARGET_V + 1] == (420 >> 8),
-          "targetV EXI[0x68]=420");
+          "targetV EXI[0x64]=420");
     CHECK(out[DIN_CDQ_EXI_TARGET_V_F] == 0, "targetV wire factor 0");
-    CHECK(out[DIN_CDQ_EXI_EVREADY] == 1 && out[DIN_CDQ_EXI_EVSTATUS_TAG] == 1, "DC_EVStatus ready/tag");
+    CHECK(out[DIN_CDQ_EXI_BULK_COMPLETE] == 1 && out[DIN_CDQ_EXI_BULK_GATE] == 1,
+          "BulkChargingComplete@0x40 + gate@0x44");
     CHECK(m.first_demand_sent == 1, "first_demand_sent set");
 
     /* wire factor for stored 2 (mult -1) -> 0xFF */
@@ -101,6 +130,35 @@ int main(void)
     const din_meas_t *d = din70121_meas();
     CHECK(d->evse_max_current == 0 && d->evse_max_current_f == 3, "init maxI 0 f3");
     CHECK(din_evse_max_current_a(d) == 0, "init inert maxI 0 A");
+
+    /* --- DC_EVSEStatus merged grammar round-trip (analyze103) --- */
+    uint8_t sb[64];
+    din_dc_evse_status_t st;
+    exi_stream_t ss;
+    uint16_t sn = mk_evse_status(sb, 1, 1, 5, 12345, 2);
+    exi_decode_init(&ss, sb, sn);
+    CHECK(din_dc_evse_status_decode(&ss, &st) == EXI_OK, "evsestatus present decode OK");
+    CHECK(st.isolation_present == 1 && st.isolation_status == 1, "evsestatus isolation valid");
+    CHECK(st.status_code == 5, "evsestatus code 5");
+    CHECK(st.notification_max_delay == 12345, "evsestatus mandatory u32 maxdelay 12345");
+    CHECK(st.notification == 2, "evsestatus notification 2");
+    /* absent isolation (E0==1): no isolation, code/notif/maxdelay intact */
+    sn = mk_evse_status(sb, 0, 0, 3, 7, 1);
+    exi_decode_init(&ss, sb, sn);
+    CHECK(din_dc_evse_status_decode(&ss, &st) == EXI_OK, "evsestatus absent decode OK");
+    CHECK(st.isolation_present == 0 && st.status_code == 3 && st.notification == 1 &&
+          st.notification_max_delay == 7, "evsestatus absent: code/notif/maxdelay intact");
+    /* E0>=2 -> -110 */
+    exi_encode_init(&ss, sb, 64, 0); exi_write_bits(&ss, 2, 2); exi_encode_finish(&ss);
+    exi_decode_init(&ss, sb, 1);
+    CHECK(din_dc_evse_status_decode(&ss, &st) == EXI_ERR_EMPTY, "evsestatus E0>=2 -> -110");
+    /* a set gate (G1=1) -> -133 */
+    exi_encode_init(&ss, sb, 64, 0);
+    exi_write_bits(&ss, 2, 0);   /* E0 present */
+    exi_write_bits(&ss, 1, 1);   /* G1 set */
+    exi_encode_finish(&ss);
+    exi_decode_init(&ss, sb, 1);
+    CHECK(din_dc_evse_status_decode(&ss, &st) == EXI_ERR_GATE, "evsestatus G1!=0 -> -133");
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

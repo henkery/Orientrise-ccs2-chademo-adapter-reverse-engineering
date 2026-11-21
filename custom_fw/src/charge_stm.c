@@ -18,17 +18,17 @@ static struct {
     uint8_t  energizing;      /* energizing_state (cleared when outvol < 10 V) */
 } stm;
 
-/* ---- byte-exact C013 state-17 engagement guard (0x0804AF08–0x0804AF30) ----
- *   ldrb [r6,#0x23f]==1 ; isolation halfword==4 ;
- *   outvol+10 >= ress_vol (blo fail) ; outvol-5 <= ress_vol (bhi fail) ;
+/* ---- byte-exact C013 state-17 engagement guard (0x0804AF08–0x0804AF30, analyze103) ----
+ *   ldrb [r6,#0x23f]==1 ; phase-status halfword meas+0x3D1E==4 (PreChargeRes marker, NOT DIN
+ *   isolation) ; outvol+10 >= ress_vol (blo fail) ; outvol-5 <= ress_vol (bhi fail) ;
  *   counter p[+0x0A] >= 0xFA(250) (blo fail)  =>  state 17 -> 18.
  * Unsigned 32-bit math on zero-extended halfwords reproduces add.w/subs + unsigned blo/bhi
  * (outvol<5 wraps outvol-5 high -> correctly fails). Window: outvol ∈ [ress_vol−10, ress_vol+5]. */
 int charge_stm_engage_ok(uint16_t outvol, uint16_t ress_vol, uint16_t cnt,
-                         uint16_t isolation, uint8_t flag)
+                         uint16_t phase_status, uint8_t flag)
 {
     if (flag != 1u) return 0;
-    if (isolation != 4u) return 0;
+    if (phase_status != 4u) return 0;
     uint32_t ov = outvol, rv = ress_vol;
     if (ov + 10u < rv) return 0;      /* outvol+10 >= ress_vol */
     if (ov - 5u > rv) return 0;       /* outvol-5  <= ress_vol */
@@ -148,7 +148,7 @@ void charge_stm_step(uint32_t tick, const charge_stm_inputs_t *in, const chademo
         stm.engage_cnt++;              /* p[+0x0A] dwell counter */
         stm.wait_cnt++;                /* p[+0x14] wait counter */
         stm.engage_ok = (uint8_t)charge_stm_engage_ok(in->outvol, ress_vol, stm.engage_cnt,
-                                                      in->isolation, in->precharge_flag);
+                                                      in->phase_status, in->precharge_flag);
         if (stm.engage_ok) {
             /* match: state 17 -> 18, clear counters (decoded strh r5,[r4,#…] set) */
             stm.engage_cnt = 0; stm.wait_cnt = 0;
@@ -178,8 +178,8 @@ void charge_stm_step(uint32_t tick, const charge_stm_inputs_t *in, const chademo
         goto_state(STM_CURRENTDEMAND, tick, STM_ACT_CHARGE);
         break;
 
-    case STM_CURRENTDEMAND: /* 30: charging; isolation==3 required; periodic current adjust */
-        if (in->isolation != 3u) {
+    case STM_CURRENTDEMAND: /* 30: charging; CHAdeMO hw isolation level==3 required; current adjust */
+        if (in->chademo_isolation_level != 3u) {
             stm.interlock |= STM_IL_ISOLATION; goto_state(STM_STOP_VEH, tick, STM_ACT_ALL_OFF);
         } else if (in->veh_stop) {
             goto_state(STM_STOP_VEH, tick, STM_ACT_ALL_OFF);

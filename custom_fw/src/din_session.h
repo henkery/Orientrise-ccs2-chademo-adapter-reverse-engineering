@@ -85,10 +85,13 @@ typedef struct {
     /* handshake outputs consumed by ccs2_evse -> charge_stm (F §sequence). */
     uint8_t  cablecheck_fin;
     uint8_t  chgparam_ok;
-    uint8_t  precharge_flag;    /* evcc_sta+0x23F                                        */
+    uint8_t  precharge_flag;    /* meas+0x23F (engage needs 1)                           */
     uint8_t  ev_contactor;
     uint8_t  precharge_relay;
-    uint16_t isolation;         /* EVSEIsolationStatus (raw; 3/4 level mapping gated)    */
+    /* Three-signal split (analyze103): DIN wire isolation gates ONLY the session CableCheck rule;
+     * the charge_stm engagement guard tests phase_status (==4), NOT DIN isolation (<=3). */
+    uint16_t din_isolation;     /* DIN wire EVSEIsolationStatus 0..3 (session CableCheck only) */
+    uint16_t phase_status;      /* EVSE charge-phase meas+0x3D1E: 3=CableCheck/4=PreCharge/7=error */
     uint8_t  session_active;
     uint8_t  charging_complete;
     /* last produced Req image (inert; SWD-readable). */

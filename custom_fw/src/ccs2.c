@@ -57,7 +57,10 @@ static void sync_evse_from_session(const din_session_t *ds)
     evse.precharge_flag  = ds->precharge_flag;
     evse.ev_contactor    = ds->ev_contactor;
     evse.precharge_relay = ds->precharge_relay;
-    evse.isolation       = ds->isolation;
+    evse.din_isolation   = ds->din_isolation;   /* DIN wire isolation (session CableCheck only) */
+    evse.phase_status    = ds->phase_status;    /* EVSE charge-phase marker (engage ==4) */
+    /* chademo_isolation_level is hardware-measured (CHAdeMO isolation getter 0x0805206C), NOT
+     * sourced from the DIN session — it stays at its bench/hardware-set value (analyze103). */
 }
 
 void ccs2_step(uint32_t tick)
@@ -185,21 +188,24 @@ void ccs2_session_start(void)
     }
 }
 
-void ccs2_cablecheck_done(uint16_t isolation)
+void ccs2_cablecheck_done(uint16_t din_isolation)
 {
     evse.cablecheck_fin = 1;
-    evse.isolation = isolation;   /* EVSEIsolationStatus; exact 3/4 mapping gated (Agent D §7) */
+    evse.din_isolation = din_isolation;  /* DIN wire EVSEIsolationStatus (session rule only) */
+    evse.phase_status = 3;               /* CableCheckRes writer 0x0802C168 -> meas+0x3D1E=3 */
 }
 
 void ccs2_chgparam_done(void) { evse.chgparam_ok = 1; }
 
 void ccs2_precharge_ready(void)
 {
-    evse.precharge_flag = 1;      /* evcc_sta+0x23F (CableCheckRes/PreChargeRes) */
+    evse.precharge_flag = 1;      /* meas+0x23F */
+    evse.phase_status = 4;        /* PreChargeRes writer 0x0802C27A -> meas+0x3D1E=4 (engage prereq) */
 }
 
 void ccs2_ev_contactor_closed(void) { evse.ev_contactor = 1; }
 void ccs2_precharge_relay_closed(void) { evse.precharge_relay = 1; }
+void ccs2_chademo_isolation(uint16_t level) { evse.chademo_isolation_level = level; }
 
 void ccs2_currentdemand_res(const uint8_t *exi)
 {

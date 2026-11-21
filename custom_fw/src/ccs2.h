@@ -13,8 +13,9 @@
  *
  * Data flows into the gated CHAdeMO layers:
  *   charge_stm_inputs_t.plug_in        <- cp_plug_in()
- *   charge_stm_inputs_t.isolation      <- DIN CableCheck/CurrentDemand isolation status
- *   charge_stm_inputs_t.precharge_flag <- DIN evcc_sta+0x23F (CableCheckRes)
+ *   charge_stm_inputs_t.phase_status   <- DIN session phase_status (CableCheck=3/PreCharge=4/err=7)
+ *   charge_stm_inputs_t.chademo_isolation_level <- CHAdeMO hw isolation measurement (CD interlock)
+ *   charge_stm_inputs_t.precharge_flag <- DIN meas+0x23F (CableCheckRes)
  *   charge_stm_inputs_t.cablecheck_fin / chgparam_ok / ev_contactor / precharge_relay <- DIN session
  *   current_ctrl_inputs_t.evse_max_raw/factor   <- din_meas.evse_max_current (+0x3D20/22)
  *   current_ctrl_inputs_t.evse_avail_raw/factor <- din_meas.evse_present_current (+0x3D14/16)
@@ -58,8 +59,13 @@ typedef struct {
     uint8_t  chgparam_ok;      /* DIN ChargeParameterDiscovery OK             */
     uint8_t  ev_contactor;     /* EV contactor closed                         */
     uint8_t  precharge_relay;  /* precharge relay feedback                    */
-    uint8_t  precharge_flag;   /* evcc_sta+0x23F (engage needs 1)             */
-    uint16_t isolation;        /* EVSE isolation status (engage 4 / CD 3)     */
+    uint8_t  precharge_flag;   /* meas+0x23F (engage needs 1)                 */
+    /* Three-signal split (analyze103): the engagement guard tests phase_status (==4), the
+     * CurrentDemand interlock tests chademo_isolation_level (==3), and din_isolation (0..3)
+     * gates only the session CableCheck rule. Feeding DIN isolation into engage==4 never fires. */
+    uint16_t phase_status;     /* EVSE charge-phase meas+0x3D1E (engage ==4)  */
+    uint16_t chademo_isolation_level; /* CHAdeMO hw isolation level (CD ==3)  */
+    uint16_t din_isolation;    /* DIN wire EVSEIsolationStatus 0..3 (session) */
     uint8_t  secc_found;       /* SDP resolved SECC address+port              */
     uint8_t  protocol;         /* selected app protocol (1=DIN, 2=ISO)        */
 } ccs2_evse_t;
@@ -91,11 +97,12 @@ uint16_t ccs2_demand(uint16_t current, uint16_t voltage, uint8_t *exi_out);
  * are gated (grammar not recovered); these expose the confirmed handshake-flag effects so the
  * session can be driven explicitly. CurrentDemandRes uses the confirmed din_cd_res_decode. */
 void ccs2_session_start(void);                 /* SDP done -> begin DIN SessionSetup        */
-void ccs2_cablecheck_done(uint16_t isolation); /* CableCheckRes finished + isolation status */
+void ccs2_cablecheck_done(uint16_t din_isolation); /* CableCheckRes finished: din_isolation + phase_status=3 */
 void ccs2_chgparam_done(void);                 /* ChargeParameterDiscoveryRes OK            */
-void ccs2_precharge_ready(void);               /* PreChargeRes -> precharge_flag=1          */
+void ccs2_precharge_ready(void);               /* PreChargeRes -> precharge_flag=1 + phase_status=4 */
 void ccs2_ev_contactor_closed(void);           /* EV contactor closed                       */
 void ccs2_precharge_relay_closed(void);        /* precharge relay feedback                  */
+void ccs2_chademo_isolation(uint16_t level);   /* CHAdeMO hw isolation level (CD interlock ==3) */
 void ccs2_currentdemand_res(const uint8_t *exi); /* CurrentDemandRes EXI field map -> meas  */
 void ccs2_session_stop(void);                  /* SessionStop / welding detection           */
 
