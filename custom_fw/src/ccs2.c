@@ -17,6 +17,7 @@
 #include "exi.h"
 #include "qca7005.h"
 #include "v2g_net.h"
+#include "ca_store.h"
 #include "tick.h"
 
 static uint8_t state;
@@ -37,7 +38,9 @@ void ccs2_init(void)
     cp_init();
     din70121_init();
     din_session_init();   /* autonomous DIN EXI session SM (Agent F timers/sequence; inert) */
-    sdp_init(0);   /* Root-cert count 0 -> No-TLS request (0x10); gated until cert config wired */
+    /* SDP TLS gate = PnC Root-cert count (ca_store, Agent N): count low-byte==0 -> No-TLS (0x10),
+     * >0 -> TLS (0x00). ca_store_init reads the ext-SPI cert store (main, after hv/spi4 init). */
+    sdp_init(ca_store_root_count());
     /* Live UDP/TCP/IPv6 + mbedTLS transport (v2g_net, Agent G/H / analyze94): wire the Ethernet TX
      * hook to the QCA7005 PLC modem + the SDP UDP send hook. INERT communication carriage — the
      * lwIP TCP reliability + mbedTLS crypto stay gated hooks; no power GPIO. */
@@ -73,7 +76,7 @@ void ccs2_step(uint32_t tick)
     case CCS2_SLAC:
         slac_step(tick);
         if (slac_link_up()) {
-            sdp_init(0);
+            sdp_init(ca_store_root_count());   /* SDP TLS gate = PnC Root-cert count (ca_store) */
             state = CCS2_SDP;
         }
         break;

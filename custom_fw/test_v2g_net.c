@@ -1,13 +1,14 @@
 /* test_v2g_net.c — host unit test for the V2G network transport (custom_fw/src/v2g_net.c,
  * REPORT §5.9, Agent G/H / analyze94). Build + run:
  *   nix-shell -p gcc --run 'gcc -O2 -Wall -Wextra -Isrc -o test_v2g_net \
- *       test_v2g_net.c src/v2g_net.c src/v2gtp.c && ./test_v2g_net'
+ *       test_v2g_net.c src/v2g_net.c src/v2gtp.c src/nd6.c && ./test_v2g_net'
  * ccs2_rx_exi + sdp_rx are spied here (the heavy ccs2/sdp/din modules are not linked). */
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include "v2g_net.h"
 #include "v2gtp.h"
+#include "nd6.h"
 
 static int checks = 0, failures = 0;
 #define CHECK(cond, msg) do { checks++; if (!(cond)) { failures++; \
@@ -276,13 +277,27 @@ int main(void)
     memcpy((void *)nt->local_ip, src, 16);
     v2g_net_start_tcp(secc, 15118, 0x10, 0);
     v2g_net_tcp_connected(100);
+    /* Resolve the SECC neighbor via ND6 (NA injection) so unicast TX has a dst MAC: create the
+     * INCOMPLETE entry, then a solicited NA (Override) -> REACHABLE + TLLA MAC (nd6_lookup). */
+    uint8_t secc_mac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01};
+    uint8_t na[32]; nd6_build_na(na, secc, secc_mac, ND6_NA_SOLICITED);
+    nd6_find_or_create(secc);
+    nd6_input(na, 32, secc, src);
     spy_eth_calls = 0;
     int tn = v2g_net_tcp_send(exi, el, 200);
     CHECK(tn == (int)el, "tcp_send returns frame len");
     CHECK(spy_eth_calls == 1, "tcp_send -> eth_send");
+    CHECK(memcmp(spy_eth, secc_mac, 6) == 0, "tcp_send dst MAC = ND6-resolved SECC MAC");
     CHECK(spy_eth[14 + 6] == V2G_IP6_NH_TCP, "tcp_send ip6 next-header TCP");
     CHECK((spy_eth[14 + 40 + 12] >> 4) == 5, "tcp_send tcp data offset 5");
     CHECK(spy_eth[14 + 40 + 13] == 0x18, "tcp_send tcp flags ACK|PSH");
+    /* unresolved neighbor -> tcp_send defers (ND6 lookup pending) */
+    v2g_net_init();
+    v2g_net_set_eth_send(eth_send_spy);
+    memcpy((void *)nt->local_ip, src, 16);
+    v2g_net_start_tcp(secc, 15118, 0x10, 0);
+    v2g_net_tcp_connected(100);
+    CHECK(v2g_net_tcp_send(exi, el, 200) == -1, "tcp_send unresolved neighbor -> -1 (ND6 pending)");
     /* tcp_send before established -> error */
     v2g_net_init();
     CHECK(v2g_net_tcp_send(exi, el, 200) == -1, "tcp_send before established -> -1");

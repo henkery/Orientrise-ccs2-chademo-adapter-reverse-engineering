@@ -7,6 +7,7 @@
 #include "v2gtp.h"
 #include "sdp.h"
 #include "ccs2.h"
+#include "nd6.h"
 
 static v2g_net_t net;
 static v2g_net_eth_send_fn eth_send;
@@ -15,7 +16,6 @@ static v2g_deframe_t df;
 static uint8_t tx_buf[1518];
 static uint8_t tls_buf[V2G_SSL_RECORD_BUF_SIZE];
 static uint8_t trace_ring[16][128];   /* diagnostic TRACE buffer (0x20001FEC) */
-static uint8_t neighbor_mac[6];       /* SECC MAC (ND6 gated; placeholder for unicast TX) */
 static uint8_t local_mac[6];          /* adapter Ethernet src MAC (QCA7005 PIB MAC; netif hwaddr) */
 
 static void z(uint8_t *p, uint16_t n) { for (uint16_t i = 0; i < n; i++) p[i] = 0; }
@@ -217,13 +217,13 @@ void v2g_net_init(void)
     net.ciphers[1] = V2G_TLS_CIPHER_ECDH_ECDSA_AES128_CBC_SHA256;    /* 0xC025 */
     net.authmode = V2G_TLS_AUTHMODE_VERIFY_REQUIRED;                 /* 2 */
     v2g_deframe_init(&df);
-    z(neighbor_mac, 6);
+    nd6_init();   /* IPv6 neighbor cache (replaces the gated ND6 hook; Agent N) */
     /* default Ethernet src MAC template (0x080AFDCC); overridden by the PIB MAC via set_local_mac. */
     local_mac[0] = 0xFE; local_mac[1] = 0xFF; local_mac[2] = 0xFE;
     local_mac[3] = 0xFF; local_mac[4] = 0x00; local_mac[5] = 0x01;
 }
 
-void v2g_net_set_eth_send(v2g_net_eth_send_fn fn) { eth_send = fn; }
+void v2g_net_set_eth_send(v2g_net_eth_send_fn fn) { eth_send = fn; nd6_set_send(fn); }
 void v2g_net_set_tls_wrap(v2g_net_tls_wrap_fn fn) { tls_wrap = fn; }
 void v2g_net_set_local_mac(const uint8_t mac[6])
 {
@@ -231,6 +231,7 @@ void v2g_net_set_local_mac(const uint8_t mac[6])
      * netif_create_ip6_linklocal_address 0x08090D68 derives fe80::/64 + modified-EUI-64. */
     cp(local_mac, mac, 6);
     v2g_net_ipv6_linklocal(mac, net.local_ip);
+    nd6_set_local(net.local_ip, mac);   /* ND6 own address (DAD target match) + SLLA/TLLA source */
 }
 const v2g_net_t *v2g_net_get(void) { return &net; }
 
@@ -374,8 +375,12 @@ void v2g_net_rx_ethernet(const uint8_t *frame, uint16_t len, uint32_t now_ms)
         uint16_t tcp_plen = (uint16_t)(payload_len - doff);
         v2g_deframe_push(&df, payload + doff, tcp_plen, deframe_cb, &now_ms);
         net.last_rx = now_ms; net.idle_polls = 0;
+    } else if (nh == V2G_IP6_NH_ICMP6) {
+        /* icmp6_input 0x0809B3D0 -> nd6_input 0x0809C926 (NS135/NA136/RA134). IPv6 src@+8, dst@+24.
+         * ND6 resolves the SECC link-local -> MAC for unicast TX (replaces the gated ND6 hook). */
+        nd6_input(payload, payload_len, ip6 + 8, ip6 + 24);
     }
-    /* ICMPv6 (58) / No-Next (59): not part of the EVCC session data path. */
+    /* No-Next (59): dropped (ip6_input demux). */
 }
 
 /* ---- TX entry ---- */
@@ -422,10 +427,12 @@ int v2g_net_tcp_send(const uint8_t *v2gtp, uint16_t len, uint32_t now_ms)
     }
     if ((uint16_t)(app_len + V2G_TCP_HDR_LEN + V2G_IP6_HDR_LEN + V2G_ETH_HDR_LEN) > sizeof tx_buf)
         return -1;
-    /* Ethernet dst MAC: multicast if SECC ip multicast, else ND6 neighbor (gated; placeholder). */
+    /* Ethernet dst MAC: multicast if SECC ip multicast, else ND6 neighbor lookup (ethip6_output
+     * 0x0809B35C -> 0x0809D5D6). If ND6 has not resolved the SECC MAC the packet is queued + an NS
+     * sent (nd6_lookup returns 0); defer this send until the neighbor is REACHABLE. */
     uint8_t dstmac[6];
     if (net.secc_ip[0] == 0xFFu) v2g_net_ipv6_mcast_mac(net.secc_ip, dstmac);
-    else cp(dstmac, neighbor_mac, 6);
+    else if (!nd6_lookup(net.secc_ip, dstmac)) return -1;
     uint16_t tcp_len = (uint16_t)(app_len + V2G_TCP_HDR_LEN);
     uint16_t o = v2g_net_eth_build(tx_buf, dstmac, local_mac, V2G_ETHTYPE_IPV6);
     o = (uint16_t)(o + v2g_net_ip6_build(tx_buf + o, tcp_len, V2G_IP6_NH_TCP, 255, net.local_ip, net.secc_ip));

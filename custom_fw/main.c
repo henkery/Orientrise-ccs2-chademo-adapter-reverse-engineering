@@ -54,6 +54,8 @@
 #include "cp_adc.h"
 #include "din_session.h"
 #include "v2g_net.h"
+#include "nd6.h"
+#include "ca_store.h"
 
 #define IWDG_KR   (*(volatile uint32_t *)0x40003000u)
 #define IWDG_FEED 0x0000AAAAu
@@ -132,6 +134,16 @@ volatile uint32_t v2g_net_mode = 0;    /* 0 none / 1 plain / 2 TLS              
 volatile uint32_t v2g_net_rx   = 0;    /* EXI frames dispatched to ccs2_rx_exi              */
 volatile uint32_t v2g_net_tx   = 0;    /* V2GTP frames sent                                 */
 
+/* IPv6 ND6 neighbor resolution + PnC CA cert store (SWD-readable; INERT communication only —
+ * Agent N / analyze96). nd6 resolves the SECC link-local -> MAC for unicast TCP/TX (replaces the
+ * gated ND6 hook); ca_store reads the ext-SPI PnC cert store and its Root-cert count gates the SDP
+ * TLS decision. Neither drives a power pin. */
+volatile uint32_t nd6_ns_sent  = 0;    /* ND6 Neighbor Solicitations sent                   */
+volatile uint32_t nd6_na_sent  = 0;    /* ND6 Neighbor Advertisements sent                  */
+volatile uint32_t nd6_reachable = 0;   /* neighbors currently REACHABLE                     */
+volatile uint32_t ca_root_count = 0;   /* valid PnC Root certs (SDP TLS gate)               */
+volatile uint32_t ca_store_present = 0;/* ext-SPI cert store header+checksum valid          */
+
 static void ccs2_rx_dispatch(const uint8_t *frame, uint16_t len)
 {
     ccs2_rx_frames++;
@@ -148,6 +160,9 @@ void main(void)
     rcc_init();          /* HSE 8 MHz -> PLL 168 MHz; APB1 42 / APB2 84 MHz */
     gpio_safe_init();    /* all power pins -> SAFE/de-asserted (contactors open, no HV) */
     hv_cal_ok = (hv_init() == 0);  /* SPI4 + factory cal + ADC1/2/DMA2/TIM8 front-end (§5.21) */
+    ca_store_init();     /* PnC CA cert store: read ext-SPI master + populate Root-cert ptr array
+                          * (Agent N / §5.9). SPI4 is up (hv_init); the Root count gates SDP TLS.
+                          * Communication only — no power drive. */
     cp_capture_init();   /* CP PWM TIM4 input-capture front-end (PD12 AF2, measurement only, §5.9) */
     cp_adc_init();       /* CP/PP ADC3 analog front-end (PA0/1/2+PC2, DMA2 Stream1, shares TIM8, §5.9) */
     can_init();          /* CAN1 500k + acceptance filter + RX0 interrupt (NVIC)     */
@@ -307,6 +322,22 @@ void main(void)
         v2g_net_mode = vn->mode;
         v2g_net_rx   = vn->rx_frames;
         v2g_net_tx   = vn->tx_frames;
+
+        /* IPv6 ND6 (Agent N / §5.9): 1 s neighbor-cache timer (nd6_tmr 0x0809D012 — reachable
+         * countdown / delay->probe / probe retransmit). The 100 Hz loop divides by 100. ND6 RX
+         * (NS/NA/RA) is driven by v2g_net_rx_ethernet's ICMPv6 branch; TX MAC resolution by
+         * nd6_lookup in v2g_net_tcp_send. Communication only — no power drive. */
+        static uint32_t nd6_div = 0;
+        if (++nd6_div >= 100u) { nd6_div = 0; nd6_tmr(); }
+        const nd6_t *n6 = nd6_get();
+        nd6_ns_sent = n6->ns_sent;
+        nd6_na_sent = n6->na_sent;
+        uint32_t reach = 0;
+        for (uint8_t i = 0; i < ND6_CACHE_SIZE; i++)
+            if (n6->cache[i].state == ND6_STATE_REACHABLE) reach++;
+        nd6_reachable = reach;
+        ca_root_count = ca_store_root_count();
+        ca_store_present = ca_store_get()->store_present;
 
         next++;                              /* advance one 10 ms tick */
         while ((int32_t)(tick_get() - next) < 0) { }

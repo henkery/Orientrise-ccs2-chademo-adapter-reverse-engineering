@@ -63,7 +63,7 @@ def main():
     md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
     md.detail = True
 
-    prefixes = ("ccs2_", "slac_", "sdp_", "cp_", "din_", "v2g_", "exi_")
+    prefixes = ("ccs2_", "slac_", "sdp_", "cp_", "din_", "v2g_", "exi_", "nd6_", "ca_")
     ccs2_funcs = {n: a for n, a in syms.items() if n.startswith(prefixes)}
     checks = failures = 0
 
@@ -111,6 +111,25 @@ def main():
     for want in ("cp_adc_init", "cp_adc_publish", "cp_adc_bat_mv", "cp_adc_pp_raw", "cp_adc_bat_raw",
                  "cp_adc_cpd_raw", "cp_adc_d_link", "cp_adc_pd11", "DMA2_Stream1_IRQHandler"):
         check(want in syms, "wired CP-ADC3 symbol present: " + want)
+    # IPv6 ND6 neighbor cache + NS/NA/RA (nd6, Agent N / analyze96) wired into v2g_net
+    # (nd6_init/set_send/set_local/input/lookup) + main (nd6_tmr/get). The pure wire builders
+    # (build_ns/build_na) + find_or_create are required-present (called from nd6_send_ns/na/input/
+    # lookup). nd6_solicited_node_mcast + the small static helpers (find/flush_queue/free_entry/
+    # emit_icmp6/parse_lla) are -O2-INLINED into nd6_send_ns (no standalone symbol); their LOGIC is
+    # verified via constants below + the host test (test_nd6, 81 checks).
+    for want in ("nd6_init", "nd6_set_send", "nd6_set_local", "nd6_input", "nd6_lookup", "nd6_tmr",
+                 "nd6_get", "nd6_send_ns", "nd6_send_na", "nd6_find_or_create", "nd6_build_ns",
+                 "nd6_build_na"):
+        check(want in syms, "wired ND6 symbol present: " + want)
+    # PnC CA cert store (ca_store, Agent N / analyze96) wired into main (ca_store_init/get/
+    # root_count) + ccs2_init (sdp_init(ca_store_root_count())). ca_populate/hdr_valid/entry_valid
+    # are the pure validators/populator (called from ca_store_init, retained). ca_byte_sum +
+    # contract_valid are -O2-INLINED / bench-only (host-tested in test_ca_store, 45 checks); their
+    # LOGIC is verified via constants below. Required-present: init/get/count + populate/hdr_valid/
+    # entry_valid that the autonomous ext-SPI->RAM path reaches.
+    for want in ("ca_store_init", "ca_store_get", "ca_store_root_count", "ca_populate",
+                 "ca_hdr_valid", "ca_entry_valid"):
+        check(want in syms, "wired CA-store symbol present: " + want)
     # din_pow10 is small + -O2-inlined into din_scale/current_ctrl_converter; its LOGIC is verified
     # below via the pow10 table blob (the analyze89 correction), not a standalone symbol.
     # The live transport RX path (v2g_net_rx_ethernet -> deframe -> exi_dispatch -> ccs2_rx_exi ->
@@ -189,7 +208,7 @@ def main():
             if (h & 0xFF7F) == 0xF85F and len(ins.bytes) >= 4:
                 u = (h >> 7) & 1
                 imm12 = int.from_bytes(ins.bytes[2:4], "little") & 0xFFF
-                p = (ins.address + 4) + (imm12 if u else -imm12)
+                p = ((ins.address + 4) & ~3) + (imm12 if u else -imm12)
                 w = pool_word(p)
                 if w is not None and PERIPH_LO <= w <= PERIPH_HI:
                     periph.add(w)
@@ -214,7 +233,8 @@ def main():
         for want in ("ccs2_init", "ccs2_step", "ccs2_fill_current_ctrl", "cp_step",
                      "din_session_get", "v2g_net_get", "v2g_net_tcp_send", "v2g_net_set_local_mac",
                      "cp_capture_init", "cp_capture_duty", "cp_capture_period",
-                     "cp_adc_init", "cp_adc_pp_raw", "cp_adc_cpd_raw", "cp_adc_pd11", "cp_adc_d_link"):
+                     "cp_adc_init", "cp_adc_pp_raw", "cp_adc_cpd_raw", "cp_adc_pd11", "cp_adc_d_link",
+                     "ca_store_init", "ca_store_root_count", "ca_store_get", "nd6_tmr", "nd6_get"):
             check(want in called, "main calls " + want)
         # ccs2_rx is wired via qca7005_set_rx_cb (function pointer), check it is referenced
         check("ccs2_rx_dispatch" in syms or "ccs2_rx" in called, "ccs2 RX dispatcher present")
@@ -267,7 +287,7 @@ def main():
             if (h & 0xFF7F) == 0xF85F and len(ins.bytes) >= 4:
                 u = (h >> 7) & 1
                 imm12 = int.from_bytes(ins.bytes[2:4], "little") & 0xFFF
-                p = (ins.address + 4) + (imm12 if u else -imm12)
+                p = ((ins.address + 4) & ~3) + (imm12 if u else -imm12)
                 w = pool_word(p)
                 if w is not None:
                     add_word(w)
@@ -410,6 +430,55 @@ def main():
     bat_mv = func_imms("cp_adc_bat_mv")
     check(0x19C8 in bat_mv and 0x20020021 in bat_mv,
           "cp_adc_bat_mv carries AD_BAT x6600 (0x19C8) + /32760 magic (0x20020021, /8 then /4095)")
+
+    # --- IPv6 ND6 neighbor cache + NS/NA/RA (nd6, Agent N / analyze96) ---
+    # Byte-derived from stock nd6_input 0x0809C926 / nd6_send_ns 0x0809C520 / nd6_send_na
+    # 0x0809C7BA / nd6_tmr 0x0809D012 / ethip6_output 0x0809B35C. -O2 inlines the small static
+    # helpers (find/flush_queue/free_entry/emit_icmp6/parse_lla) into the required-present callers,
+    # so verify their LOGIC via distinctive constants unioned across those callers.
+    nd6_imms = (func_imms("nd6_init") | func_imms("nd6_input") | func_imms("nd6_tmr")
+                | func_imms("nd6_send_ns") | func_imms("nd6_send_na") | func_imms("nd6_lookup")
+                | func_imms("nd6_build_ns") | func_imms("nd6_build_na")
+                | func_imms("nd6_solicited_node_mcast"))
+    for v, lab in [(30000, "reachable_time default 30000ms (pre-RA)"),
+                   (1000, "retransmit_time / REACHABLE tick 1000ms"),
+                   (5, "NS-receive DELAY counter 5 (deviation from stock STALE)"),
+                   (3, "MAX_PROBES 3 (INCOMPLETE/PROBE free threshold)"),
+                   (0x87, "ICMPv6 NS type 135"), (0x88, "ICMPv6 NA type 136"),
+                   (0x86, "ICMPv6 RA type 134"),
+                   (0x22, "NA DAD reply flags 0x22 (all-nodes + Override)"),
+                   (0x60, "NA solicited reply flags 0x60 (Solicited + Override)"),
+                   (255, "ICMPv6 hop limit 255")]:
+        check(v in nd6_imms, "nd6 carries " + lab)
+    # NA flags hi-nibble mask: stock keeps R/S/O (flags & 0xF0). -O2 emits bic.w r3,r4,#15 (clear
+    # low nibble == &0xF0) in nd6_build_na, so the immediate is 0x0F not 0xF0; accept either form.
+    na_imms = func_imms("nd6_build_na")
+    check(0x0F in na_imms or 0xF0 in na_imms,
+          "nd6_build_na carries NA flags hi-nibble mask (bic #0x0F == &0xF0, R/S/O)")
+    # TLLA option {type2,len1} packed as the u16 0x0102 stored at out+24 (nd6_build_na).
+    check(0x102 in na_imms, "nd6_build_na carries TLLA {type2,len1} packed 0x0102 @out+24")
+    # ND6 is pure state-machine + wire logic: NO peripheral base (power-GPIO safe; already covered
+    # by the safety scan above via the nd6_ prefix). The neighbor cache is RAM 0x200xxxxx only.
+
+    # --- PnC CA cert store (ca_store, Agent N / analyze96) ---
+    # Byte-derived from stock ext-SPI master hdr@0x1F8000 (magic 0xCEA155E1/version1/size/byte-sum)
+    # / data@0x1F8010 / entry 808B {msg_code,der_len<=800,DER} / populate 0x080515CC (Root 0x8101
+    # slots0-4 compact NULL-term ptr-array). -O2 inlines the pure validators (hdr_valid/entry_valid/
+    # contract_valid/byte_sum/populate) into ca_store_init, so union their constants.
+    ca_imms = (func_imms("ca_store_init") | func_imms("ca_populate") | func_imms("ca_hdr_valid")
+               | func_imms("ca_entry_valid") | func_imms("ca_contract_valid")
+               | func_imms("ca_byte_sum"))
+    for v, lab in [(0xCEA155E1, "ext-SPI master header magic 0xCEA155E1"),
+                   (808, "CA entry size 808B (0x328)"),
+                   (800, "CA DER max 800B (0x320)"),
+                   (0x8101, "Root cert msg_code 0x8101"),
+                   (0x1F8000, "ext-SPI header addr 0x1F8000"),
+                   (0x1F8010, "ext-SPI data addr 0x1F8010"),
+                   (9792, "CA data buffer max 9792B (12 entries)")]:
+        check(v in ca_imms, "ca_store carries " + lab)
+    # ca_store reads ext-SPI flash via spi4_read (bl, not a peripheral immediate) -> the pure
+    # populator/validators reference NO 0x400xxxxx peripheral base (power-GPIO safe; covered by the
+    # ca_ prefix safety scan). The flash addrs 0x1F8000/0x1F8010 are external SPI, not STM32 periph.
 
     print("%d checks, %d failures" % (checks, failures))
     return 1 if failures else 0

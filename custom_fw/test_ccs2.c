@@ -24,6 +24,8 @@ int qca7005_frame_send(const uint8_t *f, uint16_t len) { (void)f; (void)len; ret
 const uint8_t *qca7005_mac(void) { return mac; }
 /* tick stub: ccs2_rx timestamps the IPv6 RX path via tick_get()*10 (ms). */
 uint32_t tick_get(void) { return 0; }
+/* spi4 stub: ca_store (linked via ccs2) defaults to spi4_read; no ext flash on the host. */
+int spi4_read(uint32_t addr, uint8_t *dst, uint32_t len) { (void)addr; (void)dst; (void)len; return -1; }
 
 static void st16(uint8_t *p, uint16_t v) { p[0] = v & 0xFF; p[1] = v >> 8; }
 

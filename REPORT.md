@@ -1033,6 +1033,68 @@ power pin; the asserted power-stage drive stays the last gated layer.
 - **Still GATED:** the BCB PD11 drive + the +24 V power-fail hysteresis/queue subsystem (separate from CP/PP
   acquisition); the asserted power-stage drive stays the last gated layer.
 
+#### ND6 + PnC CA cert store addendum (`analyze96.py`, byte-exact) — IPv6 neighbor discovery + Plug-and-Charge root certs
+
+Two of the four GATED third-party hooks beneath the live transport (`v2g_net.c`, analyze94) are recovered
+byte-exact and replicated **inert (communication only)** in `custom_fw/src/{nd6,ca_store}.c`. Neither drives a
+power GPIO. The remaining two hooks (lwIP TCP reliability + mbedTLS crypto/TLS) stay gated.
+
+- **(ND6) IPv6 Neighbor Discovery — `src/nd6.c`.** RX chain `ethernet_input 0x0809D914` → `ip6_input 0x0809B88E` /
+  demux `0x0809BB2C` (next-header 6 TCP / 17 UDP / 58 ICMPv6 / 59 drop) → `icmp6_input 0x0809B3D0` →
+  `nd6_input 0x0809C926`. Neighbor cache `0x20024524` = 10×40 B {+0 IPv6[16], +0x10 netif ptr, +0x14 MAC[6],
+  +0x1C queue head, +0x20 state u8, +0x21 is_router u8, +0x24 counter u32}; ND6 global `0x20000B70` {+0 cached
+  neighbor idx, +1 cached router idx, +4 reachable_time, +8 retransmit_time}. State enum TBB `0x0809D030` jump
+  bytes `37 03 0e 1c 1f 2b` = UNUSED0 / INCOMPLETE1 / REACHABLE2 / STALE3 / DELAY4 / PROBE5. `nd6_input` entry
+  loads the global+cache pools, `mov sl,#4` (DELAY) / `mov fp,#5` (counter); dispatch `cmp #0x87`(135 NS) /
+  `#0x86`(134 RA) / `#0x88`(136 NA). **NA receive** `0x0809C962`: find by TARGET addr, TLLA MAC copied **only if
+  Override** (byte4 bit5 = 0x20), state = REACHABLE(2) store @`0x0809CAE6`, counter = reachable_time @`0x0809CAEE`,
+  `flush_queue 0x0809C8BA`. **NS receive**: neighbor by SRC, state = DELAY(4) / counter = 5 @`0x0809CC84/88` — a
+  **C013 DEVIATION** from stock lwIP STALE=3; SLLA MAC → entry; target == own → NA reply (DAD src `::` → all-nodes
+  `ff02::1` flags 0x22; else solicited unicast flags 0x60). **RA**: reachable_time@+8 / retrans_timer@+12 ntohl →
+  global (reachable only if non-zero), sender is_router = 1. Wire: `nd6_send_ns 0x0809C520` type135 + SLLA
+  {type1, len1, MAC[6]} (len byte = (hwaddr_len+9)>>3 = 1 eight-octet unit), `nd6_send_na 0x0809C7BA` type136 +
+  flags & 0xF0 (R 0x80 / S 0x40 / O 0x20) + TLLA {type2, len1, MAC}, hop 255, solicited-node mcast
+  `ff02::1:ffXX:XXXX`. `nd6_tmr 0x0809D012` (1 s): REACHABLE counter −= 1000 → STALE; DELAY counter−− → PROBE;
+  INCOMPLETE/PROBE counter ≥ 3 && !router → free else counter++ + NS (INCOMPLETE mcast / PROBE unicast); STALE age.
+  TX lookup `ethip6_output 0x0809B35C` → `0x0809D5D6`: mcast → 33:33:dst[12..15]; STALE → DELAY/5 + MAC;
+  REACHABLE/DELAY/PROBE → MAC; INCOMPLETE/UNUSED → queue `0x0809D524` + NS. Helpers `find_neighbor 0x0809C4AA` /
+  `new_neighbor 0x0809C368` / `free_neighbor 0x0809C32A` / `flush_queue 0x0809C8BA`. [?] pre-RA reachable/retransmit
+  defaults (30000/1000) unproven from bytes; the replica uses them and updates from RA.
+- **(CA) Plug-and-Charge CA cert store — `src/ca_store.c`.** TWO stores: (1) external SPI flash master header
+  @`0x1F8000` (16 B: [0] magic `0xCEA155E1`, [4] version = 1, [8] size, [12] byte-sum checksum), data @`0x1F8010`,
+  read via SPI4 READ `0x08088CFE` (== `spi4_read`); (2) internal A/B flash `0x0800C000` (sector3) / `0x08010000`
+  (sector4), memory-mapped (header magic / version = 0 / [+0x2638] seq / [+0x263C] tail `0xCEA2AAE1`). Entry 808 B
+  (0x328) {+0 msg_code u32, +4 der_len u32 (≤ 800 = 0x320; Contract = 0x20), +8 DER}. Validators `0x08051CE2`
+  (msg_code == expected && 0 < der_len ≤ 0x320) / `0x08051CFE` (Contract der_len == 0x20); internal-store validator
+  `0x08051500` (magic + tail). Refresh `0x0805184C` (`mov r0,#0x1F8000`; magic @`0x08051862` / version == 1 cmp
+  @`0x0805186C` / size ≥ 808 `cmp #0x328` @`0x08051872` / 4-aligned / byte-sum == hdr[12] @`0x080518F8`). Populate
+  `0x080515CC`: config `0x20018A44` memset 0x28; Root (0x8101) loop validate → `0x08051680` r0 = entry+4
+  ({der_len, DER}) / `0x08051684` `stm r6!,{r0}` append compact NULL-term ptr-array @config+4 = `0x20018A48`;
+  count → config[0x20] = `0x20018A64` (the SDP No-TLS gate, §5.9/§8.8b). Getter `0x08051ADC` (pool `0x20018A6C`
+  − 0x24 → `0x20018A48`); caller `0x080208CA` bl getter / `movs r1,#0` / bl mbedTLS setup `0x080604D2`
+  (`x509_crt_parse 0x0805D76C` + `ssl_conf_ca_chain 0x0808FAD6` + authmode arg1 == 0 → 2 VERIFY_REQUIRED
+  `movs r1,#2` @`0x08060568` else 1 @`0x0806052E` + `ssl_conf_authmode 0x0808F442`). Dumper `0x0804F58E`.
+  **CORRECTION:** the prior CA anchors `0x08050E14` / `0x08050B94` / `0x08051074` / `0x0804EB5C` were GARBLED; the
+  real cluster is `0x080515CC` (populate) / `0x0805184C` (refresh) / `0x08051500` (internal validator) /
+  `0x0805159C` (base getter, higher-seq) / `0x08051526` (A/B commit) / `0x0804F58E` (dumper) / `0x08051AAC`.
+  "flash → RAM" = ext-SPI → internal-A/B (memory-mapped) → RAM ptr-array (**no bulk DER copy**); the custom replica
+  reads ext-SPI → RAM directly (no internal A/B management). X509 DER parse = mbedTLS (gated, Agent M scope).
+- **Replication + verification.** `src/nd6.c` (pure neighbor-cache SM + NS/NA/RA wire build/parse + `nd6_tmr`,
+  live TX behind a hook) and `src/ca_store.c` (ext-SPI header validate + byte-sum + compact Root ptr-array
+  populator). `v2g_net.c` wires `nd6_init`/`set_send`/`set_local` + `rx_ethernet` ICMPv6 → `nd6_input` + `tcp_send`
+  unicast dst MAC via `nd6_lookup` (defers until resolved); `ccs2.c` feeds `sdp_init(ca_store_root_count())`; `main`
+  wires `ca_store_init` after HV + `nd6_tmr` every 100 ticks (1 s) + publishes `nd6_ns_sent/na_sent/reachable` +
+  `ca_root_count/ca_store_present` (SWD-readable). Host-tested `test_nd6` **81**, `test_ca_store` **45** (pure
+  logic); `test_v2g_net` 91 / `test_ccs2` 21 updated for the ND6/CA wiring. Built image disasm-verified
+  (`custom_fw/verify_ccs2.py`, **171 checks**): ND6 reachable/retransmit 30000/1000 + NS-receive counter 5 + ICMPv6
+  types 135/136/134 + NA flags 0x22/0x60 + `bic #0x0F` (& 0xF0) + TLLA 0x0102 + hop 255; CA magic `0xCEA155E1` +
+  entry 808 / DER 800 + Root 0x8101 + ext addrs `0x1F8000`/`0x1F8010` + data 9792; **no peripheral base** in either
+  module (power-GPIO safe). `analyze96.py` **29 checks** reproduces the ND6 entry/dispatch/NA/NS/state-enum + CA
+  validator/refresh/populate/getter/authmode chain. Build 21980 B code / 43604 B bss; `CUSTOM.UPG` re-wrapped
+  (132102 B, CRC residue 0 + app-verbatim + stock round-trip).
+- **Still GATED:** lwIP TCP reliability (SYN/ACK/retransmit/congestion) + mbedTLS crypto (ECDHE/AES/SHA256/X509) +
+  the TLS handshake/record SM — the remaining two hooks; the asserted power-stage drive stays the last gated layer.
+
 ### 5.10 USB log stick — firmware-match proof & device provenance  [C unless noted]
 
 **Files the device writes to the stick** (observed on the user's unit after boot + charging sessions,
@@ -2479,6 +2541,26 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   `custom_fw/verify_ccs2.py` (129 checks). The BCB PD11 drive + the +24 V power-fail subsystem stay GATED (separate
   from CP/PP acquisition); the asserted power-stage drive stays the last gated layer.
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze95.py'`.
+- `analyze96.py` — **IPv6 ND6 + PnC CA cert store decoder (§5.9 ND6/CA addendum, custom_fw `nd6` + `ca_store`
+  layers)**: recovers two of the four GATED third-party hooks beneath the live transport (analyze94). (ND6)
+  `nd6_input 0x0809C926` entry (ND6 global `0x20000B70` + 10×40 B neighbor cache `0x20024524` pools, `mov sl,#4`
+  DELAY / `mov fp,#5` counter), ICMPv6 dispatch `cmp #0x87`/`#0x86`/`#0x88` (NS135/RA134/NA136), NA-receive
+  REACHABLE(2) store @`0x0809CAE6` + counter=reachable_time @`0x0809CAEE` (TLLA MAC gated on Override 0x20),
+  NS-receive DELAY(4)/counter=5 @`0x0809CC84/88` (**C013 DEVIATION** from stock lwIP STALE=3), state-enum TBB
+  `0x0809D030` bytes `37 03 0e 1c 1f 2b`; wire builders `nd6_send_ns 0x0809C520` (type135+SLLA) / `nd6_send_na
+  0x0809C7BA` (type136+flags&0xF0+TLLA) / `nd6_tmr 0x0809D012`. (CA) internal-store validator `0x08051500`
+  (magic `0xCEA155E1` + tail `0xCEA2AAE1`), ext-flash refresh `0x0805184C` (`mov r0,#0x1F8000`, version==1 cmp
+  @`0x0805186C`, size≥808 `cmp #0x328` @`0x08051872`, data pool `0x001F8010`, config `0x20018A44`), Root-cert
+  ptr-array populate `0x08051680` (r0=entry+4) / `0x08051684` (`stm r6!,{r0}`), cert-list getter `0x08051ADC`
+  (pool `0x20018A6C`) → caller `0x080208CA` (`movs r1,#0`) → mbedTLS authmode mapping `0x08060528`/`0x08060568`
+  (arg1==0 → 2 VERIFY_REQUIRED). **LOAD-BEARING CORRECTION:** the prior CA anchors `0x08050E14`/`0x08050B94`/
+  `0x08051074`/`0x0804EB5C` were GARBLED — the real cluster is `0x080515CC`/`0x0805184C`/`0x08051500`/`0x0805159C`/
+  `0x08051526`/`0x0804F58E`/`0x08051AAC`; "flash→RAM" = ext-SPI → internal-A/B (memory-mapped) → RAM ptr-array
+  (no bulk DER copy). Replicated INERT (communication only) in `custom_fw/src/{nd6,ca_store}.c` + wired into
+  `v2g_net.c`/`ccs2.c`/`main.c`. Host-tested `test_nd6` 81 / `test_ca_store` 45; built-image ND6/CA constants +
+  no-peripheral-base disasm-verified `custom_fw/verify_ccs2.py` (171 checks). The lwIP TCP reliability + mbedTLS
+  crypto/TLS hooks stay GATED; the asserted power-stage drive stays the last gated layer.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze96.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -2558,16 +2640,26 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   ×6600/32760 / ×3300/32760 mV scaling + D_LINK PB12 / PD11 read-only IDR reads; BCB PD11 drive + power-fail
   queue GATED); `cp.c`/`cp.h` labeling corrected (`cp_ad_cp`→`cp_ad_bat`, `cp_freq`→period µs); **measurement
   only, drives NO power GPIO**;
+  **IPv6 ND6 + PnC CA cert store (§5.9 ND6/CA addendum, analyze96)**: `src/nd6.c` (10×40 B neighbor cache +
+  NS/NA/RA wire build/parse + 1 s `nd6_tmr` state countdown — REACHABLE→STALE / DELAY→PROBE / INCOMPLETE/PROBE
+  ≥3 probes→free; NA-receive REACHABLE + Override-gated TLLA MAC; NS-receive DELAY/counter 5 [C013 deviation
+  from stock STALE]; solicited-node mcast `ff02::1:ffXX:XXXX`; live TX behind a hook), `src/ca_store.c` (ext-SPI
+  master hdr@`0x1F8000` magic `0xCEA155E1`/version1/size/byte-sum validate + data@`0x1F8010` → compact NULL-term
+  Root(0x8101) ptr-array of {der_len,DER} entry+4 pointers, 808 B entries der_len≤800; root_count feeds the SDP
+  No-TLS gate; ext-SPI→RAM directly, no internal A/B management); `v2g_net.c` wires nd6_init/set_send/set_local
+  + ICMPv6 RX→nd6_input + tcp_send unicast dst MAC via nd6_lookup (defers until resolved); `ccs2.c` feeds
+  sdp_init(ca_store_root_count()); **communication only, drives NO power GPIO**;
   **communication only, drives NO power GPIO**; EXI grammar + session timers RECOVERED (analyze93) + live
-  transport carriage RECOVERED (analyze94) + CP/PP analog front-end RECOVERED (analyze95); Req-side grammars [?]
-  + lwIP/mbedTLS third-party stacks still GATED; host-unit-tested
-  `test_{v2gtp,slac,cp,cp_capture,cp_adc,sdp,din70121,ccs2,exi,din_session,v2g_net}.c`
-  (14/54/32/42/42/31/36/21/55/39/89 checks; full suite 574); built-image power-GPIO safety + pow10 table +
+  transport carriage RECOVERED (analyze94) + CP/PP analog front-end RECOVERED (analyze95) + ND6 neighbor
+  discovery + PnC CA cert store RECOVERED (analyze96); Req-side grammars [?] + lwIP TCP reliability + mbedTLS
+  crypto/TLS third-party stacks still GATED; host-unit-tested
+  `test_{v2gtp,slac,cp,cp_capture,cp_adc,sdp,din70121,ccs2,exi,din_session,v2g_net,nd6,ca_store}.c`
+  (14/54/32/42/42/31/36/21/55/39/91/81/45 checks; full suite 702); built-image power-GPIO safety + pow10 table +
   session timer constants + transport cipher list/EtherType/next-header demux + CP/PP ADC3/DMA2 register-exact
-  + read-only-IDR disasm-verified `verify_ccs2.py` (129 checks); `main.c`
-  (rcc→gpio_safe→**hv**→**cp_capture_init**→**cp_adc_init**→can→chademo→**charge_stm**→**current_ctrl**→tick→
-  `cpsie i`→**qca7005_init** [blocking IWDG-fed bring-up, publish `ccs2_qca_ok`]→**ccs2_init**→
-  **v2g_net_set_local_mac** [EUI-64 link-local from PIB MAC], then 100 Hz loop: IWDG feed
+  + read-only-IDR + ND6/CA constants disasm-verified `verify_ccs2.py` (171 checks); `main.c`
+  (rcc→gpio_safe→**hv**→**ca_store_init**→**cp_capture_init**→**cp_adc_init**→can→chademo→**charge_stm**→
+  **current_ctrl**→tick→`cpsie i`→**qca7005_init** [blocking IWDG-fed bring-up, publish `ccs2_qca_ok`]→
+  **ccs2_init**→**v2g_net_set_local_mac** [EUI-64 link-local from PIB MAC], then 100 Hz loop: IWDG feed
   + `heartbeat` + publish `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + **cp_step** [real CP/PP front-end:
   cp_capture duty/period + cp_adc PP/CPD raw + PD11/D_LINK; publish `cp_cap_duty/period/upd`, `cp_plug/state`,
   `cp_pp_mv/cpd_mv/bat_mv`, `cp_pp_raw/cpd_raw`, `cp_d_link/pd11`] + **ccs2_step** + **charge_stm_step** with EVSE
@@ -2578,15 +2670,18 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   only when ESTABLISHED] + periodic TX + can_service
   + **qca7005_service**→`ccs2_rx` [publish `ccs2_mac_valid/ccs2_rx_frames/ccs2_st/ccs2_link/ccs2_secc/
   ccs2_proto`] + **din_session_get** [publish `din_st_state/din_st_fault/din_st_retry/din_st_active`] +
-  **v2g_net_get** [publish `v2g_net_st/v2g_net_mode/v2g_net_rx/v2g_net_tx`];
+  **v2g_net_get** [publish `v2g_net_st/v2g_net_mode/v2g_net_rx/v2g_net_tx`] + **nd6_tmr** every 100 ticks [1 s;
+  publish `nd6_ns_sent/nd6_na_sent/nd6_reachable`] + **ca_store_get/root_count** [publish `ca_root_count/
+  ca_store_present`];
   **no ASSERTED power-stage drive**),
-  `build.sh`/`verify_pad.py`/`verify_ccs2.py`/`README.md`. Built + verified (19124 B code / 26712 B bss, vectors
+  `build.sh`/`verify_pad.py`/`verify_ccs2.py`/`README.md`. Built + verified (21980 B code / 43604 B bss, vectors
   `MSP=0x20030000`/`reset=0x080201AD`, SysTick + CAN1_RX0 + TIM4 + DMA2_Stream0 + DMA2_Stream1 strong overrides
   at IRQ15/IRQ20/IRQ30/IRQ56/IRQ57 confirmed, adc_init/spi4_init/hv_get_raw register writes + interpolation +
   engagement-guard compares + cp_adc_init ADC3/DMA2 register-exact + read-only D_LINK/PD11 IDR disasm-checked,
-  charge_stm_step + current_ctrl_step + the pure-logic CCS2/EXI/session/transport/CP-front-end modules have no
-  peripheral/GPIO stores, pow10 converter table + session timer constants + transport cipher list {0xC023,0xC025}
-  + IPv6 EtherType/next-header demux present, CRC residue 0, app verbatim + stock round-trip).
+  charge_stm_step + current_ctrl_step + the pure-logic CCS2/EXI/session/transport/CP-front-end/ND6/CA modules
+  have no peripheral/GPIO stores, pow10 converter table + session timer constants + transport cipher list
+  {0xC023,0xC025} + IPv6 EtherType/next-header demux + ND6 reachable/retransmit/ICMPv6-type/NA-flag constants +
+  CA magic/entry-size/ext-flash-addr constants present, CRC residue 0, app verbatim + stock round-trip).
   `outvol` accuracy must be bench-verified vs a reference before the gated engagement/power layer.
   Power-stage drive stays GATED behind a compile-time safety flag until bench-validated; the CCS2 EVSE-side
   subsystem now supplies the stm + current-control EVSE inputs and the CurrentDemandReq actuation, runs the
