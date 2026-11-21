@@ -18,7 +18,7 @@ int main(void)
     CHECK(cp_ad_pp(0) == 0,         "AD_PP 0 -> 0");
     CHECK(cp_ad_pp(32760) == 1650,  "AD_PP half -> 1650 mV");
     CHECK(cp_ad_cpd(32760) == 3300, "AD_CPD full-scale 32760 -> 3300 mV");
-    CHECK(cp_ad_cp(32760) == 6600,  "CP analog full-scale -> 6600 mV (x2 rail)");
+    CHECK(cp_ad_bat(32760) == 6600, "AD_BAT full-scale -> 6600 mV (x2 rail)");
 
     /* --- CP state char (0x08052914) --- */
     CHECK(cp_state_char(0, 0, 0) == CP_STATE_E,   "duty 0 -> 'E'");

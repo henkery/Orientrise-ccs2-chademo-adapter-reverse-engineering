@@ -95,6 +95,22 @@ def main():
                  "v2g_deframe_push", "v2g_net_trace_feed", "ccs2_rx_exi", "exi_decode_header",
                  "din_session_rx", "v2gtp_parse"):
         check(want in syms, "wired transport/RX symbol present: " + want)
+    # CP PWM TIM4 input-capture front-end (cp_capture, Agent J / analyze95) wired into main
+    # (cp_capture_init + duty/period feed cp_step). The strong TIM4_IRQHandler proves the ISR is
+    # retained (IRQ30 vector). cp_capture_get/changed are small + -O2-inlined (no standalone
+    # symbol, like din_pow10); the pure median/publish/process + getters are required-present.
+    for want in ("cp_capture_init", "cp_capture_median", "cp_capture_publish", "cp_capture_process",
+                 "cp_capture_duty", "cp_capture_period", "cp_capture_update_count", "TIM4_IRQHandler"):
+        check(want in syms, "wired CP-capture symbol present: " + want)
+    # CP/PP ADC3 analog acquisition front-end (cp_adc, Agent I / analyze95) wired into main
+    # (cp_adc_init + PP/CPD raw + PD11/D_LINK feed cp_step; BAT scaled for SWD). The strong
+    # DMA2_Stream1_IRQHandler proves the IRQ57 ISR is retained. cp_adc_publish (per-event sum +
+    # publish-every-8) + the raw getters + d_link/pd11 leaves are required-present. cp_adc_pp_mv/
+    # cpd_mv/ch1x4 are -O2-inlined / gc-eliminated (bench-only, host-tested in test_cp_adc); the
+    # scaling LOGIC is verified via cp_adc_bat_mv (retained, called from main) + the host test.
+    for want in ("cp_adc_init", "cp_adc_publish", "cp_adc_bat_mv", "cp_adc_pp_raw", "cp_adc_bat_raw",
+                 "cp_adc_cpd_raw", "cp_adc_d_link", "cp_adc_pd11", "DMA2_Stream1_IRQHandler"):
+        check(want in syms, "wired CP-ADC3 symbol present: " + want)
     # din_pow10 is small + -O2-inlined into din_scale/current_ctrl_converter; its LOGIC is verified
     # below via the pow10 table blob (the analyze89 correction), not a standalone symbol.
     # The live transport RX path (v2g_net_rx_ethernet -> deframe -> exi_dispatch -> ccs2_rx_exi ->
@@ -128,6 +144,16 @@ def main():
     for name, addr in sorted(ccs2_funcs.items()):
         size = func_size(name)
         if size == 0:
+            continue
+        # cp_capture_init is a HARDWARE measurement init (TIM4 / GPIOD PD12 / RCC / NVIC), like
+        # adc_init / qca7005_init — excluded from the pure-logic no-peripheral check. Its
+        # measurement-only peripheral set (no power-port GPIOB/C/E) is verified separately below.
+        # The pure cp_capture_median/publish/process/getters remain peripheral-free (checked).
+        # cp_adc_init (ADC3 / DMA2 Stream1 / GPIOA+GPIOC analog / RCC / NVIC) and the cp_adc_d_link/
+        # pd11 GPIO IDR read leaves are likewise HARDWARE measurement — excluded here, verified
+        # separately below (init = analog-mode config only, no power drive; leaves = read-only).
+        # The pure cp_adc_publish/scaling/raw-getters remain peripheral-free (checked).
+        if name in ("cp_capture_init", "cp_adc_init", "cp_adc_d_link", "cp_adc_pd11"):
             continue
         o = off(addr)
         code = fw[o:o + size]
@@ -186,7 +212,9 @@ def main():
         addr_to_name = {a: n for n, a in syms.items()}
         called = {addr_to_name.get(t, "") for t in bl_targets}
         for want in ("ccs2_init", "ccs2_step", "ccs2_fill_current_ctrl", "cp_step",
-                     "din_session_get", "v2g_net_get", "v2g_net_tcp_send", "v2g_net_set_local_mac"):
+                     "din_session_get", "v2g_net_get", "v2g_net_tcp_send", "v2g_net_set_local_mac",
+                     "cp_capture_init", "cp_capture_duty", "cp_capture_period",
+                     "cp_adc_init", "cp_adc_pp_raw", "cp_adc_cpd_raw", "cp_adc_pd11", "cp_adc_d_link"):
             check(want in called, "main calls " + want)
         # ccs2_rx is wired via qca7005_set_rx_cb (function pointer), check it is referenced
         check("ccs2_rx_dispatch" in syms or "ccs2_rx" in called, "ccs2 RX dispatcher present")
@@ -270,6 +298,118 @@ def main():
     net_init_imms = func_imms("v2g_net_init")
     check(0xC023 in net_init_imms and 0xC025 in net_init_imms,
           "v2g_net_init carries TLS cipher list {0xC023,0xC025}")
+
+    # --- CP PWM TIM4 input-capture front-end (cp_capture, Agent J / analyze95) ---
+    # Byte-exact TIM4 init 0x08088A8C register values + PD12 AF2 RMW masks + NVIC IRQ30.
+    cap_init = func_imms("cp_capture_init")
+    for v, lab in [(0x53, "PSC=83 (1us/tick)"), (0x456, "ARR=1110"), (0x54, "SMCR reset TS=TI1FP1"),
+                   (0x201, "CCMR1 CH1 direct + CH2 indirect TI1"), (0x44C, "CCR3=1100 heartbeat"),
+                   (0x13, "CCER CH1 falling / CH2 rising"), (0x0A, "DIER CC1IE|CC3IE"),
+                   (0x81, "CR1 CEN|ARPE"), (0x40000800, "TIM4 base")]:
+        check(v in cap_init, "cp_capture_init carries TIM4 " + lab)
+    check(0x40000000 in cap_init, "cp_capture_init enables NVIC IRQ30 (1<<30)")
+    # PD12 read-modify-write masks (preserve gpio_safe PD11/PD8/PD3): MODER/PUPDR bits25:24,
+    # AFRH nibble12. -O2 materializes the set/clear masks as immediates.
+    for v, lab in [(0x3000000, "PD12 MODER/PUPDR mask 3<<24"), (0x2000000, "PD12 MODER AF 2<<24"),
+                   (0x1000000, "PD12 PUPDR pull-up 1<<24"), (0xF0000, "PD12 AFRH mask 0xF<<16"),
+                   (0x20000, "PD12 AFRH AF2 2<<16")]:
+        check(v in cap_init, "cp_capture_init carries " + lab)
+    # measurement only: TIM4 + GPIOD (computed 0x40020000+0xC00) + RCC; NO power-port GPIOB/C/E.
+    check(0x40020400 not in cap_init and 0x40020800 not in cap_init and 0x40021000 not in cap_init,
+          "cp_capture_init references no power-port GPIOB/GPIOC/GPIOE (measurement only)")
+    # ISR body 0x08088ACE: duty per-mille 1000 + validity window CCR1 in [950,1050].
+    cap_proc = func_imms("cp_capture_process")
+    for v, lab in [(0x3E8, "duty x1000 per-mille"), (0x3B6, "validity CCR1-950"),
+                   (0x64, "validity span 100")]:
+        check(v in cap_proc, "cp_capture_process carries " + lab)
+    # deglitch 0x08088A20 thresholds: full 32 -> cmp #31 (0x1F)+bls; zero 128 -> uint8 sign-bit
+    # test lsls #24 (0x18 shift)+bpl — -O2 emits no #128 immediate. Both characterized here; the
+    # host test (test_cp_capture) proves the 128/32 sample-count logic exhaustively.
+    cap_pub = func_imms("cp_capture_publish")
+    check(0x3E8 in cap_pub, "cp_capture_publish carries full-scale 1000")
+    check(0x1F in cap_pub, "cp_capture_publish carries full-deglitch threshold 32 (cmp #31)")
+    check(0x18 in cap_pub, "cp_capture_publish carries zero-deglitch 128 sign-test (lsls #24)")
+    # median 0x08088B9E: batch 16 + tight-cluster span 15 + DC-reject 1000.
+    cap_med = func_imms("cp_capture_median")
+    check(0x10 in cap_med and 0xF in cap_med and 0x3E8 in cap_med,
+          "cp_capture_median carries batch 16 / span 15 / DC-reject 1000")
+
+    # --- CP/PP ADC3 analog acquisition front-end (cp_adc, Agent I / analyze95) ---
+    # Byte-exact ADC3 init 0x08088628 block: CR1=0x800 DISCEN (1 conv/trigger), CR2=0x1E000301
+    # (ADON|DMA|DDS|EXTSEL=14 TIM8_TRGO|rising), SMPR all-ch 84 cycles, sequence SQR1/2/3 ->
+    # [ch1,ch2,ch1,ch2,ch1,ch12,ch1,ch0], DMA2 Stream1 Ch2 CR=0x04002D10 NDTR=16, CCR ADCPRE=/6.
+    adc_init = func_imms("cp_adc_init")
+    for v, lab in [(0x800, "ADC3 CR1=0x800 DISCEN"), (0x1E000301, "ADC3 CR2 ADON|DMA|DDS|TIM8_TRGO"),
+                   (0x04924924, "SMPR1 84-cycle all-ch"), (0x24924924, "SMPR2 84-cycle all-ch"),
+                   (0x00700581, "SQR1 L=7 (8 conv)"), (0x04110401, "SQR2 SQ7=ch1 SQ8=ch0"),
+                   (0x18110441, "SQR3 SQ1..6"), (0x04002D10, "DMA2_S1CR CHSEL2|halfword|CIRC|TCIE"),
+                   (0x0002A006, "ADC_CCR MULTI6|DMA2|ADCPRE=/6"), (0xF40, "DMA2_LIFCR stream1"),
+                   (0x10, "DMA2_S1NDTR=16 halfwords"), (0x40012000, "ADC base reg (ADC3=+0x200)")]:
+        check(v in adc_init, "cp_adc_init carries " + lab)
+    check(0x2000000 in adc_init, "cp_adc_init enables NVIC IRQ57 (1<<25)")
+    # ADC3_DR PAR offset +0x4C (DMA2_Stream1 base+0x28 is computed; S1CR value above proves it).
+    check(0x4C in adc_init, "cp_adc_init computes ADC3_DR PAR (+0x4C)")
+    # GPIOA PA0/1/2 + GPIOC PC2 analog-mode RMW masks (MODER/PUPDR 2-bit fields = 0b11). GPIOC is
+    # computed as GPIOA base 0x40020000 + 0x800; the 0x3F/0x30 masks prove the analog-mode config.
+    check(0x3F in adc_init and 0x30 in adc_init,
+          "cp_adc_init carries GPIOA 0x3F / GPIOC 0x30 analog-mode masks")
+    check(0x40020000 in adc_init, "cp_adc_init configures GPIOA (PA0/1/2) + GPIOC (PC2, +0x800) analog")
+    # measurement only: init touches GPIOA/GPIOC analog + ADC3/DMA2/RCC, NOT power-port GPIOB/GPIOE
+    # (the D_LINK GPIOB read is the separate cp_adc_d_link leaf; no BSRR pin drive in init).
+    check(0x40020400 not in adc_init and 0x40021000 not in adc_init,
+          "cp_adc_init references no GPIOB/GPIOE (analog measurement config only, no power drive)")
+
+    # D_LINK / PD11 are filterless READ-ONLY GPIO IDR leaves (no store / no pin drive). -O2 folds
+    # the IDR address as GPIOA base 0x40020000 + a MEM displacement (0x410 = GPIOB_IDR 0x40020410,
+    # 0xC10 = GPIOD_IDR 0x40020C10); the bit extract is ubfx #12 / #11. Collect MEM displacements.
+    def func_mnemonics(name):
+        addr = syms.get(name)
+        if addr is None:
+            return []
+        size = func_size(name)
+        return [ins.mnemonic.split(".")[0] for ins in md.disasm(fw[off(addr):off(addr) + size], addr)]
+
+    def func_disps(name):
+        addr = syms.get(name)
+        if addr is None:
+            return set()
+        size = func_size(name)
+        ds = set()
+        for ins in md.disasm(fw[off(addr):off(addr) + size], addr):
+            for op in ins.operands:
+                if op.type == 3:  # MEM
+                    ds.add(op.mem.disp & 0xFFFFFFFF)
+        return ds
+
+    dl = func_imms("cp_adc_d_link")
+    check(0x40020000 in dl and 0x410 in func_disps("cp_adc_d_link"),
+          "cp_adc_d_link reads GPIOB_IDR (0x40020000+0x410 = 0x40020410, PB12)")
+    check(not any(m.startswith("str") for m in func_mnemonics("cp_adc_d_link")),
+          "cp_adc_d_link is read-only (no GPIO store / drive)")
+    pd = func_imms("cp_adc_pd11")
+    check(0x40020000 in pd and 0xC10 in func_disps("cp_adc_pd11"),
+          "cp_adc_pd11 reads GPIOD_IDR (0x40020000+0xC10 = 0x40020C10, PD11)")
+    check(not any(m.startswith("str") for m in func_mnemonics("cp_adc_pd11")),
+          "cp_adc_pd11 is read-only (BCB drive stays gated)")
+
+    # ISR 0x0808876A (IRQ57): clear stream1 flags (0xF40); DMA2 via base 0x40026000 + LISR 0x400 /
+    # LIFCR 0x408; TCIF1 (bit11) tested by lsls #20 (0x14) -> sign flag (ite mi), not tst #0x800.
+    isr1 = func_imms("DMA2_Stream1_IRQHandler")
+    isr1d = func_disps("DMA2_Stream1_IRQHandler")
+    check(0xF40 in isr1 and 0x400 in isr1d and 0x408 in isr1d,
+          "DMA2_Stream1_IRQHandler clears stream1 flags (0xF40) via DMA2 LISR/LIFCR (+0x400/+0x408)")
+    check(0x14 in isr1, "DMA2_Stream1_IRQHandler tests TCIF1 bit11 (lsls #20 -> sign)")
+    # publish-every-8 cadence (cmp #8 / #7) lives in cp_adc_publish; the 16/8/8 weighting +
+    # PP-excludes-ch1 correction is proven exhaustively by the host test (test_cp_adc).
+    adc_pub = func_imms("cp_adc_publish")
+    check(0x8 in adc_pub or 0x7 in adc_pub,
+          "cp_adc_publish carries publish-every-8 cadence (cmp #8/#7)")
+    # AD_BAT scaling 0x08088864: raw*6600/32760. -O2 keeps the x6600 (0x19C8) but optimizes /32760
+    # into lsrs#3 (/8) + magic-multiply 0x20020021 (/4095) + ubfx#9 — no 0x7FF8 immediate. The exact
+    # /32760 truncation is proven by the host test (test_cp_adc); here we pin x6600 + the div magic.
+    bat_mv = func_imms("cp_adc_bat_mv")
+    check(0x19C8 in bat_mv and 0x20020021 in bat_mv,
+          "cp_adc_bat_mv carries AD_BAT x6600 (0x19C8) + /32760 magic (0x20020021, /8 then /4095)")
 
     print("%d checks, %d failures" % (checks, failures))
     return 1 if failures else 0

@@ -20,9 +20,9 @@ uint16_t cp_ad_cpd(uint16_t raw)
     return (uint16_t)(((uint32_t)raw * 3300u) / 32760u);
 }
 
-uint16_t cp_ad_cp(uint16_t raw)
+uint16_t cp_ad_bat(uint16_t raw)
 {
-    /* 0x08088864: muls raw*0x19C8(6600) ; udiv /0x7FF8(32760). */
+    /* 0x08088864 (stock label "AD_BAT"): muls raw*0x19C8(6600) ; udiv /0x7FF8(32760). */
     return (uint16_t)(((uint32_t)raw * 6600u) / 32760u);
 }
 
@@ -78,13 +78,13 @@ void cp_init(void)
     pp_state = 0; pp_counter = 0;
 }
 
-void cp_step(uint16_t pp_raw, uint16_t cpd_raw, uint16_t duty, uint16_t freq,
+void cp_step(uint16_t pp_raw, uint16_t cpd_raw, uint16_t duty, uint16_t period,
              uint8_t pd11, uint8_t d_link)
 {
     cp.pp_mv   = cp_ad_pp(pp_raw);
     cp.cpd_mv  = cp_ad_cpd(cpd_raw);
     cp.cp_duty = duty;
-    cp.cp_freq = freq;
+    cp.cp_freq = period;   /* period us (raw CCR1), NOT Hz */
     cp.cp_state = cp_state_char(duty, pd11, 0);   /* fault stubbed (C013) */
     cp.digital_5 = (cp_duty5(duty) == CP_DIGITAL_5) ? 1u : 0u;
     cp.plug_in = cp_pp_update(cp.pp_mv, &pp_state, &pp_counter);

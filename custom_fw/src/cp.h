@@ -2,9 +2,9 @@
  *
  * Faithful INERT replica of the C013 CP/PP monitor logic that feeds the SLAC link + the charge
  * state machine's plug-in input. Byte-derived getters/updaters:
- *   AD_PP   0x08088850 : raw*3300/65520 mV   (PP voltage)
- *   AD_CPD  0x08088878 : raw*3300/32760 mV   (CP duty/DC level)
- *   CP analog 0x08088864: raw*6600/32760 mV  (CP level, x2 rail)
+ *   AD_PP   0x08088850 : raw*3300/65520 mV   (PP voltage, PA2/ch2; raw = 16*sum(ch2))
+ *   AD_CPD  0x08088878 : raw*3300/32760 mV   (CP duty/DC level, PA0/ch0; raw = 8*sum(ch0))
+ *   AD_BAT  0x08088864 : raw*6600/32760 mV   (battery voltage, PC2/ch12, x2 rail; raw = 8*sum(ch12))
  *   CP_ST   0x08052914 : duty==0 -> 'E' ; PD11!=0 -> 'C' ; else 'B'  (fault fn stubbed -> never 'F')
  *   duty-5  0x08052804 : duty in [30,70] (3.0-7.0%) -> '5' (ISO15118 digital mode) else raw duty
  *   PP plug 0x080527B0 : <=2146 mV x4 -> plugged ; >=2296 mV x4 -> unplugged (binary presence,
@@ -12,10 +12,10 @@
  *   BCB     0x080528DC : PD11 'B'->0 / 'C'->1 ; toggle B->C->B with 200 ms delays (states 26..30)
  *   D_LINK  0x080884BA : PB12 input (PLC modem link status)
  *
- * CP PWM duty/freq are captured by TIM4 input-capture on PD12 (AF2 TIM4_CH1); the C013 storage
- * (duty x10 @0x20000A00, freq @0x200009FE) + getters are confirmed, the TIM4 ISR/init anchors are
- * shifted from C009 (not re-pinned). The raw ADC/TIM4 inputs are parameterized here (main feeds
- * stubs until the CP/PP front-end is built).
+ * CP PWM duty/period are captured by TIM4 input-capture on PD12 (AF2 TIM4_CH1, cp_capture.c):
+ * duty per-mille @0x20000A00, PERIOD us (raw CCR1, NOT Hz) @0x200009FE. The PP/CPD/BAT analog
+ * words come from ADC3 (cp_adc.c, ch2/ch0/ch12); the raw inputs are parameterized here (main feeds
+ * the cp_capture + cp_adc front-end getters).
  *
  * INERT: communication/link signaling only. BCB (PD11) drive is RECORDED, not executed (gated like
  * the power stage until bench-validated). Pure scaling/state/PP helpers host-tested (test_cp.c).
@@ -40,8 +40,8 @@
 typedef struct {
     uint16_t pp_mv;        /* AD_PP scaled (mV)                  */
     uint16_t cpd_mv;       /* AD_CPD scaled (mV)                 */
-    uint16_t cp_duty;      /* CP PWM duty x10                    */
-    uint16_t cp_freq;      /* CP PWM freq (Hz)                   */
+    uint16_t cp_duty;      /* CP PWM duty per-mille (percent x10)  */
+    uint16_t cp_freq;      /* CP PWM PERIOD us (raw CCR1; f_Hz=1e6/period) */
     uint8_t  cp_state;     /* 'B'/'C'/'E'                        */
     uint8_t  digital_5;    /* 1 if duty in [30,70]               */
     uint8_t  plug_in;      /* PP presence (0/1)                  */
@@ -52,7 +52,7 @@ typedef struct {
 /* Pure scaling getters (byte-exact). */
 uint16_t cp_ad_pp(uint16_t raw);    /* raw*3300/65520 */
 uint16_t cp_ad_cpd(uint16_t raw);   /* raw*3300/32760 */
-uint16_t cp_ad_cp(uint16_t raw);    /* raw*6600/32760 */
+uint16_t cp_ad_bat(uint16_t raw);   /* raw*6600/32760 (stock AD_BAT 0x08088864) */
 /* CP state char: duty==0 -> 'E' ; fault!=0 -> 'F' ; PD11!=0 -> 'C' ; else 'B'. */
 uint8_t cp_state_char(uint16_t duty, uint8_t pd11, uint8_t fault);
 /* duty-5 detector: duty in [30,70] -> '5' (0x35) else raw duty. */
@@ -61,8 +61,8 @@ uint8_t cp_duty5(uint16_t duty);
 uint8_t cp_pp_update(uint16_t pp_mv, uint8_t *state, uint8_t *counter);
 
 void cp_init(void);
-/* Feed one sample of raw CP/PP inputs (parameterized; main stubs until the front-end exists). */
-void cp_step(uint16_t pp_raw, uint16_t cpd_raw, uint16_t duty, uint16_t freq,
+/* Feed one sample of raw CP/PP inputs (cp_capture duty/period + cp_adc PP/CPD raw + PD11/D_LINK). */
+void cp_step(uint16_t pp_raw, uint16_t cpd_raw, uint16_t duty, uint16_t period,
              uint8_t pd11, uint8_t d_link);
 const cp_t *cp_get(void);
 uint8_t cp_plug_in(void);

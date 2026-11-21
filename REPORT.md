@@ -799,8 +799,10 @@ grammar + session-SM addendum below) and replicated inert in `custom_fw/src/{exi
 UDP/TCP/IPv6 + mbedTLS transport that feeds decoded Res frames was **subsequently recovered by `analyze94`**
 (live-transport addendum below) and replicated inert in `custom_fw/src/v2g_net.c`. **Still GATED / not
 recovered:** the exact Req-side EXI grammars / root-event numbering [?], the DIN-vs-ISO `DC_EVSEStatus` layout
-[?], the exact EVSEIsolationStatus→level 3/4 mapping, and the CP/PP analog front-end acquisition (TIM4 CP
-capture anchors); the lwIP TCP reliability + mbedTLS crypto third-party stacks are represented by hooks. The
+[?], and the exact EVSEIsolationStatus→level 3/4 mapping; the lwIP TCP reliability + mbedTLS crypto third-party
+stacks are represented by hooks. (The CP/PP analog front-end acquisition — TIM4 CP capture + ADC3 PP/CPD/BAT —
+was **subsequently recovered by `analyze95`**, front-end addendum below, and replicated inert in
+`custom_fw/src/{cp_capture,cp_adc}.c`.) The
 confirmed measurement + actuation field maps + the autonomous session sequence/timers + the live transport
 carriage are wired (communication only). Host-tested
 (`test_{slac,cp,sdp,v2gtp,din70121,ccs2,exi,din_session,v2g_net}.c`); built-image power-GPIO safety + pow10 table +
@@ -961,6 +963,75 @@ EXI dispatch).
   mbedTLS crypto (ECDHE/AES/SHA256/X509), ND6 neighbor resolution (`neighbor_mac` placeholder), the CA flash→RAM
   populator, and the SECC-peer wire convention capture [?]. The asserted power-stage drive stays the last gated
   layer.
+
+#### CP/PP analog front-end addendum (`analyze95.py`, byte-exact) — TIM4 CP capture + ADC3 PP/CPD/BAT
+
+The two independent analog acquisition paths beneath the `cp.c` scaling/state/plug logic (§5.9) are recovered
+byte-exact and replicated **inert (measurement only)** in `custom_fw/src/{cp_capture,cp_adc}.c`. Neither drives a
+power pin; the asserted power-stage drive stays the last gated layer.
+
+- **(J) CP PWM input-capture — TIM4_CH1 on PD12 (`src/cp_capture.c`).** PD12 = AF2 TIM4_CH1; init `0x08088A8C`
+  configures TIM4 for PWM input capture (slave-mode reset, CCR1 = period, CCR2 = duty-high), ISR `0x08088ACE`
+  (IRQ30, RAM-VTOR template `0x080B1B8C` vec[46] @ f+0x92046 = `0x08088ACF`, NVIC ISER0 = `0x78D80402` bit30).
+  **duty = 1000×CCR2/CCR1 per-mille** (percent×10; 50 = 5.0%), **period = CCR1 in µs (NOT Hz; f_Hz = 1e6/period)**.
+  Validity gate CCR1 ∈ [950,1050] (1 kHz ±5%), median-of-9 span ≤ 15 + DC deglitch (0 needs 128 consecutive,
+  1000 needs 32). Globals duty [`0x20000A00`] / period [`0x200009FE`].
+- **(I) PP/CPD/BAT analog — ADC3 + DMA2 Stream1 (`src/cp_adc.c`).** The sole ADC init `0x08088584` configures the
+  HV front-end (ADC1/2 + DMA2 S0, §5.21) **and** the CP/PP block @ `0x08088628` (ADC3 + DMA2 S1); they **share the
+  TIM8 TRGO + ADC common clock**. ADC3 (`0x40012200`): CR1 = `0x800` **DISCEN** (1 conversion/trigger, NOT SCAN),
+  CR2 = `0x1E000301` (ADON|DMA bit8|DDS bit9|EXTSEL=14 TIM8_TRGO|EXTEN rising), SMPR1 = `0x04924924` /
+  SMPR2 = `0x24924924` (84-cycle all-ch → 96-cycle conv = 6.857 µs < 8 µs), SQR1 = `0x00700581` (L=7 → 8 conv) /
+  SQR2 = `0x04110401` / SQR3 = `0x18110441` → **seq SQ1..8 = [ch1,ch2,ch1,ch2,ch1,ch12,ch1,ch0]**; pins
+  ch1=PA1, ch2=PA2, ch12=PC2, ch0=PA0 (MODER analog). ADC_CCR = `0x0002A006` (MULTI=6 ADC12-only, inert for ADC3;
+  DMA mode2; ADCPRE=/6 → 14 MHz; **TSVREFE=0 — NO Vrefint**; VBATE=0). DMA2 Stream1 Ch2 (`0x40026428`):
+  CR = `0x04002D10`|EN (CHSEL=2|halfword×halfword|MINC|CIRC|TCIE bit4, **HTIE=0**), NDTR=16 halfwords,
+  PAR = `0x4001224C` (ADC3_DR), M0AR = `0x20022680`, FCR=0, LIFCR=`0xF40`. TC = 16 conv = 2 sequences = 128 µs.
+  **IRQ57** vec @ f+0x920B2 = `0x0808876B` → ISR `0x0808876A` (HV is IRQ56 @ f+0x920AE); NVIC ISER1 = `0x03800000`
+  (IRQ55/56/57), prio `0x60` @ `0xE000E439`. TIM8 (`0x080886A2`, owned by `adc.c`): PSC=0, ARR=`0x53F` (1343),
+  CR2=`0x20` (MMS=update→TRGO), CR1=`0x95` (CEN|URS|DIR down|ARPE) → 168 MHz/1344 = **125 kHz (8 µs)**.
+- **ISR `0x0808876A` accumulation — CORRECTED (load-bearing).** Snapshot LISR, clear LIFCR=`0xF40`; on TCIF1
+  (bit11) sum the **second** half (buf+0x10..+0x1E = SQ1..8); HTIE=0 so the first-half mirror (0x00..0x0E) is
+  defensive. Per event: r5 = ch1_SQ1+SQ3+SQ5+SQ7 (4×ch1); **accA[+0x14] += ch2_SQ2 + ch2_SQ4 (2×ch2 ONLY)**;
+  accB[+0x1C] += ch12_SQ6; accC[+0x24] += ch0_SQ8. counter[+0]++; every **8 TC (= 1.024 ms)** publish
+  PP[+0x10 = `0x200009D0`] = accA = **16·Σch2**, BAT[+0x18 = `0x200009D8`] = accB = 8·Σch12,
+  CPD[+0x20 = `0x200009E0`] = accC = 8·Σch0; clear accs + counter. **r5 (4×ch1) is stored EVERY event to
+  [+0xC = `0x200009CC`] (+24 V rail byproduct) + power-fail hysteresis (low 8664 / high 9578, queue `0x200009F0`)
+  — a SEPARATE subsystem, NEVER folded into accA/PP.** accA sites: `add r3,r6` + `str r3,[r4,#0x14]` @
+  `0x0808879C` (2nd half, ch2 offsets +0x12/+0x16) + `0x080887BE` (1st half, +0x02/+0x06); r5→+0xC store @
+  `0x0808880E`; PP publish `str r1,[r4,#0x10]` @ `0x080887E0` (r1=accA). **Correction:** an earlier RE summary
+  claimed "PP = 32·Σch1 + 16·Σch2" / "accA = 8×(4·ch1 + 2·ch2)"; the bytes show accA accumulates **only 2×ch2 per
+  event (PP = 16·Σch2, PA2 alone)** and r5 = 4×ch1 is the separate +0xC byproduct — the divisor 65520 = 16×4095
+  cleanly matches 16 ch2 samples (the "3× pin-mV" reading was the misread artifact).
+- **Getters** load pool `0x200009C0` @ f+0x68CAE: **AD_PP** `0x08088850` = [base+0x10]×3300/65520
+  (65520 = 16×4095); **AD_BAT** `0x08088864` = [base+0x18]×6600/32760 (32760 = 8×4095; label `"AD_BAT : %.3u"` @
+  `0x0804F79C` — **NOT "CP analog"**); **AD_CPD** `0x08088878` = [base+0x20]×3300/32760. mV integer-udiv
+  truncation, no cal/filter. +24 V getter `0x0808883A` = cal×[+0xC]/16380 (cal default 18810, SPI4 page-2;
+  thresholds 162981000/cal = 8664, 180180000/cal = 9578). Published raw words fit uint16_t (PP ≤ 65520,
+  BAT/CPD ≤ 32760).
+- **Digital reads.** **D_LINK** `0x080884BA` = GPIOB_IDR bit12 (PB12 IN pull-down, filterless — PLC modem link
+  status). **PD11** `0x08088B88` = GPIOD_IDR bit11; PD11 is an **OUTPUT** (MODER bits23:22 = 01) driven by BCB
+  `0x080528DC` (BSRR bit11, 'B'→0 / 'C'→1; write leaf `0x08088B74`); CP_ST `0x08052914` reads it back
+  (duty0→'E', PD11!=0→'C', else 'B'). The replica only **READS** PD11 (the BCB drive stays GATED).
+- **Replication + verification.** `src/cp_capture.c` (TIM4 PWM capture + median-of-9 + DC deglitch, IRQ30) and
+  `src/cp_adc.c` (ADC3 + DMA2 Stream1 bring-up, IRQ57, pure `cp_adc_publish` accumulate/publish + pure
+  `cp_adc_{pp,bat,cpd}_mv` scaling + `cp_adc_d_link`/`pd11` reads). The power-fail hysteresis/queue + SPI4 cal
+  +24 V scaling are a separate subsystem and are **dropped** (the ch1x4 byproduct is still recorded).
+  `cp.c`/`cp.h` labeling corrected: `cp_ad_cp`→**`cp_ad_bat`** (stock AD_BAT `0x08088864`), `cp_freq`→**period µs**
+  (raw CCR1; f_Hz = 1e6/period). `main` wires `cp_capture_init` + `cp_adc_init` after HV, feeds
+  `cp_step(pp_raw, cpd_raw, duty, period, pd11, d_link)` each 100 Hz tick and publishes
+  `cp_cap_duty/period/upd`, `cp_plug/state`, `cp_pp_mv/cpd_mv/bat_mv`, `cp_pp_raw/cpd_raw`, `cp_d_link/pd11`
+  (SWD-readable). `startup.s` breaks out IRQ57 as a named weak `DMA2_Stream1_IRQHandler`. Host-tested:
+  `test_cp_capture` **42**, `test_cp_adc` **42**, `test_cp` **32** (pure logic). Built image disasm-verified
+  (`custom_fw/verify_ccs2.py`, **129 checks**): `cp_adc_init` register values (CR1 `0x800`, CR2 `0x1E000301`,
+  SMPR1/2, SQR1/2/3, DMA CR `0x04002D10`, CCR `0x0002A006`, LIFCR `0xF40`, NDTR `0x10`, ADC3_DR +0x4C, GPIO
+  masks `0x3F`/`0x30`), NVIC ISER1 `0x2000000`, **no GPIOB/GPIOE drive** in init; `d_link`/`pd11` are read-only
+  IDR reads (GPIOB_IDR disp 0x410 / GPIOD_IDR disp 0xC10 off base `0x40020000`, no `str`); ISR LIFCR `0xF40` +
+  DMA2 disps 0x400/0x408 + TCIF1 bit11 (`lsls #0x14`); `cp_adc_publish` threshold 8; `bat_mv` ×6600 (`0x19C8`) +
+  /32760 magic (`0x20020021`). `analyze95.py` **76 checks** (TIM4 27 + ADC3 49) reproduces the full chain incl.
+  the structural accA-site trace proving PP-excludes-ch1. Build 19124 B code / 26712 B bss; `CUSTOM.UPG`
+  re-wrapped (132102 B, CRC residue 0 + app-verbatim + stock round-trip).
+- **Still GATED:** the BCB PD11 drive + the +24 V power-fail hysteresis/queue subsystem (separate from CP/PP
+  acquisition); the asserted power-stage drive stays the last gated layer.
 
 ### 5.10 USB log stick — firmware-match proof & device provenance  [C unless noted]
 
@@ -2383,6 +2454,31 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   safety + cipher list + EtherType/next-header demux disasm-verified `custom_fw/verify_ccs2.py` 56 checks). The
   lwIP TCP reliability + mbedTLS crypto third-party stacks stay GATED (represented by hooks).
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze94.py'`.
+- `analyze95.py` — **CP/PP analog front-end decoder (§5.9 CP/PP front-end addendum, custom_fw `cp_capture` +
+  `cp_adc` layers)**: recovers the two independent analog acquisition paths beneath the `cp.c` scaling/state/plug
+  logic that `analyze92` left gated. (J) TIM4 CP PWM input-capture on PD12 (AF2 TIM4_CH1): init `0x08088A8C`,
+  ISR `0x08088ACE` (IRQ30, RAM-VTOR vec[46] @ f+0x92046), **duty = 1000×CCR2/CCR1 per-mille**, **period = CCR1 µs
+  (NOT Hz)**, validity CCR1∈[950,1050] + median-of-9 span≤15 + DC deglitch (0 needs 128 / 1000 needs 32), globals
+  duty[`0x20000A00`]/period[`0x200009FE`]. (I) ADC3 PP/CPD/BAT analog: the sole ADC init `0x08088584` configures
+  HV (ADC1/2+DMA2 S0) **and** the CP/PP block @`0x08088628` (ADC3+DMA2 S1) sharing TIM8 TRGO + ADC common clock —
+  ADC3 CR1=`0x800` **DISCEN** (not SCAN), CR2=`0x1E000301` (TIM8_TRGO EXTSEL14 rising + DMA|DDS), SMPR1/2 84-cycle,
+  SQR1/2/3 → seq [ch1,ch2,ch1,ch2,ch1,ch12,ch1,ch0] (PA1/PA2/PC2/PA0), CCR=`0x0002A006` (**TSVREFE=0, no Vrefint**),
+  DMA2 S1 Ch2 CR=`0x04002D10` (halfword|MINC|CIRC|TCIE, **HTIE=0**) NDTR16 PAR=ADC3_DR M0AR=`0x20022680`,
+  ISR `0x0808876A` (IRQ57) accumulates accA+=2×ch2 / accB+=ch12 / accC+=ch0, publishes every 8 TC (1.024 ms):
+  PP=16·Σch2 / BAT=8·Σch12 / CPD=8·Σch0; getters AD_PP `0x08088850` ×3300/65520, **AD_BAT `0x08088864` ×6600/32760
+  (label `"AD_BAT : %.3u"`, NOT "CP analog")**, AD_CPD `0x08088878` ×3300/32760; D_LINK `0x080884BA`=GPIOB_IDR
+  bit12, PD11 `0x08088B88`=GPIOD_IDR bit11 (OUTPUT driven by BCB `0x080528DC`, replica READS only). **LOAD-BEARING
+  CORRECTION:** PP accumulates **only 2×ch2/event (accA)**; the 4×ch1 sum (r5) is stored every event to a SEPARATE
+  +0xC byproduct (`0x200009CC`, +24 V rail / power-fail hysteresis low8664/high9578 queue `0x200009F0`), **NEVER
+  folded into accA/PP** — an earlier RE summary's "PP = 32·Σch1+16·Σch2" was wrong (divisor 65520=16×4095 matches
+  16 ch2 samples). Structural accA-site trace (`0x0808879C`/`0x080887BE` fed by ch2 pairs; r5→+0xC @`0x0808880E`;
+  PP publish @`0x080887E0`) proves PP-excludes-ch1. Replicated INERT (measurement only) in
+  `custom_fw/src/{cp_capture,cp_adc}.c` + wired into `main.c`/`startup.s` (IRQ30/IRQ57); `cp.c`/`cp.h` labeling
+  corrected (`cp_ad_cp`→`cp_ad_bat`, `cp_freq`→period µs). Host-tested `test_cp_capture` 42 / `test_cp_adc` 42 /
+  `test_cp` 32; built-image register-exact + read-only-IDR + no-GPIOB/E-drive disasm-verified
+  `custom_fw/verify_ccs2.py` (129 checks). The BCB PD11 drive + the +24 V power-fail subsystem stay GATED (separate
+  from CP/PP acquisition); the asserted power-stage drive stays the last gated layer.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze95.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -2454,17 +2550,28 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   [connect 30000ms / idle≥300 close / TLS handshake], RX demux → SDP/EXI dispatch → `ccs2_rx_exi`, TX UDP/TCP
   send via hooks, 16×128B diagnostic trace ring; lwIP TCP reliability + mbedTLS crypto are GATED third-party
   hooks); `sdp.c`/`sdp.h` TLS labels corrected to the wire (`SDP_SECURITY_TLS=0x00`/`NONE=0x10`, `use_tls=(==0)`);
+  **CP/PP analog front-end (§5.9 CP/PP front-end addendum, analyze95)**: `src/cp_capture.c` (TIM4_CH1 PD12 AF2
+  PWM input-capture, IRQ30 — duty per-mille 1000×CCR2/CCR1 + period µs [NOT Hz], validity CCR1∈[950,1050] +
+  median-of-9 span≤15 + DC deglitch), `src/cp_adc.c` (ADC3 ch2=PA2 PP / ch0=PA0 CPD / ch12=PC2 BAT off the shared
+  TIM8 125 kHz TRGO, DMA2 Stream1 circular IRQ57, pure accumulate/publish every 8 TC=1.024 ms — **PP=16·Σch2
+  (PA2 ONLY; the 4·ch1 PA1 sum is a separate +0xC +24 V byproduct, NOT PP — CORRECTED)** + pure ×3300/65520 /
+  ×6600/32760 / ×3300/32760 mV scaling + D_LINK PB12 / PD11 read-only IDR reads; BCB PD11 drive + power-fail
+  queue GATED); `cp.c`/`cp.h` labeling corrected (`cp_ad_cp`→`cp_ad_bat`, `cp_freq`→period µs); **measurement
+  only, drives NO power GPIO**;
   **communication only, drives NO power GPIO**; EXI grammar + session timers RECOVERED (analyze93) + live
-  transport carriage RECOVERED (analyze94); Req-side grammars [?] + CP front-end acquisition + lwIP/mbedTLS
-  third-party stacks still GATED; host-unit-tested
-  `test_{v2gtp,slac,cp,sdp,din70121,ccs2,exi,din_session,v2g_net}.c` (14/54/32/31/36/21/55/39/89 checks; full
-  suite 490); built-image power-GPIO safety + pow10 table + session timer constants + transport cipher
-  list/EtherType/next-header demux disasm-verified `verify_ccs2.py` (56 checks); `main.c`
-  (rcc→gpio_safe→**hv**→can→chademo→**charge_stm**→**current_ctrl**→tick→`cpsie i`→**qca7005_init**
-  [blocking IWDG-fed bring-up, publish `ccs2_qca_ok`]→**ccs2_init**→**v2g_net_set_local_mac** [EUI-64 link-local
-  from PIB MAC], then 100 Hz loop: IWDG feed
-  + `heartbeat` + publish `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + **cp_step** [CP front-end
-  stubbed unplugged] + **ccs2_step** + **charge_stm_step** with EVSE inputs from `ccs2_evse()` (publish
+  transport carriage RECOVERED (analyze94) + CP/PP analog front-end RECOVERED (analyze95); Req-side grammars [?]
+  + lwIP/mbedTLS third-party stacks still GATED; host-unit-tested
+  `test_{v2gtp,slac,cp,cp_capture,cp_adc,sdp,din70121,ccs2,exi,din_session,v2g_net}.c`
+  (14/54/32/42/42/31/36/21/55/39/89 checks; full suite 574); built-image power-GPIO safety + pow10 table +
+  session timer constants + transport cipher list/EtherType/next-header demux + CP/PP ADC3/DMA2 register-exact
+  + read-only-IDR disasm-verified `verify_ccs2.py` (129 checks); `main.c`
+  (rcc→gpio_safe→**hv**→**cp_capture_init**→**cp_adc_init**→can→chademo→**charge_stm**→**current_ctrl**→tick→
+  `cpsie i`→**qca7005_init** [blocking IWDG-fed bring-up, publish `ccs2_qca_ok`]→**ccs2_init**→
+  **v2g_net_set_local_mac** [EUI-64 link-local from PIB MAC], then 100 Hz loop: IWDG feed
+  + `heartbeat` + publish `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + **cp_step** [real CP/PP front-end:
+  cp_capture duty/period + cp_adc PP/CPD raw + PD11/D_LINK; publish `cp_cap_duty/period/upd`, `cp_plug/state`,
+  `cp_pp_mv/cpd_mv/bat_mv`, `cp_pp_raw/cpd_raw`, `cp_d_link/pd11`] + **ccs2_step** + **charge_stm_step** with EVSE
+  inputs from `ccs2_evse()` (publish
   `stm_state/stm_interlock/stm_engage/stm_action`) + **current_ctrl_step** in state-30 with EVSE measurements
   from `ccs2_fill_current_ctrl()` (publish `cc_setpoint/cc_cap/cc_target_v`) + **ccs2_demand** inert
   CurrentDemandReq EXI image in state-30 (publish `ccs2_cd_req/ccs2_cd_req_len`) + **v2g_net_tcp_send** [inert —
@@ -2473,18 +2580,21 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   ccs2_proto`] + **din_session_get** [publish `din_st_state/din_st_fault/din_st_retry/din_st_active`] +
   **v2g_net_get** [publish `v2g_net_st/v2g_net_mode/v2g_net_rx/v2g_net_tx`];
   **no ASSERTED power-stage drive**),
-  `build.sh`/`verify_pad.py`/`verify_ccs2.py`/`README.md`. Built + verified (17568 B code / 26512 B bss, vectors
-  `MSP=0x20030000`/`reset=0x080201AD`, SysTick + CAN1_RX0 + DMA2_Stream0 strong overrides at IRQ15/IRQ20/
-  IRQ56 confirmed, adc_init/spi4_init/hv_get_raw register writes + interpolation + engagement-guard compares
-  disasm-checked, charge_stm_step + current_ctrl_step + the pure-logic CCS2/EXI/session/transport modules have no
+  `build.sh`/`verify_pad.py`/`verify_ccs2.py`/`README.md`. Built + verified (19124 B code / 26712 B bss, vectors
+  `MSP=0x20030000`/`reset=0x080201AD`, SysTick + CAN1_RX0 + TIM4 + DMA2_Stream0 + DMA2_Stream1 strong overrides
+  at IRQ15/IRQ20/IRQ30/IRQ56/IRQ57 confirmed, adc_init/spi4_init/hv_get_raw register writes + interpolation +
+  engagement-guard compares + cp_adc_init ADC3/DMA2 register-exact + read-only D_LINK/PD11 IDR disasm-checked,
+  charge_stm_step + current_ctrl_step + the pure-logic CCS2/EXI/session/transport/CP-front-end modules have no
   peripheral/GPIO stores, pow10 converter table + session timer constants + transport cipher list {0xC023,0xC025}
   + IPv6 EtherType/next-header demux present, CRC residue 0, app verbatim + stock round-trip).
   `outvol` accuracy must be bench-verified vs a reference before the gated engagement/power layer.
   Power-stage drive stays GATED behind a compile-time safety flag until bench-validated; the CCS2 EVSE-side
-  subsystem now supplies the stm + current-control EVSE inputs and the CurrentDemandReq actuation, and runs the
+  subsystem now supplies the stm + current-control EVSE inputs and the CurrentDemandReq actuation, runs the
   autonomous EXI session sequence/timers (analyze93) over the live UDP/TCP/IPv6 + mbedTLS transport carriage
-  (analyze94; lwIP TCP reliability + mbedTLS crypto third-party stacks represented by hooks). Build outputs
-  git-ignored; `CUSTOM.UPG` is a bench-flash candidate (untracked).
+  (analyze94; lwIP TCP reliability + mbedTLS crypto third-party stacks represented by hooks), and measures the
+  real CP/PP analog front-end (analyze95; TIM4 CP capture + ADC3 PP/CPD/BAT, measurement only — the BCB PD11
+  drive + power-fail queue stay gated). Build outputs git-ignored; `CUSTOM.UPG` is a bench-flash candidate
+  (untracked).
 - `SERVICE.UPG` / `SERVICE_DUMP.UPG` / `SERVICE_DUMP_APP5.UPG` — built service images (§5.13e/f/i):
   `SERVICE.UPG` = byte-identical stock round-trip (safe recovery); `SERVICE_DUMP.UPG` = stock + one-shot
   bootloader-dump cave on the in-place `f_close` anchor (598 156 B, valid CRCs, **bench-confirmed working**

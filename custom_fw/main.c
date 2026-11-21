@@ -50,6 +50,8 @@
 #include "qca7005.h"
 #include "ccs2.h"
 #include "cp.h"
+#include "cp_capture.h"
+#include "cp_adc.h"
 #include "din_session.h"
 #include "v2g_net.h"
 
@@ -63,6 +65,26 @@ volatile int32_t hv_outvol  = 0;   /* get_hv()/10, volts                       *
 volatile int32_t hv_raw     = 0;   /* get_hv(), decivolts                      */
 volatile int32_t hv_adc_raw = 0;   /* live ADC differential accumulation       */
 volatile uint32_t hv_cal_ok = 0;   /* 1 if a valid factory cal was read        */
+
+/* CP/PP analog front-end (SWD-readable; MEASUREMENT ONLY — Agent J TIM4 + Agent I ADC3 / analyze95).
+ * Two independent acquisition paths drive NO power pin:
+ *  - cp_capture: TIM4 input-capture on PD12 (AF2 TIM4_CH1) -> duty per-mille + period us (NOT Hz),
+ *    median-of-9 + DC-deglitch in the TIM4 ISR.
+ *  - cp_adc: ADC3 (ch2=PA2 PP / ch0=PA0 CPD / ch12=PC2 BAT) off the shared TIM8 125 kHz TRGO,
+ *    DMA2 Stream1 circular, ISR sums + publishes every 1.024 ms; plus D_LINK (PB12) / PD11 reads.
+ *    PP raw = 16*sum(ch2) (PA2 ONLY — the 4*ch1 PA1 sum is a separate +24V byproduct, NOT PP). */
+volatile uint32_t cp_cap_duty   = 0;   /* CP duty per-mille (percent x10; 50 = 5.0%) */
+volatile uint32_t cp_cap_period = 0;   /* CP PWM period us (raw CCR1; f_Hz = 1e6/period) */
+volatile uint32_t cp_cap_upd    = 0;   /* capture update counter                       */
+volatile uint32_t cp_plug       = 0;   /* PP plug-in presence (cp.c hysteresis)        */
+volatile uint32_t cp_state      = 0;   /* CP state char 'B'/'C'/'E' (cp.c)             */
+volatile uint32_t cp_pp_mv      = 0;   /* AD_PP scaled mV (PA2/ch2, raw*3300/65520)    */
+volatile uint32_t cp_cpd_mv     = 0;   /* AD_CPD scaled mV (PA0/ch0, raw*3300/32760)   */
+volatile uint32_t cp_bat_mv     = 0;   /* AD_BAT scaled mV (PC2/ch12, raw*6600/32760)  */
+volatile uint32_t cp_pp_raw     = 0;   /* published PP raw accumulator (16*sum(ch2))   */
+volatile uint32_t cp_cpd_raw    = 0;   /* published CPD raw accumulator (8*sum(ch0))   */
+volatile uint32_t cp_d_link     = 0;   /* PB12 PLC modem link status (raw IDR read)    */
+volatile uint32_t cp_pd11       = 0;   /* PD11 BCB state read-back (output, drive gated) */
 
 /* Inert charge state-machine results (SWD-readable; NO power drive — shadow controller). */
 volatile uint32_t stm_state    = 0;  /* current CHAdeMO stm state (§5.17)       */
@@ -126,6 +148,8 @@ void main(void)
     rcc_init();          /* HSE 8 MHz -> PLL 168 MHz; APB1 42 / APB2 84 MHz */
     gpio_safe_init();    /* all power pins -> SAFE/de-asserted (contactors open, no HV) */
     hv_cal_ok = (hv_init() == 0);  /* SPI4 + factory cal + ADC1/2/DMA2/TIM8 front-end (§5.21) */
+    cp_capture_init();   /* CP PWM TIM4 input-capture front-end (PD12 AF2, measurement only, §5.9) */
+    cp_adc_init();       /* CP/PP ADC3 analog front-end (PA0/1/2+PC2, DMA2 Stream1, shares TIM8, §5.9) */
     can_init();          /* CAN1 500k + acceptance filter + RX0 interrupt (NVIC)     */
     chademo_init();      /* zero the vehicle-data struct + watchdog timestamps       */
     charge_stm_init();   /* inert CHAdeMO charge state machine (shadow, §5.17)       */
@@ -166,17 +190,32 @@ void main(void)
          * sequence + the byte-exact state-17 engagement guard + interlocks + CAN watchdogs, and
          * records the power action each state WOULD drive, but executes NO GPIO. EVSE-side
          * handshake inputs (isolation/precharge_flag/plug_in/…) now come from the CCS2 EVCC
-         * controller (ccs2_evse, §5.9); with the CP front-end stubbed unplugged and the autonomous
-         * EXI session gated they hold 0, so the machine stays in the early states and the
-         * engagement guard cannot pass. outvol is the measured HV (get_hv()/10). */
+         * controller (ccs2_evse, §5.9); with the autonomous EXI session gated the DIN-derived
+         * inputs (isolation/precharge/cablecheck/…) hold 0, so the machine stays in the early
+         * states and the engagement guard cannot pass. outvol is the measured HV (get_hv()/10). */
         /* CCS2 EVSE-side subsystem step (§5.9): CP/PP signaling + SLAC + SDP + DIN session
-         * sequencing. Communication only — no power drive. The CP/PP analog front-end (PP/CPD
-         * ADC channels + TIM4 CP capture) is not acquired yet, so cp_step is fed a safe
-         * "unplugged / no PWM" stub (pp_raw=0xFFFF -> 3300 mV >= unplug threshold, duty 0 ->
-         * state 'E'), holding plug_in=0 until that measurement layer is built. The autonomous
-         * EXI session + live network transport stay GATED; the session flag setters allow bench
-         * injection. ccs2_evse() supplies the confirmed EVSE handshake outputs below. */
-        cp_step(0xFFFFu, 0, 0, 0, 0, 0);
+         * sequencing. Communication only — no power drive. BOTH CP/PP acquisition front-ends are
+         * now built (Agent J TIM4 + Agent I ADC3 / analyze95): cp_capture supplies the real CP PWM
+         * duty (per-mille) + period (us); cp_adc supplies the real PP (PA2/ch2) + CPD (PA0/ch0) raw
+         * accumulators, the BAT (PC2/ch12) reading, and the D_LINK (PB12) / PD11 digital reads.
+         * plug_in now reflects the measured PP voltage (cp.c hysteresis), but the charge_stm
+         * engagement guard still cannot pass: the EVSE-side handshake inputs (isolation/precharge/
+         * cablecheck/…) hold safe 0 until the autonomous EXI session is live, and the asserted
+         * power-stage drive stays GATED. Measurement only — no asserted power drive. */
+        cp_step((uint16_t)cp_adc_pp_raw(), (uint16_t)cp_adc_cpd_raw(),
+                cp_capture_duty(), cp_capture_period(), cp_adc_pd11(), cp_adc_d_link());
+        cp_cap_duty   = cp_capture_duty();
+        cp_cap_period = cp_capture_period();
+        cp_cap_upd    = cp_capture_update_count();
+        cp_plug       = cp_plug_in();
+        cp_state      = cp_get()->cp_state;
+        cp_pp_mv      = cp_get()->pp_mv;
+        cp_cpd_mv     = cp_get()->cpd_mv;
+        cp_bat_mv     = cp_adc_bat_mv(cp_adc_bat_raw());
+        cp_pp_raw     = cp_adc_pp_raw();
+        cp_cpd_raw    = cp_adc_cpd_raw();
+        cp_d_link     = cp_adc_d_link();
+        cp_pd11       = cp_adc_pd11();
         ccs2_step(now);
         const ccs2_evse_t *evse = ccs2_evse();
 

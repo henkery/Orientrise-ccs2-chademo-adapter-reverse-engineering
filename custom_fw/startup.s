@@ -44,11 +44,16 @@ _vectors:
   .word CAN1_RX0_IRQHandler    @ IRQ20
   .word CAN1_RX1_IRQHandler    @ IRQ21
   .word CAN1_SCE_IRQHandler    @ IRQ22
-  .rept 33                     @ IRQ23..55
+  .rept 7                      @ IRQ23..29
+  .word Default_Handler
+  .endr
+  .word TIM4_IRQHandler        @ IRQ30 (CP PWM input capture, cp_capture.c)
+  .rept 25                     @ IRQ31..55
   .word Default_Handler
   .endr
   .word DMA2_Stream0_IRQHandler @ IRQ56 (HV ADC DMA accumulation, adc.c)
-  .rept 34                     @ IRQ57..90
+  .word DMA2_Stream1_IRQHandler @ IRQ57 (CP/PP ADC3 DMA accumulation, cp_adc.c)
+  .rept 33                     @ IRQ58..90
   .word Default_Handler
   .endr
   .size _vectors, . - _vectors
@@ -137,7 +142,11 @@ Default_Handler:
   .thumb_set CAN1_RX1_IRQHandler, Default_Handler
   .weak CAN1_SCE_IRQHandler
   .thumb_set CAN1_SCE_IRQHandler, Default_Handler
+  .weak TIM4_IRQHandler
+  .thumb_set TIM4_IRQHandler, Default_Handler
   .weak DMA2_Stream0_IRQHandler
   .thumb_set DMA2_Stream0_IRQHandler, Default_Handler
+  .weak DMA2_Stream1_IRQHandler
+  .thumb_set DMA2_Stream1_IRQHandler, Default_Handler
 
   .end

@@ -5,7 +5,7 @@ A **minimal, flashable, stock-reversible** custom application for the adapter
 toward a safe CHAdeMO charge controller. It proves the full **build → wrap → flash → recover**
 pipeline end-to-end on the byte-derived memory layout (REPORT §5.19) and boot entry contract
 (§5.15/§5.16). **Current stage: SAFE BOOTSTRAP + CAN1 MESSAGE LAYER + HV MEASUREMENT + INERT CHARGE
-STM + INERT CURRENT CONTROL + CCS2 EVCC SUBSYSTEM** — clocks + timebase + GPIO safe-state + CAN1
+STM + INERT CURRENT CONTROL + CCS2 EVCC SUBSYSTEM + CP/PP ANALOG FRONT-END** — clocks + timebase + GPIO safe-state + CAN1
 (500k) CHAdeMO RX/TX + the factory-calibrated HV measurement front-end (`get_hv` → `outvol`) + the inert
 charge state machine (safe-charge sequence + byte-exact state-17 engagement guard + interlocks + CAN
 watchdogs) + the inert H102 output-current control law (state-30 `min(request, EVSE avail)` setpoint capped
@@ -16,9 +16,11 @@ EVSE measurements + the `CurrentDemandReq` actuation image. It performs **no ass
 the state machine and current control are *shadow* controllers that record but do not execute power actions,
 and the CCS2 subsystem is communication only. The DIN EXI bit-grammar codec + the autonomous session
 state-machine timers/retries (`analyze93`, `src/exi.c`/`src/din_session.c`) **and the live UDP/TCP/IPv6 +
-mbedTLS transport carriage** (`analyze94`, `src/v2g_net.c`) are now **recovered and built**; the lwIP TCP
-reliability + mbedTLS crypto third-party stacks are represented by hooks, and the CP/PP analog front-end stays
-GATED until recovered/bench-validated.
+mbedTLS transport carriage** (`analyze94`, `src/v2g_net.c`) are now **recovered and built**, as is the **CP/PP
+analog front-end** (`analyze95`, `src/cp_capture.c` TIM4 CP PWM capture + `src/cp_adc.c` ADC3 PP/CPD/BAT —
+measurement only); the lwIP TCP reliability + mbedTLS crypto third-party stacks are represented by hooks, and
+the asserted power-stage drive (incl. the BCB PD11 drive + the +24 V power-fail queue) stays GATED until
+bench-validated.
 
 ## Safety — read first
 
@@ -50,8 +52,9 @@ This foundation is **safe-by-construction** (contactors open, no HV):
   it computes the state and *records* the power action each state would drive (`STM_ACT_*`) but **executes
   no GPIO**. The engagement guard only passes when `flag==1 && isolation==4 && outvol ∈ [ress_vol−10,
   ress_vol+5] && dwell≥250`; the EVSE-side handshake inputs (isolation/precharge_flag/plug_in/…) are now
-  **supplied by the CCS2 EVCC controller** (`ccs2_evse()`, §5.9) — with the CP front-end stubbed unplugged
-  and no live network transport they hold 0, so the machine holds in the early states and **cannot
+  **supplied by the CCS2 EVCC controller** (`ccs2_evse()`, §5.9) — `plug_in` now reflects the measured PP
+  voltage (the real CP/PP front-end, `analyze95`), but the DIN-derived handshake inputs (isolation/precharge/
+  cablecheck/…) hold 0 until a live EXI session, so the machine holds in the early states and **cannot
   engage**. Interlocks (whole-bus 1525-tick / per-message 100-tick CAN watchdogs, H102 fault,
   emergency, bms/hw fault, CurrentDemand isolation==3) force a safe stop state. Host-unit-tested
   (`test_charge_stm.c`, 47 checks). State/interlock/engage/action are SWD-readable (`stm_*`).
@@ -93,13 +96,15 @@ This foundation is **safe-by-construction** (contactors open, no HV):
   The EXI grammar + session timers (`analyze93`) **and the live UDP/TCP/IPv6 + mbedTLS transport carriage**
   (`analyze94`, `src/v2g_net.c`) are **recovered/built**: `ccs2_rx` routes IPv6 → `v2g_net_rx_ethernet`
   (UDP→SDP / TCP→deframe→`ccs2_rx_exi`), `ccs2_step` drives the transport SM + starts TCP at SDP-done. The lwIP
-  TCP reliability + mbedTLS crypto are gated third-party **hooks**; the CP/PP analog front-end acquisition is
-  still gated, so `cp_step` is fed a safe "unplugged" stub (plug_in=0) and the EVSE inputs hold 0; the
-  session-flag setters allow bench injection. In CurrentDemand the `CurrentDemandReq` image is produced
+  TCP reliability + mbedTLS crypto are gated third-party **hooks**; the **CP/PP analog front-end is now
+  recovered/built** (`analyze95`, `src/cp_capture.c` TIM4 CP capture + `src/cp_adc.c` ADC3 PP/CPD/BAT), so
+  `cp_step` is fed the real measured CP duty/period + PP/CPD raw + PD11/D_LINK (`plug_in` reflects the measured
+  PP voltage); the DIN-derived EVSE handshake inputs still hold 0 until a live session, and the session-flag
+  setters allow bench injection. In CurrentDemand the `CurrentDemandReq` image is produced
   (`ccs2_cd_req`/`ccs2_cd_req_len`) and sent via `v2g_net_tcp_send` — **inert**: it only transmits when the
   transport is ESTABLISHED (gated TCP connect/TLS handshake), so nothing is commanded in normal operation.
-  Host-unit-tested (`test_{v2gtp,slac,cp,sdp,din70121,ccs2,exi,din_session,v2g_net}.c`,
-  14/54/32/31/36/21/55/39/89 checks; full suite 490). `ccs2_st`/`ccs2_link`/`ccs2_secc`/`ccs2_proto` +
+  Host-unit-tested (`test_{v2gtp,slac,cp,cp_capture,cp_adc,sdp,din70121,ccs2,exi,din_session,v2g_net}.c`,
+  14/54/32/42/42/31/36/21/55/39/89 checks; full suite 574). `ccs2_st`/`ccs2_link`/`ccs2_secc`/`ccs2_proto` +
   `din_st_state`/`din_st_fault`/`din_st_retry`/`din_st_active` + `v2g_net_st`/`v2g_net_mode`/`v2g_net_rx`/
   `v2g_net_tx` are SWD-readable.
 - **IWDG**: the loop feeds the watchdog key (`0x40003000`) — harmless whether or not the IWDG is
@@ -117,7 +122,7 @@ current control, §5.5c GPIO map + active levels).
 | file | purpose |
 |---|---|
 | `linker.ld` | GNU ld script: FLASH `0x08020000` 640K (app sectors 5–9), RAM `0x20000000` 192K, CCM `0x10000000` 64K, `_estack=0x20030000` (§5.19) |
-| `startup.s` | vector table + self-bootstrapping `Reset_Handler`: MSP from `vector[0]`, `VTOR=0x08020000`, copy `.data`, zero `.bss`+CCM, call `main`; weak core + CAN1 (IRQ19–22) + DMA2_Stream0 (IRQ56) handler aliases (the boot writes no MSP/VTOR, §5.15/§5.16) |
+| `startup.s` | vector table + self-bootstrapping `Reset_Handler`: MSP from `vector[0]`, `VTOR=0x08020000`, copy `.data`, zero `.bss`+CCM, call `main`; weak core + CAN1 (IRQ19–22) + TIM4 (IRQ30) + DMA2_Stream0 (IRQ56) + DMA2_Stream1 (IRQ57) handler aliases (the boot writes no MSP/VTOR, §5.15/§5.16) |
 | `src/rcc.c/.h` | `rcc_init`: restore SYSCLK 168 MHz (HSE→PLL, APB1 42 / APB2 84 MHz, FLASH 5WS, PWR VOS scale1 — §5.8.1) |
 | `src/gpio.c/.h` | `gpio_safe_init`: drive all power pins to SAFE/de-asserted levels, glitch-free (BSRR pre-load then MODER→output — §5.5c, `analyze86`); pin map + active levels |
 | `src/tick.c/.h` | `tick_init`: 100 Hz SysTick OS tick (`SysTick_Handler`) + 100 kHz TIM2 counter; `tick_get`/`tick_micros`/`tick_delay_ms` (§5.20) |
@@ -135,7 +140,11 @@ current control, §5.5c GPIO map + active levels).
 | `test_qca7005.c` | host unit test (gcc, no hardware): MAC-read REQ build, MAC-read CNF validation, RX packet-header parse math — 26 checks |
 | `src/v2gtp.c/.h` | V2GTP framing: encode/parse `01 FE type BE len BE`; types `0x8001` EXI / `0x9000` SDP-req / `0x9001` SDP-res (§5.9, `analyze92`) |
 | `src/slac.c/.h` | ISO15118-3 SLAC matching SM + MME builders/validators (PARM/ATTEN/SOUND/MATCH/SET_KEY) + PRNG LCG → NID/NMK/EVSE-MAC/link-up; communication only (§5.9, `analyze92`) |
-| `src/cp.c/.h` | CP/PP analog signaling: scaling getters (`AD_PP`/`AD_CPD`/CP), CP-state char, duty-5 detector, PP plug-in hysteresis+4-debounce; BCB recorded only (gated); CP front-end acquisition gated (§5.9, `analyze92`) |
+| `src/cp.c/.h` | CP/PP analog signaling: scaling getters (`AD_PP`/`AD_CPD`/`AD_BAT`), CP-state char, duty-5 detector, PP plug-in hysteresis+4-debounce; BCB recorded only (gated); fed the real CP/PP front-end (`cp_capture`+`cp_adc`, `analyze95`); labeling corrected `cp_ad_cp`→`cp_ad_bat`, `cp_freq`→period µs (§5.9, `analyze92`/`analyze95`) |
+| `src/cp_capture.c/.h` | **CP PWM TIM4 input-capture front-end** (`analyze95` J, measurement only): PD12 AF2 TIM4_CH1, `TIM4_IRQHandler` (IRQ30); duty per-mille 1000×CCR2/CCR1 + period µs (NOT Hz), validity CCR1∈[950,1050] + median-of-9 span≤15 + DC deglitch (0 needs 128 / 1000 needs 32); pure `cp_capture_median`/`process` + init/ISR wrapper (§5.9) |
+| `test_cp_capture.c` | host unit test (gcc, no hardware): median extraction/sort, publish-deglitch, ISR-body validity gate + duty/period math — 42 checks |
+| `src/cp_adc.c/.h` | **PP/CPD/BAT ADC3 analog front-end** (`analyze95` I, measurement only): ADC3 ch2=PA2 PP / ch0=PA0 CPD / ch12=PC2 BAT off the shared TIM8 125 kHz TRGO, DMA2 Stream1 circular `DMA2_Stream1_IRQHandler` (IRQ57); pure `cp_adc_publish` accumulates accA+=2×ch2 / accB+=ch12 / accC+=ch0, publishes every 8 TC (1.024 ms) — **PP=16·Σch2 (PA2 ONLY; 4·ch1 is a separate +24 V byproduct, NOT PP — CORRECTED)**; pure ×3300/65520 / ×6600/32760 / ×3300/32760 mV scaling; D_LINK PB12 / PD11 read-only IDR reads (BCB drive gated) (§5.9) |
+| `test_cp_adc.c` | host unit test (gcc, no hardware): single-event accumulate/no-publish, PP-excludes-ch1, 8-event publish+clear, full-scale, scaling truncation, per-event weighting — 42 checks |
 | `src/sdp.c/.h` | SECC Discovery SM + security select (low-byte cert-count test) + SDP req/res build/validate/parse + appHandshake protocol select (DIN/ISO); **TLS wire labels corrected** (`SDP_SECURITY_TLS=0x00`/`NONE=0x10`, `use_tls=(secc_security==0)`); UDP send via `v2g_net_udp_send` (§5.9, `analyze92`/`analyze94`) |
 | `src/din70121.c/.h` | DIN70121 measurement struct + pow10 converter/scale (`0x0804E786` correction) + CurrentDemandRes decode + EV-target setter (arm 0x606) + CurrentDemandReq encode + **EXI grammar messages** (CurrentDemandRes complete 10-field / CableCheck / PreCharge / SessionStop decode + CurrentDemandReq grammar encode) (§5.9, `analyze92`/`analyze93`) |
 | `src/exi.c/.h` | **EXI bit-level codec** (`analyze93` E): byte-exact MSB-first readBits/writeBits + varlen u16/u32 + signed ones-complement + octet + PhysicalValueType wire order (Multiplier,Unit,Value) + V2GTP/0x80/7-bit-event framing; pure logic, no power GPIO (§5.9) |
@@ -143,11 +152,11 @@ current control, §5.5c GPIO map + active levels).
 | `src/ccs2.c/.h` | CCS2 EVCC controller glue: RX EtherType dispatch (MME→SLAC, **IPv6→`v2g_net_rx_ethernet`**) + session sequencing driving `din_session_step` + transport SM (`v2g_net_step`/`start_tcp`) + `ccs2_evse()` handshake outputs (sourced from the session SM while active) + `ccs2_fill_current_ctrl()` EVSE measurements + `ccs2_demand()` CurrentDemandReq actuation image + `ccs2_rx_exi()` decoded-Res entry (fed by the live transport) + session-flag setters (bench injection); communication only, no power GPIO (§5.9, `analyze92`/`analyze93`/`analyze94`) |
 | `src/v2g_net.c/.h` | **live UDP/TCP/IPv6 + mbedTLS transport carriage** (`analyze94` G/H, inert): EUI-64 link-local from PIB MAC + mcast MAC, IPv6/UDP/TCP header build/parse, Internet + pseudo-header checksum, Ethernet framing, V2GTP stream deframe, **TLS decision (TLS iff SECC security byte==0; wire 0x00=TLS/0x10=No-TLS)** + mbedTLS config record (cipher list {0xC023,0xC025}, authmode 2), transport SM (connect 30000ms / idle≥300 close / TLS handshake), RX demux→SDP/EXI dispatch→`ccs2_rx_exi`, TX UDP/TCP send via hooks, 16×128B diagnostic trace ring; lwIP TCP reliability + mbedTLS crypto are gated third-party hooks; no power GPIO (§5.9) |
 | `test_v2g_net.c` | host unit test (gcc, no hardware; `ccs2_rx_exi`/`sdp_rx` spied): EUI-64/mcast MAC, IPv6/UDP/TCP build/parse, Internet checksum vector, TLS decision, V2GTP deframe (single/multi/partial/byte-by-byte), transport SM (plain/TLS/idle/timeout), EXI dispatch, RX UDP/TCP demux, TX framing — 89 checks |
-| `test_v2gtp.c` / `test_slac.c` / `test_cp.c` / `test_sdp.c` / `test_din70121.c` / `test_ccs2.c` / `test_exi.c` / `test_din_session.c` | host unit tests (gcc, no hardware; QCA7005 stubbed where needed): V2GTP framing 14, SLAC sequence walk 54, CP/PP scaling/state/plug 32, SDP security/req/res/protocol 31, DIN pow10/CD-res/CD-req 36, CCS2 integration 21, EXI primitives/PVT/framing 55, session sequence/timers/retry/cadence/faults 39 checks (full suite 490 with `test_v2g_net` 89) |
-| `main.c` | rcc→gpio_safe→hv→can→chademo→charge_stm→current_ctrl→tick→`cpsie i`→qca7005_init→ccs2_init→`v2g_net_set_local_mac` [EUI-64 from PIB MAC], then 100 Hz loop (feed IWDG + `heartbeat` + publish `hv_*` + RX parse + cp_step [unplugged stub] + ccs2_step [drives din_session_step + v2g_net_step] + `charge_stm_step` with EVSE inputs from `ccs2_evse()` [publish `stm_*`] + `current_ctrl_step` in state-30 from `ccs2_fill_current_ctrl()` [publish `cc_*`] + `ccs2_demand` inert CD-req image + `v2g_net_tcp_send` [inert, only when ESTABLISHED; publish `ccs2_cd_req*`] + periodic TX + can_service + `qca7005_service`→ccs2_rx [publish `ccs2_*`] + `din_session_get` [publish `din_st_*`] + `v2g_net_get` [publish `v2g_net_st/mode/rx/tx`]); no asserted power drive |
+| `test_v2gtp.c` / `test_slac.c` / `test_cp.c` / `test_sdp.c` / `test_din70121.c` / `test_ccs2.c` / `test_exi.c` / `test_din_session.c` | host unit tests (gcc, no hardware; QCA7005 stubbed where needed): V2GTP framing 14, SLAC sequence walk 54, CP/PP scaling/state/plug 32, SDP security/req/res/protocol 31, DIN pow10/CD-res/CD-req 36, CCS2 integration 21, EXI primitives/PVT/framing 55, session sequence/timers/retry/cadence/faults 39 checks (full suite 574 with `test_v2g_net` 89 + `test_cp_capture` 42 + `test_cp_adc` 42) |
+| `main.c` | rcc→gpio_safe→hv→cp_capture_init→cp_adc_init→can→chademo→charge_stm→current_ctrl→tick→`cpsie i`→qca7005_init→ccs2_init→`v2g_net_set_local_mac` [EUI-64 from PIB MAC], then 100 Hz loop (feed IWDG + `heartbeat` + publish `hv_*` + RX parse + cp_step [real CP/PP front-end: cp_capture duty/period + cp_adc PP/CPD raw + PD11/D_LINK; publish `cp_cap_*`/`cp_plug`/`cp_state`/`cp_pp_mv`/`cp_cpd_mv`/`cp_bat_mv`/`cp_pp_raw`/`cp_cpd_raw`/`cp_d_link`/`cp_pd11`] + ccs2_step [drives din_session_step + v2g_net_step] + `charge_stm_step` with EVSE inputs from `ccs2_evse()` [publish `stm_*`] + `current_ctrl_step` in state-30 from `ccs2_fill_current_ctrl()` [publish `cc_*`] + `ccs2_demand` inert CD-req image + `v2g_net_tcp_send` [inert, only when ESTABLISHED; publish `ccs2_cd_req*`] + periodic TX + can_service + `qca7005_service`→ccs2_rx [publish `ccs2_*`] + `din_session_get` [publish `din_st_*`] + `v2g_net_get` [publish `v2g_net_st/mode/rx/tx`]); no asserted power drive |
 | `build.sh` | builds via `nix-shell -p gcc-arm-embedded python3` → `app.elf`/`app.bin`, verifies vectors, pads to sector 5 |
 | `verify_pad.py` | checks `vector[0]==0x20030000`, `vector[1]` is an in-app Thumb address; pads `app.bin` → `app_padded.bin` (128 KB, `0xFF` tail) |
-| `verify_ccs2.py` | disasm-verifies the built CCS2/EXI/session/transport modules: presence of wired symbols (incl. `din_session_*` + `v2g_net_*`), **power-GPIO safety** (no peripheral base `0x400xxxxx` referenced in the pure-logic modules), main integration calls (incl. `din_session_get`/`v2g_net_get`/`v2g_net_tcp_send`), pow10 converter table + the five session timer constants + retry cap 20 + transport cipher list {0xC023,0xC025} + IPv6 EtherType/next-header demux (−O2-inlined helpers verified via constants); reports bench-only APIs gc-eliminated from the autonomous image — 56 checks |
+| `verify_ccs2.py` | disasm-verifies the built CCS2/EXI/session/transport/CP-front-end modules: presence of wired symbols (incl. `din_session_*` + `v2g_net_*` + `cp_adc_*`/`cp_capture_*`), **power-GPIO safety** (no peripheral base `0x400xxxxx` referenced in the pure-logic modules), main integration calls (incl. `din_session_get`/`v2g_net_get`/`v2g_net_tcp_send`/`cp_adc_init`), pow10 converter table + the five session timer constants + retry cap 20 + transport cipher list {0xC023,0xC025} + IPv6 EtherType/next-header demux + **cp_adc_init ADC3/DMA2 register-exact values + NVIC ISER1 + read-only D_LINK/PD11 IDR reads (no GPIOB/GPIOE drive) + ISR accumulate/publish + bat_mv scaling** (−O2-inlined helpers verified via constants/displacements); reports bench-only APIs gc-eliminated from the autonomous image — 129 checks |
 
 Build outputs (`app.elf`, `app.map`, `app.bin`, `app_padded.bin`) are git-ignored.
 
@@ -161,8 +170,10 @@ Produces `app.bin` (vectors + code, linked at `0x08020000`) and `app_padded.bin`
 sector 5, matching the ground-truth `app5.bin` dump). Expected vectors:
 `MSP=0x20030000`, `reset=0x080201AD` (handler `0x080201AC`, Thumb bit set). The SysTick vector
 (offset `0x3C`) must point to `tick.c`'s strong `SysTick_Handler`, the CAN1_RX0 vector
-(IRQ20, offset `0x90`) to `can.c`'s strong `CAN1_RX0_IRQHandler`, and the DMA2_Stream0 vector
-(IRQ56, offset `0x120`) to `adc.c`'s strong `DMA2_Stream0_IRQHandler` (all override the weak aliases).
+(IRQ20, offset `0x90`) to `can.c`'s strong `CAN1_RX0_IRQHandler`, the TIM4 vector (IRQ30, offset
+`0xB8`) to `cp_capture.c`'s strong `TIM4_IRQHandler`, the DMA2_Stream0 vector (IRQ56, offset `0x120`)
+to `adc.c`'s strong `DMA2_Stream0_IRQHandler`, and the DMA2_Stream1 vector (IRQ57, offset `0x124`) to
+`cp_adc.c`'s strong `DMA2_Stream1_IRQHandler` (all override the weak aliases).
 `hv.c`'s 64-bit `get_hv` division links `__aeabi_ldivmod` from libgcc (`-lgcc` in `build.sh`).
 
 **Host unit test** (no hardware — verifies the charge-stm engagement guard + sequence + interlocks):
@@ -200,6 +211,8 @@ nix-shell -p gcc --run '
 gcc -O2 -Wall -Wextra -Isrc -o test_v2gtp     test_v2gtp.c     src/v2gtp.c                       && ./test_v2gtp
 gcc -O2 -Wall -Wextra -Isrc -o test_slac      test_slac.c      src/slac.c                        && ./test_slac
 gcc -O2 -Wall -Wextra -Isrc -o test_cp        test_cp.c        src/cp.c                          && ./test_cp
+gcc -O2 -Wall -Wextra -Isrc -o test_cp_capture test_cp_capture.c src/cp_capture.c                && ./test_cp_capture
+gcc -O2 -Wall -Wextra -Isrc -o test_cp_adc    test_cp_adc.c    src/cp_adc.c                      && ./test_cp_adc
 gcc -O2 -Wall -Wextra -Isrc -o test_sdp       test_sdp.c       src/sdp.c src/v2gtp.c             && ./test_sdp
 gcc -O2 -Wall -Wextra -Isrc -o test_din70121  test_din70121.c  src/din70121.c src/exi.c          && ./test_din70121
 gcc -O2 -Wall -Wextra -Isrc -o test_exi       test_exi.c       src/exi.c                         && ./test_exi
@@ -209,7 +222,7 @@ gcc -O2 -Wall -Wextra -Isrc -o test_v2g_net   test_v2g_net.c   src/v2g_net.c src
 '
 ```
 
-Expected: `14 / 54 / 32 / 31 / 36 / 55 / 39 / 21 / 89 checks, 0 failures` respectively (full suite **490**).
+Expected: `14 / 54 / 32 / 42 / 42 / 31 / 36 / 55 / 39 / 21 / 89 checks, 0 failures` respectively (full suite **574**).
 `test_slac.c` and `test_ccs2.c` provide their own `qca7005_frame_send`/`qca7005_mac` stubs (do **not** link
 `src/qca7005.c` into those — it collides with the stubs); `test_ccs2.c` also stubs `tick_get`. `test_din70121.c`/
 `test_ccs2.c`/`test_current_ctrl.c` link `src/exi.c` (the din70121 grammar codec references the EXI primitives);
@@ -218,21 +231,25 @@ carriage wired into `ccs2_step`/`ccs2_rx`). `test_v2g_net.c` spies `ccs2_rx_exi`
 ccs2/sdp/din modules). The pure protocol/scaling/measurement/codec/session/transport logic compiles and runs on
 the host; the lwIP TCP reliability + mbedTLS crypto + SPI paths are gated/disasm-verified separately.
 
-**Built-image disasm verification** (power-GPIO safety + presence + pow10 table + transport constants):
+**Built-image disasm verification** (power-GPIO safety + presence + pow10 table + transport constants + CP/PP front-end):
 
 ```sh
 nix-shell -p gcc-arm-embedded python3 python3Packages.capstone --run 'python3 verify_ccs2.py'
 ```
 
-Expected: `56 checks, 0 failures` — confirms the wired CCS2/EXI/session/transport symbols are linked, the
-pure-logic modules reference **no** peripheral base `0x400xxxxx` (no power GPIO), `main` calls the integration
-functions (incl. `din_session_get`/`v2g_net_get`/`v2g_net_tcp_send`/`v2g_net_set_local_mac`), the pow10 converter
-table is present, the five session timer constants (4000/120000/150000/40000/14000) + retry cap 20 are compiled
-into `din_session`, and the transport cipher list {0xC023,0xC025} + IPv6 EtherType (0xDD86 LE) + next-header
-UDP 17/TCP 6 demux are compiled into `v2g_net` (the small helpers are −O2-inlined into their callers, verified via
-constants). Bench-only APIs gc-eliminated from the autonomous image are reported informationally (host-tested
-above); the live `v2g_net` RX path now reaches the EXI decode chain (`ccs2_rx_exi`/`exi_decode_header`/
-`din_session_rx`/`v2gtp_parse`), so those are retained.
+Expected: `129 checks, 0 failures` — confirms the wired CCS2/EXI/session/transport/CP-front-end symbols are
+linked, the pure-logic modules reference **no** peripheral base `0x400xxxxx` (no power GPIO), `main` calls the
+integration functions (incl. `din_session_get`/`v2g_net_get`/`v2g_net_tcp_send`/`v2g_net_set_local_mac`/
+`cp_adc_init`), the pow10 converter table is present, the five session timer constants
+(4000/120000/150000/40000/14000) + retry cap 20 are compiled into `din_session`, the transport cipher list
+{0xC023,0xC025} + IPv6 EtherType (0xDD86 LE) + next-header UDP 17/TCP 6 demux are compiled into `v2g_net`, and
+`cp_adc_init` writes the byte-exact ADC3/DMA2 register values (CR1 `0x800` DISCEN, CR2 `0x1E000301`, SMPR1/2,
+SQR1/2/3, DMA CR `0x04002D10`, CCR `0x0002A006`, LIFCR `0xF40`, NDTR 16, ADC3_DR +0x4C) + NVIC ISER1, with
+`cp_adc_d_link`/`pd11` **read-only** IDR reads (no GPIOB/GPIOE drive) and the ISR accumulate/publish + `bat_mv`
+×6600/32760 scaling present (the small helpers are −O2-inlined into their callers, verified via
+constants/displacements). Bench-only APIs gc-eliminated from the autonomous image are reported informationally
+(host-tested above); the live `v2g_net` RX path now reaches the EXI decode chain (`ccs2_rx_exi`/
+`exi_decode_header`/`din_session_rx`/`v2gtp_parse`), so those are retained.
 
 ## Wrap into a bootable UPG
 
@@ -285,19 +302,29 @@ byte-identical round-trip when fed the stock app region.
    the modem. The transport touches only SPI1 + PA4 (CS) + PC5 (reset) + PC4 (IRQ) — **no power pin**. With
    no PLC modem connected the bring-up times out (~4 s, IWDG-fed) and reports failure; the heartbeat then
    increments normally. **No contactor should click** — the PLC transport drives no power stage.
-8. **Confirm the CCS2 EVCC subsystem is communication-only**: read `&ccs2_st` over SWD — with the CP
-   front-end stubbed unplugged (`plug_in=0`) it sits at `0` (IDLE) and never advances to SLAC/SDP/session;
-   `&ccs2_link`/`&ccs2_secc` stay `0`. The pure-logic modules (slac/cp/sdp/din70121/exi/din_session/ccs2/
-   v2gtp) reference **no peripheral base** (disasm-verified, `verify_ccs2.py`) — they drive no power pin. In
-   CurrentDemand the `CurrentDemandReq` EXI image is produced (`&ccs2_cd_req_len=108`, `&ccs2_cd_req[0..107]`)
-   and sent via `v2g_net_tcp_send` — **inert**: it only transmits when the transport is ESTABLISHED (gated TCP
-   connect/TLS handshake), so nothing is commanded to the EVSE in normal operation. The EXI grammar + autonomous
-   session sequence/timers (`analyze93`; `&din_st_state`/`&din_st_fault`) **and the live transport carriage**
-   (`analyze94`; `&v2g_net_st`/`&v2g_net_mode`/`&v2g_net_rx`/`&v2g_net_tx`) are recovered/built; the lwIP TCP
-   reliability + mbedTLS crypto are gated hooks and the CP analog acquisition is still gated, so the session
-   holds idle and the session-flag setters allow bench injection for testing the downstream charge-stm/
-   current-control wiring. **No contactor should click and no HV should appear** — the CCS2 subsystem is
-   communication only.
+8. **Confirm the CCS2 EVCC subsystem is communication-only**: read `&ccs2_st` over SWD — with no live EVSE
+   the session sits at `0` (IDLE) and never advances to SLAC/SDP/session; `&ccs2_link`/`&ccs2_secc` stay `0`
+   (`plug_in` now reflects the measured PP voltage, but the DIN-derived handshake inputs hold 0). The pure-logic
+   modules (slac/cp/sdp/din70121/exi/din_session/ccs2/v2gtp) reference **no peripheral base** (disasm-verified,
+   `verify_ccs2.py`) — they drive no power pin. In CurrentDemand the `CurrentDemandReq` EXI image is produced
+   (`&ccs2_cd_req_len=108`, `&ccs2_cd_req[0..107]`) and sent via `v2g_net_tcp_send` — **inert**: it only
+   transmits when the transport is ESTABLISHED (gated TCP connect/TLS handshake), so nothing is commanded to the
+   EVSE in normal operation. The EXI grammar + autonomous session sequence/timers (`analyze93`;
+   `&din_st_state`/`&din_st_fault`) **and the live transport carriage** (`analyze94`;
+   `&v2g_net_st`/`&v2g_net_mode`/`&v2g_net_rx`/`&v2g_net_tx`) are recovered/built; the lwIP TCP reliability +
+   mbedTLS crypto are gated hooks, so with no live EVSE the session holds idle and the session-flag setters
+   allow bench injection for testing the downstream charge-stm/current-control wiring. **No contactor should
+   click and no HV should appear** — the CCS2 subsystem is communication only.
+9. **Confirm the CP/PP analog front-end is measurement-only**: read `&cp_cap_duty` (CP duty per-mille,
+   percent×10) / `&cp_cap_period` (CP PWM period µs; f_Hz = 1e6/period) / `&cp_cap_upd` (capture update counter)
+   over SWD — with a 1 kHz CP PWM applied to PD12 these track the signal; with no signal `cp_cap_duty` holds its
+   deglitched value. `&cp_pp_mv`/`&cp_cpd_mv`/`&cp_bat_mv` are the scaled ADC3 readings (PP=PA2/ch2 ×3300/65520,
+   CPD=PA0/ch0 ×3300/32760, BAT=PC2/ch12 ×6600/32760), `&cp_pp_raw`/`&cp_cpd_raw` the published raw accumulators
+   (PP=16·Σch2 — PA2 ONLY), `&cp_plug`/`&cp_state` the plug-in presence + CP state char, and `&cp_d_link` (PB12)
+   / `&cp_pd11` (PD11 read-back) the digital reads. The front-end (`cp_capture` TIM4 IRQ30 + `cp_adc` ADC3/DMA2
+   Stream1 IRQ57, `analyze95`) samples analog inputs + reads IDR — it drives **no power pin** (the BCB PD11
+   drive + the +24 V power-fail queue stay gated; disasm-verified read-only, `verify_ccs2.py`). **No contactor
+   should click and no HV should appear** — the CP/PP front-end is measurement only.
 
 ## Recovery (bricking-safe)
 
@@ -316,7 +343,7 @@ that mass-erases). See REPORT §5.19.
 
 Built up in incremental, independently-testable layers; power-stage drive stays GATED last.
 
-**Done (safe bootstrap + CAN1 message layer + HV measurement + inert charge stm + inert current control + CCS2 EVCC subsystem [QCA7005 transport + SLAC + CP/PP + SDP/V2GTP + DIN70121 + EXI codec + autonomous session SM]):**
+**Done (safe bootstrap + CAN1 message layer + HV measurement + inert charge stm + inert current control + CCS2 EVCC subsystem [QCA7005 transport + SLAC + CP/PP + SDP/V2GTP + DIN70121 + EXI codec + autonomous session SM + live transport] + CP/PP analog front-end):**
 - Clocks — `rcc_init` restores SYSCLK 168 MHz (§5.8.1).
 - §5.20 — 100 Hz SysTick OS tick + 100 kHz TIM2 timebase (`src/tick.c`).
 - §5.5c — GPIO **safe-state** init (`src/gpio.c`, active levels via `analyze86`): all power pins
@@ -334,8 +361,8 @@ Built up in incremental, independently-testable layers; power-stage drive stays 
   safe-charge sequence 13→14→15→16→17→18→19→20→30 + stop/shutdown skeleton, the **byte-exact state-17
   engagement guard** (`outvol ∈ [ress_vol−10, ress_vol+5]` unsigned + dwell≥250 + isolation==4 + flag==1),
   safety interlocks + CAN watchdogs (whole-bus 1525 / per-message 100). Records `STM_ACT_*` but drives
-  **no GPIO**; EVSE-side handshake inputs now from `ccs2_evse()` (hold 0 with CP stubbed unplugged +
-  no live network transport). Host-unit-tested (`test_charge_stm.c`, 47 checks). **No power drive.**
+  **no GPIO**; EVSE-side handshake inputs now from `ccs2_evse()` (`plug_in` from the measured PP voltage;
+  DIN-derived inputs hold 0 until a live EXI session). Host-unit-tested (`test_charge_stm.c`, 47 checks). **No power drive.**
 - §5.21 E — **inert H102 current control** (`src/current_ctrl.c`, shadow setpoint via `analyze89`, converter
   corrected by `analyze92`): the byte-exact state-30 CurrentDemand law `setpoint = min(H102.ChargingCurrentRequest,
   EVSE avail)` capped by the EVSE max-current (`cap!=0`), `target_v = min(H102.TargetBatteryVoltage, p[+0x216]
@@ -374,10 +401,10 @@ Built up in incremental, independently-testable layers; power-stage drive stays 
   timers 4000/120000/150000/40000/14000 ms [global vs engagement-phase] + retry cap 20 + CD modulo cadence +
   FAILED→shutdown + fault post 0x0802C9D0→0x20000774 — **inert**, records the fault code, drives no GPIO),
   wired into `ccs2_step` (sources the EVSE handshake flags from the session SM while active) + `main` (publish
-  `din_st_*`). **Communication only, no power GPIO** (disasm-verified `verify_ccs2.py`, 56 checks). Host-unit-
-  tested (`test_exi.c` 55, `test_din_session.c` 39; full suite 490). The live transport that feeds `ccs2_rx_exi`
-  was subsequently recovered by `analyze94` (next bullet). **Still GATED:** exact Req-side grammars / root-event
-  numbering [?], DIN-vs-ISO DC_EVSEStatus layout [?], CP/PP analog front-end acquisition.
+  `din_st_*`). **Communication only, no power GPIO** (disasm-verified `verify_ccs2.py`, 129 checks). Host-unit-
+  tested (`test_exi.c` 55, `test_din_session.c` 39; full suite 574). The live transport that feeds `ccs2_rx_exi`
+  was subsequently recovered by `analyze94` and the CP/PP analog front-end by `analyze95` (next bullets).
+  **Still GATED:** exact Req-side grammars / root-event numbering [?], DIN-vs-ISO DC_EVSEStatus layout [?].
 - §5.9 live-transport addendum — **UDP/TCP/IPv6 + mbedTLS transport carriage** (`src/v2g_net.c`, via `analyze94`
   G/H): the network carriage the upper layers left gated. EUI-64 link-local from the PIB MAC
   (`netif_create_ip6_linklocal_address 0x08090D68`) + mcast MAC, IPv6/UDP/TCP header build/parse
@@ -392,22 +419,35 @@ Built up in incremental, independently-testable layers; power-stage drive stays 
   (IPv6→`v2g_net_rx_ethernet`), `ccs2_step` (`v2g_net_step` + `start_tcp` at SDP-done), `ccs2_init` (Ethernet TX
   hook→`qca7005_frame_send` + SDP UDP hook), `main` (`v2g_net_set_local_mac` + `v2g_net_tcp_send` + publish
   `v2g_net_*`). **Communication only, no power GPIO** (disasm-verified `verify_ccs2.py`). Host-unit-tested
-  (`test_v2g_net.c` 89; full suite 490). **GATED (third-party stacks, represented by hooks):** lwIP TCP
+  (`test_v2g_net.c` 89; full suite 574). **GATED (third-party stacks, represented by hooks):** lwIP TCP
   reliability (SYN/ACK/retransmit/congestion), mbedTLS crypto (ECDHE/AES/SHA256/X509), ND6 neighbor resolution,
   CA flash→RAM populator.
+- §5.9 CP/PP front-end addendum — **CP/PP analog acquisition** (`src/{cp_capture,cp_adc}.c`, via `analyze95`):
+  the two independent measurement paths beneath the `cp.c` scaling/state/plug logic. `cp_capture` (TIM4_CH1
+  PD12 AF2 PWM input-capture, IRQ30 — duty per-mille 1000×CCR2/CCR1 + period µs [NOT Hz], validity
+  CCR1∈[950,1050] + median-of-9 span≤15 + DC deglitch [0 needs 128 / 1000 needs 32]), `cp_adc` (ADC3 ch2=PA2 PP
+  / ch0=PA0 CPD / ch12=PC2 BAT off the shared TIM8 125 kHz TRGO, DMA2 Stream1 circular IRQ57, accumulate/publish
+  every 8 TC=1.024 ms — **PP=16·Σch2 [PA2 ONLY; the 4·ch1 PA1 sum is a separate +0xC +24 V byproduct, NOT PP —
+  CORRECTED]** + ×3300/65520 / ×6600/32760 / ×3300/32760 mV scaling + D_LINK PB12 / PD11 read-only IDR reads).
+  `cp.c`/`cp.h` labeling corrected (`cp_ad_cp`→`cp_ad_bat`, `cp_freq`→period µs). Wired into `main`
+  (`cp_capture_init` + `cp_adc_init` after HV; `cp_step` fed the real duty/period + PP/CPD raw + PD11/D_LINK;
+  publish `cp_cap_*`/`cp_plug`/`cp_state`/`cp_pp_mv`/`cp_cpd_mv`/`cp_bat_mv`/`cp_pp_raw`/`cp_cpd_raw`/
+  `cp_d_link`/`cp_pd11`). **Measurement only, no power GPIO** (the BCB PD11 drive + the +24 V power-fail queue
+  stay gated; disasm-verified `verify_ccs2.py`, 129 checks). Host-unit-tested (`test_cp_capture.c` 42,
+  `test_cp_adc.c` 42, `test_cp.c` 32; full suite 574).
 
 **Remaining layers:**
-- CCS2 **transport third-party stacks + remaining grammar/analog gaps**: the live UDP/TCP/IPv6 + mbedTLS
+- CCS2 **transport third-party stacks + remaining grammar gaps**: the live UDP/TCP/IPv6 + mbedTLS
   transport **glue + wire framing + protocol decisions are recovered/built** (`analyze94`, `src/v2g_net.c`);
   what stays gated is the heavy third-party code represented by hooks — lwIP TCP reliability
   (SYN/ACK/retransmit/congestion), mbedTLS crypto (ECDHE/AES/SHA256/X509), ND6 neighbor resolution, the CA
   flash→RAM populator — plus the exact Req-side EXI grammars / root-event numbering [?], the DIN-vs-ISO
-  DC_EVSEStatus layout [?], the exact EVSEIsolationStatus→level 3/4 mapping, and the CP/PP analog front-end
-  acquisition (PP/CPD ADC channels + TIM4 CP input-capture on PD12). The EXI bit-grammar codec + the distributed
-  session sequence/timers/retries + FAILED→shutdown (`analyze93`) + the transport carriage (`analyze94`) are
-  **already recovered/built**; with the CP front-end stubbed unplugged the session holds idle and the EVSE
-  inputs hold safe 0 (bench-injection via flag setters / `ccs2_rx_exi` exercises the downstream wiring). The
-  confirmed measurement + actuation field maps are already wired.
+  DC_EVSEStatus layout [?], and the exact EVSEIsolationStatus→level 3/4 mapping. The EXI bit-grammar codec + the
+  distributed session sequence/timers/retries + FAILED→shutdown (`analyze93`) + the transport carriage
+  (`analyze94`) + the CP/PP analog front-end acquisition (`analyze95`, PP/CPD/BAT ADC3 + TIM4 CP input-capture
+  on PD12) are **already recovered/built**; with no live EVSE the session holds idle and the DIN-derived EVSE
+  inputs hold safe 0 (`plug_in` reflects the measured PP; bench-injection via flag setters / `ccs2_rx_exi`
+  exercises the downstream wiring). The confirmed measurement + actuation field maps are already wired.
 - §5.5c — **asserted** power-stage drive (PB10/PB11 precharge, PD8 inner contactor, PC9 charge,
   PE7/PE8 d1/d2, PD3/PE4 e-lock) — **LAST**, behind a compile-time safety flag, drive **only** once
   the controller is bench-validated. **Actuation architecture (§5.21 F, `analyze90`):** the adapter has
