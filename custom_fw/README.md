@@ -1,17 +1,18 @@
-# custom_fw — safe-bootstrap + CAN1 message layer + HV measurement + inert charge stm + inert current control (Orientrise KM-CCS2CHAdeMO-1)
+# custom_fw — safe-bootstrap + CAN1 message layer + HV measurement + inert charge stm + inert current control + CCS2 QCA7005 PLC transport (Orientrise KM-CCS2CHAdeMO-1)
 
 A **minimal, flashable, stock-reversible** custom application for the adapter
 (STM32F427/F429, Cortex-M4), being built up in incremental, independently-testable layers
 toward a safe CHAdeMO charge controller. It proves the full **build → wrap → flash → recover**
 pipeline end-to-end on the byte-derived memory layout (REPORT §5.19) and boot entry contract
 (§5.15/§5.16). **Current stage: SAFE BOOTSTRAP + CAN1 MESSAGE LAYER + HV MEASUREMENT + INERT CHARGE
-STM + INERT CURRENT CONTROL** — clocks + timebase + GPIO safe-state + CAN1 (500k) CHAdeMO RX/TX + the
-factory-calibrated HV measurement front-end (`get_hv` → `outvol`) + the inert charge state machine
-(safe-charge sequence + byte-exact state-17 engagement guard + interlocks + CAN watchdogs) + the inert
-H102 output-current control law (state-30 `min(request, EVSE avail)` setpoint capped by EVSE max). It
-performs **no asserted power-stage drive** — the state machine and current control are *shadow*
-controllers that record but do not execute power actions (measurement + CAN reporting + state/setpoint
-tracking only).
+STM + INERT CURRENT CONTROL + CCS2 QCA7005 PLC TRANSPORT** — clocks + timebase + GPIO safe-state + CAN1
+(500k) CHAdeMO RX/TX + the factory-calibrated HV measurement front-end (`get_hv` → `outvol`) + the inert
+charge state machine (safe-charge sequence + byte-exact state-17 engagement guard + interlocks + CAN
+watchdogs) + the inert H102 output-current control law (state-30 `min(request, EVSE avail)` setpoint capped
+by EVSE max) + the QCA7005 PLC SPI1 host driver / MME-Ethernet transport (the CCS2 EVSE-side communication
+foundation). It performs **no asserted power-stage drive** — the state machine and current control are
+*shadow* controllers that record but do not execute power actions, and the PLC transport is communication
+only (measurement + CAN reporting + state/setpoint tracking + PLC modem bring-up only).
 
 ## Safety — read first
 
@@ -56,6 +57,16 @@ This foundation is **safe-by-construction** (contactors open, no HV):
   zero-skip **holds the setpoint at 0** — no current is ever commanded. It only runs in state-30
   (CurrentDemand). Host-unit-tested (`test_current_ctrl.c`, 42 checks). Setpoint/cap/target are SWD-readable
   (`cc_*`).
+- **CCS2 QCA7005 PLC transport**: `qca7005_init` brings up the QCA7005 HomePlug GreenPHY PLC modem over
+  SPI1 (§5.9 transport addendum, `analyze91`) — PA5/6/7 AF5, CS=PA4, reset=PC5, IRQ=PC4 polled, `CR1=0x0357`
+  (Mode 3 /8 master), the SPI register protocol (`0xC000|addr` read / `0x4000|addr` write), reg-init
+  (sig `0xAA55` + `0x1200=0xC5B`/`0xC00=0x447`/`0xD00=0x41`), the `0xAA`/`0x55`-framed buffer TX/RX, and the
+  MAC-read MME (`0xA000`/`0xA001`) to resolve the modem PIB MAC. `qca7005_service` polls the modem + drains
+  RX frames to a callback. This is **communication only** — it drives no power pin (only SPI1 + GPIOA CS +
+  GPIOC reset/IRQ). The bring-up is blocking but **IWDG-fed**; if no modem is present it times out (~4 s)
+  and reports `ccs2_qca_ok=0`, and the app continues. The SLAC/SDP/DIN session layers above it are built
+  next. Host-unit-tested (`test_qca7005.c`, 26 checks). `ccs2_qca_ok`/`ccs2_mac_valid`/`ccs2_rx_frames` are
+  SWD-readable.
 - **IWDG**: the loop feeds the watchdog key (`0x40003000`) — harmless whether or not the IWDG is
   enabled (keeps the app alive if the boot left it running; no-op otherwise).
 - A RAM `heartbeat` counter increments each 10 ms tick so you can confirm "the custom app is
@@ -85,7 +96,9 @@ current control, §5.5c GPIO map + active levels).
 | `test_charge_stm.c` | host unit test (gcc, no hardware): engagement-guard window/thresholds + unsigned wrap, sequence walk/stall/engagement, interlocks, C009-mismatch never-engages — 47 checks |
 | `src/current_ctrl.c/.h` | **inert** H102 output-current control law (shadow setpoint): state-30 `setpoint=min(request,EVSE avail)` capped by EVSE max, `target_v=min(target,limit)`, byte-exact `/1000` scale + converter `(code<7)?code:0xFF`, zero-skip keep-previous; drives no power stage; EVSE-side measurements safe-stubbed (§5.21 E, `analyze89`) |
 | `test_current_ctrl.c` | host unit test (gcc, no hardware): converter/scale, min/cap law, target-voltage limit, zero-skip, EVSE-stub safety (setpoint held 0) — 42 checks |
-| `main.c` | rcc→gpio_safe→hv→can→chademo→charge_stm→current_ctrl→tick→`cpsie i`, then 100 Hz loop (feed IWDG + `heartbeat` + publish `hv_*` + RX parse + `charge_stm_step` [publish `stm_*`] + `current_ctrl_step` in state-30 [publish `cc_*`] + periodic TX + can_service); no asserted power drive |
+| `src/qca7005.c/.h` | QCA7005 PLC SPI1 host driver + MME/Ethernet transport: `CR1=0x0357` (Mode 3/master//8/8bit/MSB/SSM), CS=PA4, reset=PC5, IRQ=PC4 polled; reg read `0xC000\|addr` / write `0x4000\|addr`; reg-init (sig `0xAA55` + `0x1200=0xC5B`/`0xC00=0x447`/`0xD00=0x41`); `0xAA`/`0x55`-framed buffer TX/RX; MAC-read MME `0xA000`/`0xA001`; 4096 B RX ring + per-frame callback; communication only, no power GPIO (§5.9, `analyze91`) |
+| `test_qca7005.c` | host unit test (gcc, no hardware): MAC-read REQ build, MAC-read CNF validation, RX packet-header parse math — 26 checks |
+| `main.c` | rcc→gpio_safe→hv→can→chademo→charge_stm→current_ctrl→tick→`cpsie i`→qca7005_init, then 100 Hz loop (feed IWDG + `heartbeat` + publish `hv_*` + RX parse + `charge_stm_step` [publish `stm_*`] + `current_ctrl_step` in state-30 [publish `cc_*`] + periodic TX + can_service + `qca7005_service` [publish `ccs2_*`]); no asserted power drive |
 | `build.sh` | builds via `nix-shell -p gcc-arm-embedded python3` → `app.elf`/`app.bin`, verifies vectors, pads to sector 5 |
 | `verify_pad.py` | checks `vector[0]==0x20030000`, `vector[1]` is an in-app Thumb address; pads `app.bin` → `app_padded.bin` (128 KB, `0xFF` tail) |
 
@@ -122,6 +135,16 @@ nix-shell -p gcc --run 'gcc -O2 -Wall -Wextra -Isrc -o test_current_ctrl test_cu
 
 Expected: `42 checks, 0 failures`. `current_ctrl.c` is pure logic (no hardware registers), so it compiles
 and runs on the host.
+
+**Host unit test** (no hardware — verifies the QCA7005 MAC-read REQ build + CNF validation + RX packet parse):
+
+```sh
+nix-shell -p gcc --run 'gcc -O2 -Wall -Wextra -Isrc -o test_qca7005 test_qca7005.c src/qca7005.c && ./test_qca7005'
+```
+
+Expected: `26 checks, 0 failures`. The pure helpers (frame build / CNF validation / packet-header parse)
+compile and run on the host; the SPI hardware paths are disasm-verified separately and `tick_delay_ms` is
+stubbed in the test.
 
 ## Wrap into a bootable UPG
 
@@ -168,6 +191,12 @@ byte-identical round-trip when fed the stock app region.
    stubbed it stays `0` (the `min(request,0)==0` zero-skip), as do `&cc_cap`/`&cc_target_v` until state-30.
    `current_ctrl_step` only runs in CurrentDemand (state 30) and **drives no power stage** — `cc_*` are
    *shadow setpoints*, not outputs. No current command reaches the power stage; any energisation is a fault.
+7. **Confirm the QCA7005 PLC transport is communication-only**: read `&ccs2_qca_ok` over SWD — `1` means the
+   QCA7005 modem answered the CPU-ready signature (`0xAA55`) and its PIB MAC was read (`&ccs2_mac_valid=1`);
+   `0` means no modem / timeout (the app still runs). `&ccs2_rx_frames` counts Ethernet frames received from
+   the modem. The transport touches only SPI1 + PA4 (CS) + PC5 (reset) + PC4 (IRQ) — **no power pin**. With
+   no PLC modem connected the bring-up times out (~4 s, IWDG-fed) and reports failure; the heartbeat then
+   increments normally. **No contactor should click** — the PLC transport drives no power stage.
 
 ## Recovery (bricking-safe)
 
@@ -186,7 +215,7 @@ that mass-erases). See REPORT §5.19.
 
 Built up in incremental, independently-testable layers; power-stage drive stays GATED last.
 
-**Done (safe bootstrap + CAN1 message layer + HV measurement + inert charge stm + inert current control):**
+**Done (safe bootstrap + CAN1 message layer + HV measurement + inert charge stm + inert current control + CCS2 QCA7005 PLC transport):**
 - Clocks — `rcc_init` restores SYSCLK 168 MHz (§5.8.1).
 - §5.20 — 100 Hz SysTick OS tick + 100 kHz TIM2 timebase (`src/tick.c`).
 - §5.5c — GPIO **safe-state** init (`src/gpio.c`, active levels via `analyze86`): all power pins
@@ -214,11 +243,24 @@ Built up in incremental, independently-testable layers; power-stage drive stays 
   validation stub; the law is inline in state-30, context `0x20000780` `+0x16…+0x1e`). Runs only in state-30;
   EVSE-side measurements safe-stubbed 0 → setpoint held 0. Host-unit-tested (`test_current_ctrl.c`, 42
   checks). **No power drive.**
+- §5.9 transport addendum — **CCS2 QCA7005 PLC transport** (`src/qca7005.c`, via `analyze91`): the SPI1
+  host driver + MME/Ethernet TX/RX that carries the CCS2 EVCC traffic. `CR1=0x0357` (Mode 3 /8 master),
+  CS=PA4 / reset=PC5 / IRQ=PC4 polled, SPI register protocol (`0xC000|addr` read / `0x4000|addr` write),
+  reg-init (sig `0xAA55` + `0x1200=0xC5B`/`0xC00=0x447`/`0xD00=0x41`), `0xAA`/`0x55`-framed buffer TX/RX,
+  MAC-read MME `0xA000`/`0xA001` (resolves the modem PIB MAC), 4096 B RX ring + per-frame callback.
+  Corrects the C009-era anchors (C013 driver `0x08089xxx`, SPI1 primitives `0x08093Cxx–0x08093Fxx`).
+  **Communication only, no power drive**; bare-metal (no RTOS mutex, IWDG-fed bring-up, RX polled from
+  `qca7005_service`). Host-unit-tested (`test_qca7005.c`, 26 checks); built-image constants disasm-verified.
+  The foundation the SLAC/SDP/DIN session layers build on.
 
 **Remaining layers:**
-- CCS2 EVSE-side subsystem (PLC/QCA7005 + DIN70121/ISO15118) — supplies the stm's EVSE-side handshake
-  inputs (isolation / precharge_flag / CableCheck / ChargeParameterDiscovery) **and** the current-control
-  EVSE-side measurements (max/available current + range-code factors, voltage limit) currently safe-stubbed.
+- CCS2 EVSE-side session subsystem **above the QCA7005 transport** (SLAC ISO15118-3 link establishment +
+  CP/PP/BCB signaling → SDP UDP discovery + V2GTP/TCP → DIN70121/ISO15118-2 EXI DC session: SessionSetup →
+  ChargeParameterDiscovery → CableCheck → PreCharge → PowerDelivery → CurrentDemand → SessionStop) — supplies
+  the stm's EVSE-side handshake inputs (isolation / precharge_flag / CableCheck / ChargeParameterDiscovery)
+  **and** the current-control EVSE-side measurements (max/available current + range-code factors, voltage
+  limit) currently safe-stubbed, **and** the `CurrentDemandReq` actuation that commands the setpoint to the
+  upstream EVSE (§5.21 F).
 - §5.5c — **asserted** power-stage drive (PB10/PB11 precharge, PD8 inner contactor, PC9 charge,
   PE7/PE8 d1/d2, PD3/PE4 e-lock) — **LAST**, behind a compile-time safety flag, drive **only** once
   the controller is bench-validated. **Actuation architecture (§5.21 F, `analyze90`):** the adapter has

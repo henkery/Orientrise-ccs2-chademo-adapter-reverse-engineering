@@ -6,3 +6,4 @@ app_padded.bin
 # host unit-test binary (regenerate with the gcc command in README.md)
 test_charge_stm
 test_current_ctrl
+test_qca7005

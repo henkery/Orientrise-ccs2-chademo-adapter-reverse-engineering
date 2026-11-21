@@ -39,6 +39,7 @@
 #include "adc.h"
 #include "charge_stm.h"
 #include "current_ctrl.h"
+#include "qca7005.h"
 
 #define IWDG_KR   (*(volatile uint32_t *)0x40003000u)
 #define IWDG_FEED 0x0000AAAAu
@@ -62,6 +63,19 @@ volatile uint32_t cc_setpoint = 0;   /* capped output-current setpoint (A)      
 volatile uint32_t cc_cap      = 0;   /* EVSE max-current cap (A)                */
 volatile uint32_t cc_target_v = 0;   /* capped target battery voltage (V)       */
 
+/* CCS2 EVSE-side subsystem — QCA7005 PLC transport (SWD-readable; communication only, no power).
+ * The SLAC/SDP/DIN layers above the transport are built next; until then the RX callback just
+ * counts received Ethernet frames for bench proof-of-life. */
+volatile uint32_t ccs2_qca_ok    = 0;  /* QCA7005 bring-up result (1 = PIB MAC read ok) */
+volatile uint32_t ccs2_mac_valid = 0;  /* 1 if the modem PIB MAC was resolved           */
+volatile uint32_t ccs2_rx_frames = 0;  /* Ethernet frames received from the PLC modem   */
+
+static void ccs2_rx_count(const uint8_t *frame, uint16_t len)
+{
+    (void)frame; (void)len;
+    ccs2_rx_frames++;   /* placeholder dispatcher; replaced by the CCS2 session layer */
+}
+
 static void enable_irq(void)
 {
     __asm__ volatile ("cpsie i" ::: "memory");
@@ -78,6 +92,13 @@ void main(void)
     current_ctrl_init(); /* inert H102 output-current control law (shadow, §5.21 E)  */
     tick_init();         /* 100 Hz SysTick OS tick + 100 kHz TIM2 timebase   */
     enable_irq();        /* boot jumped with interrupts masked (cpsid i)     */
+
+    /* CCS2 EVSE-side subsystem — QCA7005 PLC transport bring-up (§5.9). Blocking (IWDG-fed
+     * delays), so it runs after tick_init + enable_irq. Communication only — drives no power
+     * pin. If no modem is present it times out (~4 s) and reports failure; the app continues.
+     * The SLAC/SDP/DIN session layers above it are built next. */
+    ccs2_qca_ok = (qca7005_init() == 0);
+    qca7005_set_rx_cb(ccs2_rx_count);
 
     uint32_t next = tick_get();
     for (;;) {
@@ -148,7 +169,11 @@ void main(void)
 
         chademo_tx_periodic(now);  /* H108/H109 standby report every 100 ms     */
         can_service();             /* bus-off recovery / error check            */
-        /* (future: CCS2 EVSE-side subsystem -> gated power-stage drive LAST) */
+
+        /* CCS2 QCA7005 PLC transport: poll the modem IRQ (PC4) + reg 0xC00, drain RX frames
+         * (communication only — no power drive). The session layers above it are built next. */
+        qca7005_service();
+        ccs2_mac_valid = (qca7005_mac() != 0);
 
         next++;                              /* advance one 10 ms tick */
         while ((int32_t)(tick_get() - next) < 0) { }

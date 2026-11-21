@@ -693,6 +693,43 @@ read returns the actual per-unit MAC. This PIB read is distinct from the SLAC `C
 `0x6064/65` `CM_SLAC_PARM`, `0x606A` `CM_START_ATTEN_CHAR`, `0x6008/09` `CM_SET_KEY`; decoder
 `0x080214D6`, builder `0x0802166E`/`0x0802188C`), which run *after* the MAC is known (§8.8).
 
+**Transport addendum — QCA7005 SPI1 byte-level host driver (`analyze91`, custom_fw transport layer).**
+The MAC-init/MAC-read anchors above are **C009-era**; in **C013** the functions are shifted (the
+mechanism is identical). Verified C013 addresses: high-level driver `0x08089010–0x08089708`, SPI1
+primitives `0x08093C66–0x08093F7A` (the earlier "SPI byte driver `0x0738C0`/`0x080934BE`" anchor is a
+bit-field parser, **not** SPI). Crosswalk: MAC-init `0x0802156C`→`0x08089624` (PC5 reset pulse, BSRR
+`0x200000`→`0x20`, **2 ms** each)→`0x080895A8` (CPU-ready poll)→`0x08089422` (reg-init); reg read
+`0x08093CBC` / write `0x08093D00`; MAC-read builder `0x0808955C`, generic send `0x080892E2`, CNF
+validator `0x080894EE`, CNF poll `0x08089532` (10 ms×20), MAC resp buf `0x20022838` / **PIB MAC
+`0x2002283E`** (accessor `0x080896C0`), MAC-header template `0x080AFDCC`, SPI mutex handle `0x20000A38`.
+
+- **SPI1**: PA5 SCK / PA6 MISO / PA7 MOSI **AF5**, **CS = PA4** (active-low, BSRR `0x10`↑/`0x00100000`↓),
+  reset **PC5**, IRQ **PC4** (input, **polled** — RX is poll-driven, no dedicated EXTI ISR located).
+  **CR1 = `0x0357`** (Mode 3 CPOL=CPHA=1, master, **fPCLK2/8**, 8-bit, MSB-first, SSM+SSI software-CS,
+  full-duplex), CR2 = 0; init sequence `0x317` (SPE=0) → `0x357` (SPE=1) @`0x08093CA0`.
+- **SPI slave register protocol**: read = CS↓ `[0xC0|addr_hi, addr_lo]` + 2 dummy clocks → u16 **BE**;
+  write = CS↓ `[0x40|addr_hi, addr_lo, val_hi, val_lo]`. Buffer access uses reg `0x100` (cmd `0x4100`).
+- **Register map** (addresses/values decoded; names inferred): `0x100` buf-cmd, `0x200` TX-free,
+  `0x300` RX-avail, `0x400` SPI-rst (init `0x80`), `0xC00` int/status (init `0x447`; **bit0** RX-avail,
+  **bit6** CPU-ready/re-init), `0xD00` int-timeout (init `0x41`), `0x1200` SPI-cfg (init `0xC5B`),
+  `0x1A00` CPU-ready signature (**`0xAA55`**), `0x1B00` sig-clear (init `0`). reg-init `0x08089422`
+  reads `0x1A00` ×3 (first two discarded), checks `0xAA55`, then writes the five config registers.
+  CPU-ready poll: signature 400×10 ms, `0xC00` bit6 1000×10 ms, reg-init, MAC-read ×3.
+- **Buffer-WRITE** (`0x08093DA8`): pad frame to Ethernet minimum **60**, require TX-free `0x200` ≥
+  padded+14, write reg `0x100` = padded+10 (a separate CS transaction), then CS↓ `[00,00]` turnaround +
+  **4×`0xAA`** sync + length (**little-endian**) + `[00,01]` + data + zero-pad + **2×`0x55`** trailer + CS↑.
+  **Buffer-READ** (`0x08093D44`): RX-avail `0x300`, reg `0x100` = n, CS↓ `[80,00]` + clock out n bytes + CS↑.
+- **RX**: ring buffer **4096 B** @`0x20022961` (offset ctx+4); per-packet header `[L:4 BE][0xAAAAAAAB:4]
+  [fp=L−10:2][rsv:2]`, Ethernet frame @+`0xC`, total packet bytes `sl=L+4`, validate `fp+14==sl` &&
+  `L−0x18≤1508`; dispatch `0x0808938A` invokes a callback per frame; RX task `0x08089486` polls PC4 +
+  reg `0xC00` (bit6 → re-init, bit0 → drain). MMTYPE dispatched in the callback via `cmp` immediates.
+
+Replicated **INERT** in `custom_fw/src/qca7005.c` (communication transport only — drives **no** power-stage
+GPIO; bare-metal single-loop: no RTOS mutex, `tick_delay_ms` IWDG-fed during bring-up, RX polled from
+`qca7005_service`). Host-tested (`test_qca7005.c`, 26 checks: MAC-read REQ build, CNF validation, RX
+packet-header parse math); built-image constants disasm-verified (`.qwen/tmp/ccs2_re/verify_qca.py`).
+Re-derived from C013 bytes by `analyze91.py`. This is the foundation the SLAC/SDP/DIN layers build on.
+
 > **Method note:** strings/peripherals in this image are referenced **PC-relative (ADR T1/T3, LDR
 > literal T1/T2)** into inline rodata tables — *not* movw/movt immediates. LDR-literal T2's U-bit is
 > **bit 7** (mask `0xFF7F`). `analyze27/34.py` decoded T2 correctly but omitted LDR T1/ADR; `hs3–hs13`
@@ -2056,6 +2093,17 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   called every 10 ticks from state-30 exit `0x080450B2`. Establishes that the asserted "current drive" is
   the CCS2 `CurrentDemandReq` PLC message + contactor GPIO sequencing, not a PWM/DAC register.
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze90.py'`.
+- `analyze91.py` — **QCA7005 PLC SPI1 host driver + MME/Ethernet transport decoder (§5.9 transport
+  addendum, custom_fw transport layer)**: re-derives the byte-level SPI1 transport that carries the CCS2
+  EVCC traffic. **Corrects the C009-era anchors** — the C013 high-level driver is `0x08089010–0x08089708`
+  and the SPI1 primitives `0x08093C66–0x08093F7A` (the "SPI byte driver `0x0738C0`" anchor is a bit-field
+  parser, not SPI). Decodes: SPI1 init `CR1=0x0357` (Mode 3 /8 master 8-bit MSB SSM, CS=PA4, reset=PC5,
+  IRQ=PC4 polled); reg read `0xC000|addr` / write `0x4000|addr`; reg-init `0x08089422` (sig `0xAA55` +
+  `0x400=0x80`/`0x1B00=0`/`0x1200=0xC5B`/`0xC00=0x447`/`0xD00=0x41`); buf-WRITE `0x08093DA8` (pad-to-60 +
+  4×`0xAA` sync + len LE + `[00,01]` + data + pad + 2×`0x55`); MAC-read REQ `0x0808955C` (MMTYPE `0xA000`,
+  EtherType `0xE188`, param `0xB000`+'R', template `0x080AFDCC`); reset pulse `0x08089624`. Replicated INERT
+  in `custom_fw/src/qca7005.c` (host-tested `test_qca7005.c` 26 checks; built-image constants disasm-verified).
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze91.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -2096,12 +2144,20 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   byte-exact state-30 law `setpoint=min(request,EVSE avail)` capped by EVSE max, `target_v=min(target,limit)`,
   `scale=raw*converter/1000` + converter `(code<7)?code:0xFF`, zero-skip keep-previous; drives NO power
   stage; EVSE-side measurements safe-stubbed 0 → avail 0 → setpoint held 0; host-unit-tested
-  `test_current_ctrl.c` 42 checks); `main.c`
-  (rcc→gpio_safe→**hv**→can→chademo→**charge_stm**→**current_ctrl**→tick→`cpsie i`, then 100 Hz loop: IWDG feed
+  `test_current_ctrl.c` 42 checks);
+  **CCS2 QCA7005 PLC transport (§5.9 transport addendum, analyze91)**: `src/qca7005.c` (SPI1 `CR1=0x0357`
+  Mode 3 /8 master, CS=PA4 / reset=PC5 / IRQ=PC4 polled; reg read `0xC000|addr` / write `0x4000|addr`;
+  reg-init sig `0xAA55` + `0x1200=0xC5B`/`0xC00=0x447`/`0xD00=0x41`; buf-WRITE pad-to-60 + 4×`0xAA` + len LE
+  + 2×`0x55`; MAC-read MME `0xA000`/`0xA001`; 4096 B RX ring + per-frame callback; **communication only,
+  drives NO power GPIO**; bare-metal: no RTOS mutex, IWDG-fed bring-up delays, RX polled from
+  `qca7005_service`; host-unit-tested `test_qca7005.c` 26 checks); `main.c`
+  (rcc→gpio_safe→**hv**→can→chademo→**charge_stm**→**current_ctrl**→tick→`cpsie i`→**qca7005_init**
+  [blocking IWDG-fed bring-up, publish `ccs2_qca_ok`], then 100 Hz loop: IWDG feed
   + `heartbeat` + publish `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + **charge_stm_step** (publish
   `stm_state/stm_interlock/stm_engage/stm_action`) + **current_ctrl_step** in state-30 (publish `cc_setpoint/
-  cc_cap/cc_target_v`) + periodic TX + can_service; **no ASSERTED power-stage drive**),
-  `build.sh`/`verify_pad.py`/`README.md`. Built + verified (5696 B code, vectors
+  cc_cap/cc_target_v`) + periodic TX + can_service + **qca7005_service** [publish `ccs2_mac_valid/
+  ccs2_rx_frames`]; **no ASSERTED power-stage drive**),
+  `build.sh`/`verify_pad.py`/`README.md`. Built + verified (8552 B code, vectors
   `MSP=0x20030000`/`reset=0x080201AD`, SysTick + CAN1_RX0 + DMA2_Stream0 strong overrides at IRQ15/IRQ20/
   IRQ56 confirmed, adc_init/spi4_init/hv_get_raw register writes + interpolation + engagement-guard compares
   disasm-checked, charge_stm_step + current_ctrl_step have no peripheral/GPIO stores, CRC residue 0).
