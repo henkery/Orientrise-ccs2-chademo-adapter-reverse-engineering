@@ -15,3 +15,4 @@ test_din70121
 test_ccs2
 test_exi
 test_din_session
+test_v2g_net

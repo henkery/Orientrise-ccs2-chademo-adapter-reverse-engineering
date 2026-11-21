@@ -14,8 +14,10 @@ static void cp(uint8_t *d, const uint8_t *s, uint16_t n) { for (uint16_t i = 0; 
 
 uint8_t sdp_security_select(uint32_t root_cert_count)
 {
-    /* 0x080204FA: bl 0x8051aac ; tst.w r0,#0xff ; beq -> 0x10 ; else 0x00. LOW-BYTE-ONLY. */
-    return ((root_cert_count & 0xFFu) == 0u) ? SDP_SECURITY_TLS : SDP_SECURITY_NONE;
+    /* 0x080204FA: bl 0x8051aac ; tst.w r0,#0xff ; beq -> 0x10 ; else 0x00. LOW-BYTE-ONLY.
+     * Wire encoding 0x00=TLS / 0x10=No-TLS: no PnC root certs (count==0) -> request No-TLS (0x10);
+     * has root certs -> request TLS (0x00). (The prior "0x10=TLS" label was inverted.) */
+    return ((root_cert_count & 0xFFu) == 0u) ? SDP_SECURITY_NONE : SDP_SECURITY_TLS;
 }
 
 uint16_t sdp_build_req(uint8_t *buf, uint8_t security)
@@ -107,7 +109,7 @@ void sdp_rx(const uint8_t *buf, uint16_t len)
 {
     if (sdp.state == SDP_ST_WAIT_RES && sdp_res_valid(buf, len)) {
         sdp_res_parse(buf, sdp.secc_ip, &sdp.secc_port, &sdp.secc_security);
-        sdp.use_tls = (sdp.secc_security != 0u) ? 1u : 0u;   /* 0x080207BC */
+        sdp.use_tls = (sdp.secc_security == 0u) ? 1u : 0u;   /* 0x080207BC: cbz -> TLS (wire 0x00=TLS) */
         sdp.state = SDP_ST_TCP_CONNECT;
     }
 }

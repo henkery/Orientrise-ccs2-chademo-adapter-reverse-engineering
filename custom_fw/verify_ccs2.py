@@ -63,7 +63,7 @@ def main():
     md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
     md.detail = True
 
-    prefixes = ("ccs2_", "slac_", "sdp_", "cp_", "din_", "v2gtp_", "exi_")
+    prefixes = ("ccs2_", "slac_", "sdp_", "cp_", "din_", "v2g_", "exi_")
     ccs2_funcs = {n: a for n, a in syms.items() if n.startswith(prefixes)}
     checks = failures = 0
 
@@ -84,22 +84,35 @@ def main():
                  "din_session_init", "din_session_step", "din_session_start", "din_session_get",
                  "din_cd_req_encode_exi"):
         check(want in syms, "wired symbol present: " + want)
+    # Live UDP/TCP/IPv6 + mbedTLS transport (v2g_net, Agent G/H / analyze94) wired into ccs2_init /
+    # ccs2_step / ccs2_rx / main. The IPv6 RX path (ccs2_rx -> v2g_net_rx_ethernet -> deframe ->
+    # exi_dispatch -> ccs2_rx_exi) now REACHES the EXI decode chain + session RX engine, so those
+    # are no longer gc-eliminated — they are required-present here. The small helpers
+    # (exi_dispatch/ipv6_linklocal/tls_decision/ip6_parse/ethertype) are -O2-INLINED into these
+    # callers (no standalone symbol, like din_pow10); their LOGIC is verified via constants below.
+    for want in ("v2g_net_init", "v2g_net_set_eth_send", "v2g_net_set_local_mac", "v2g_net_step",
+                 "v2g_net_start_tcp", "v2g_net_rx_ethernet", "v2g_net_udp_send", "v2g_net_tcp_send",
+                 "v2g_deframe_push", "v2g_net_trace_feed", "ccs2_rx_exi", "exi_decode_header",
+                 "din_session_rx", "v2gtp_parse"):
+        check(want in syms, "wired transport/RX symbol present: " + want)
     # din_pow10 is small + -O2-inlined into din_scale/current_ctrl_converter; its LOGIC is verified
     # below via the pow10 table blob (the analyze89 correction), not a standalone symbol.
-    # Gated bench-injection / live-IP-RX APIs (host-tested in test_din70121/test_sdp/test_ccs2/
-    # test_exi/test_din_session) are --gc-sections-eliminated from the autonomous image until the
-    # live EXI transport calls them: the session RX engine + EXI decode primitives + grammar Res
-    # decoders + ccs2_rx_exi (no live UDP/TCP/TLS reassembly feeds them yet). Report informationally
-    # (NOT failures). The EXI ENCODE path stays (autonomous CurrentDemandReq via the TX hook).
-    gated = ("din_cd_res_decode", "v2gtp_parse", "ccs2_currentdemand_res",
+    # The live transport RX path (v2g_net_rx_ethernet -> deframe -> exi_dispatch -> ccs2_rx_exi ->
+    # exi_decode_header/din_session_rx) now FEEDS the EXI decode chain + session RX engine, so those
+    # are required-present above. What remains bench-only (host-tested in test_ccs2/test_din70121/
+    # test_din_session/test_v2g_net) and possibly --gc-sections-eliminated from the autonomous image:
+    # the explicit flag setters + the grammar Res decoders they call + the bench-injected TCP
+    # connected event. Report informationally (NOT failures). The EXI ENCODE path stays (autonomous
+    # CurrentDemandReq via the TX hook + v2g_net_tcp_send).
+    gated = ("din_cd_res_decode", "ccs2_currentdemand_res",
              "ccs2_cablecheck_done", "ccs2_chgparam_done", "ccs2_precharge_ready",
-             "din_session_rx", "ccs2_rx_exi", "exi_decode_header", "exi_read_bits",
              "din_cd_res_decode_exi", "din_cablecheck_res_decode_exi",
-             "din_precharge_res_decode_exi", "din_sessionstop_res_decode_exi")
+             "din_precharge_res_decode_exi", "din_sessionstop_res_decode_exi",
+             "v2g_net_tcp_connected")
     present_gated = [g for g in gated if g in syms]
-    print("info: gated bench APIs gc-eliminated from autonomous image (host-tested): %s"
+    print("info: bench-only APIs gc-eliminated from autonomous image (host-tested): %s"
           % ", ".join(g for g in gated if g not in syms))
-    print("info: gated bench APIs retained: %s" % (", ".join(present_gated) or "(none)"))
+    print("info: bench-only APIs retained: %s" % (", ".join(present_gated) or "(none)"))
 
     # --- power-GPIO safety: no peripheral base referenced in pure-logic CCS2 functions ---
     def off(addr):
@@ -173,7 +186,7 @@ def main():
         addr_to_name = {a: n for n, a in syms.items()}
         called = {addr_to_name.get(t, "") for t in bl_targets}
         for want in ("ccs2_init", "ccs2_step", "ccs2_fill_current_ctrl", "cp_step",
-                     "din_session_get"):
+                     "din_session_get", "v2g_net_get", "v2g_net_tcp_send", "v2g_net_set_local_mac"):
             check(want in called, "main calls " + want)
         # ccs2_rx is wired via qca7005_set_rx_cb (function pointer), check it is referenced
         check("ccs2_rx_dispatch" in syms or "ccs2_rx" in called, "ccs2 RX dispatcher present")
@@ -239,6 +252,24 @@ def main():
         check(v in init_imms, "din_session_init carries timer constant " + label)
     step_imms = func_imms("din_session_step")
     check(20 in step_imms, "din_session_step carries retry cap 20 (cmp #0x14)")
+
+    # -O2 inlines the small transport helpers into their (required-present) callers, so they have no
+    # standalone symbol (like din_pow10). Verify their LOGIC via distinctive constants:
+    #   ethertype()  -> v2g_net_rx_ethernet carries the IPv6 EtherType compare. The compiler emits a
+    #                   ldrh LE + cmp #0xDD86 (the byte-swapped wire 0x86DD) — matching the stock
+    #                   ethernet_input 0x0809D914 LE read; accept either the wire or LE-swapped form.
+    #   ip6_parse()  -> v2g_net_rx_ethernet carries the next-header UDP 17 / TCP 6 demux
+    #   exi_dispatch()-> ccs2_rx_exi present (above) proves it (only caller is deframe_cb)
+    #   ipv6_linklocal()/tls_decision() -> inlined into set_local_mac/start_tcp (present above)
+    rx_imms = func_imms("v2g_net_rx_ethernet")
+    check(0x86DD in rx_imms or 0xDD86 in rx_imms,
+          "v2g_net_rx_ethernet carries IPv6 EtherType 0x86DD/0xDD86 (ethertype inlined)")
+    check(17 in rx_imms and 6 in rx_imms,
+          "v2g_net_rx_ethernet carries next-header UDP 17 / TCP 6 (ip6_parse demux inlined)")
+    # TLS config record (mbedTLS setup 0x080604D2): cipher list {0xC023,0xC025} + authmode 2 in init.
+    net_init_imms = func_imms("v2g_net_init")
+    check(0xC023 in net_init_imms and 0xC025 in net_init_imms,
+          "v2g_net_init carries TLS cipher list {0xC023,0xC025}")
 
     print("%d checks, %d failures" % (checks, failures))
     return 1 if failures else 0

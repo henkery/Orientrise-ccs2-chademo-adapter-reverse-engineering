@@ -13,7 +13,9 @@
  *   SDP res (28B)              : 01 FE 90 01 00 00 00 14 + SECC IPv6[16]@+8 + port u16 BE@+0x18
  *                                + security@+0x1a + transport@+0x1b
  *   res validator   0x080212E0 : type 0x9001, len 28, transport 0, security in {0,0x10}, IP!=0, port!=0
- *   TLS decision    0x080207BC : TLS iff SECC security byte != 0
+ *   TLS decision    0x080207BC : TLS iff SECC security byte == 0 (cbz -> mbedTLS setup; wire
+ *                                0x00=TLS / 0x10=No-TLS — CORRECTED, the firmware log labels +
+ *                                the prior replica use_tls(!=0) were inverted; see v2g_net)
  *   appHandshake    0x08033B4E : DIN urn:din:70121:2012:MsgDef Priority1/SchemaID1 (preferred),
  *                                ISO urn:iso:15118:2:2013:MsgDef Priority2/SchemaID2; both Major2/Minor0
  *   set-protocol    0x08023A8C : selected protocol @0x200137CC (1=DIN, 2=ISO)
@@ -31,8 +33,8 @@
 #define SDP_RETRY_COUNT     50u      /* 0x32                                 */
 #define SDP_T_INITIAL_MS    500u     /* 0x1F4 first timeout                  */
 #define SDP_T_SUBSEQ_MS     250u     /* 0xFA subsequent                      */
-#define SDP_SECURITY_TLS    0x10u
-#define SDP_SECURITY_NONE   0x00u
+#define SDP_SECURITY_TLS    0x00u    /* ISO15118-2/DIN70121 SDP wire: 0x00 = TLS      */
+#define SDP_SECURITY_NONE   0x10u    /* 0x10 = No TLS (CORRECTED wire encoding)       */
 #define SDP_RES_LEN         28u      /* 0x1C                                 */
 #define SDP_IP_TYPE_IPV6    6u
 
@@ -43,7 +45,7 @@ typedef enum {
     SDP_ST_IDLE = 0,
     SDP_ST_REQ,          /* build + send SDP request (UDP multicast)         */
     SDP_ST_WAIT_RES,     /* wait SDP response, retry on timeout              */
-    SDP_ST_TCP_CONNECT,  /* SECC found; open TCP (TLS iff security!=0)       */
+    SDP_ST_TCP_CONNECT,  /* SECC found; open TCP (TLS iff security==0)       */
     SDP_ST_DONE,         /* SECC address + port + protocol resolved          */
     SDP_ST_FAILED
 } sdp_state_t;

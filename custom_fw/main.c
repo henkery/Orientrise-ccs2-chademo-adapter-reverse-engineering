@@ -51,6 +51,7 @@
 #include "ccs2.h"
 #include "cp.h"
 #include "din_session.h"
+#include "v2g_net.h"
 
 #define IWDG_KR   (*(volatile uint32_t *)0x40003000u)
 #define IWDG_FEED 0x0000AAAAu
@@ -100,10 +101,19 @@ volatile uint32_t din_st_fault  = 0;   /* posted fault code (0 none / 1 retry / 
 volatile uint32_t din_st_retry  = 0;   /* resp-wait retry counter (cap 20)                 */
 volatile uint32_t din_st_active = 0;   /* 1 while a session is in progress                 */
 
+/* Live UDP/TCP/IPv6 + mbedTLS transport (v2g_net, SWD-readable; INERT communication carriage —
+ * Agent G/H / analyze94). The lwIP TCP reliability + mbedTLS crypto are gated hooks; the transport
+ * SM (connect/handshake/established/idle-close) + wire framing + EXI dispatch run but drive no power
+ * GPIO. mode 1=PLAIN / 2=TLS (CORRECTED: TLS iff SECC security byte==0). */
+volatile uint32_t v2g_net_st   = 0;    /* transport state (V2G_NET_*)                       */
+volatile uint32_t v2g_net_mode = 0;    /* 0 none / 1 plain / 2 TLS                          */
+volatile uint32_t v2g_net_rx   = 0;    /* EXI frames dispatched to ccs2_rx_exi              */
+volatile uint32_t v2g_net_tx   = 0;    /* V2GTP frames sent                                 */
+
 static void ccs2_rx_dispatch(const uint8_t *frame, uint16_t len)
 {
     ccs2_rx_frames++;
-    ccs2_rx(frame, len);   /* EtherType dispatch: MME 0x88E1 -> SLAC (IP -> gated transport) */
+    ccs2_rx(frame, len);   /* EtherType dispatch: MME 0x88E1 -> SLAC; IPv6 0x86DD -> live transport */
 }
 
 static void enable_irq(void)
@@ -129,7 +139,10 @@ void main(void)
      * The SLAC/SDP/DIN session layers above it are built next. */
     ccs2_qca_ok = (qca7005_init() == 0);
     qca7005_set_rx_cb(ccs2_rx_dispatch);
-    ccs2_init();         /* SLAC + CP + SDP + DIN70121 + EVCC controller (communication only) */
+    ccs2_init();         /* SLAC + CP + SDP + DIN70121 + EVCC controller + transport (comm only) */
+    /* Derive the adapter link-local IPv6 + Ethernet src MAC from the QCA7005 PIB MAC
+     * (netif_create_ip6_linklocal_address 0x08090D68 / ethernetif_init from_mac=1). */
+    if (qca7005_mac()) v2g_net_set_local_mac(qca7005_mac());
 
     uint32_t next = tick_get();
     for (;;) {
@@ -217,6 +230,11 @@ void main(void)
         if (stm_state == STM_CURRENTDEMAND) {
             ccs2_cd_req_len = ccs2_demand((uint16_t)cc_setpoint, (uint16_t)cc_target_v,
                                           (uint8_t *)ccs2_cd_req);
+            /* Send the CurrentDemandReq over the established TCP transport (send router 0x08020338:
+             * mode1 plain / mode2 TLS wrap). INERT: returns -1 unless the transport is ESTABLISHED
+             * (gated TCP connect/TLS handshake), so nothing is commanded in normal operation. The
+             * asserted current drive is realized upstream by the EVSE regulating to this request. */
+            (void)v2g_net_tcp_send((const uint8_t *)ccs2_cd_req, (uint16_t)ccs2_cd_req_len, now * 10u);
         } else {
             ccs2_cd_req_len = 0;
         }
@@ -242,6 +260,14 @@ void main(void)
         din_st_fault  = ds->fault_code;
         din_st_retry  = ds->retry;
         din_st_active = ds->session_active;
+
+        /* Live transport (v2g_net, §5.9 / analyze94): publish the carriage state / mode / frame
+         * counts for SWD bench readout. INERT — communication only, no power drive. */
+        const v2g_net_t *vn = v2g_net_get();
+        v2g_net_st   = vn->state;
+        v2g_net_mode = vn->mode;
+        v2g_net_rx   = vn->rx_frames;
+        v2g_net_tx   = vn->tx_frames;
 
         next++;                              /* advance one 10 ms tick */
         while ((int32_t)(tick_get() - next) < 0) { }

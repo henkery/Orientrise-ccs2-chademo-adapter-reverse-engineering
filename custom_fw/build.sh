@@ -15,7 +15,7 @@ nix-shell -p gcc-arm-embedded python3 --run '
     -T linker.ld startup.s main.c src/rcc.c src/gpio.c src/tick.c src/can.c src/chademo.c \
     src/spi4.c src/nv_cal.c src/adc.c src/hv.c src/charge_stm.c src/current_ctrl.c src/qca7005.c \
     src/v2gtp.c src/slac.c src/cp.c src/sdp.c src/din70121.c src/exi.c src/din_session.c \
-    src/ccs2.c -o app.elf -lgcc \
+    src/v2g_net.c src/ccs2.c -o app.elf -lgcc \
     -Wl,-Map=app.map -Wl,--gc-sections -Wl,--build-id=none
   arm-none-eabi-objcopy -O binary app.elf app.bin
   echo "--- size ---"

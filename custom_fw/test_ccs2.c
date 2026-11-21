@@ -1,10 +1,11 @@
 /* test_ccs2.c — host unit test for the CCS2 EVCC controller glue (custom_fw/src/ccs2.c, §5.9).
  * Tests the confirmed integration: current_ctrl EVSE-measurement fill, CurrentDemand actuation,
  * DIN session flag setters -> charge_stm EVSE outputs, CurrentDemandRes decode. QCA7005 stubbed.
- * Build + run (links exi.c + din_session.c — the autonomous session SM wired into ccs2_step):
+ * Build + run (links exi.c + din_session.c + v2g_net.c — the autonomous session SM + live transport
+ * carriage wired into ccs2_step/ccs2_rx):
  *   nix-shell -p gcc --run 'gcc -O2 -Wall -Wextra -Isrc -o test_ccs2 test_ccs2.c \
  *       src/ccs2.c src/slac.c src/sdp.c src/cp.c src/din70121.c src/exi.c src/din_session.c \
- *       src/v2gtp.c && ./test_ccs2'
+ *       src/v2gtp.c src/v2g_net.c && ./test_ccs2'
  */
 #include <stdio.h>
 #include <stdint.h>
@@ -21,6 +22,8 @@ static int checks = 0, failures = 0;
 static const uint8_t mac[6] = { 0xFE, 0xFF, 0xFE, 0xFF, 0x00, 0x01 };
 int qca7005_frame_send(const uint8_t *f, uint16_t len) { (void)f; (void)len; return 0; }
 const uint8_t *qca7005_mac(void) { return mac; }
+/* tick stub: ccs2_rx timestamps the IPv6 RX path via tick_get()*10 (ms). */
+uint32_t tick_get(void) { return 0; }
 
 static void st16(uint8_t *p, uint16_t v) { p[0] = v & 0xFF; p[1] = v >> 8; }
 

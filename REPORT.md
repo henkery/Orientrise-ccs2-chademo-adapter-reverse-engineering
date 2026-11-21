@@ -795,14 +795,16 @@ pow10 factors from meas+0x3D20/22 & +0x3D14/16, voltage limit from meas+0x3D08/0
 encodes the `CurrentDemandReq` EXI image (the asserted current drive is realized upstream as this CCS2 PLC
 message — §5.21 F — not a local PWM/DAC). The full DIN EXI bit-level grammar + the distributed session
 state-machine timers/retries + FAILED→shutdown branch were **subsequently recovered by `analyze93`** (EXI
-grammar + session-SM addendum below) and replicated inert in `custom_fw/src/{exi,din_session}.c`. **Still
-GATED / not recovered:** the live UDP/TCP/IPv6 + mbedTLS transport (the network reassembly that feeds decoded
-Res frames), the exact Req-side EXI grammars / root-event numbering [?], the DIN-vs-ISO `DC_EVSEStatus` layout
+grammar + session-SM addendum below) and replicated inert in `custom_fw/src/{exi,din_session}.c`; the live
+UDP/TCP/IPv6 + mbedTLS transport that feeds decoded Res frames was **subsequently recovered by `analyze94`**
+(live-transport addendum below) and replicated inert in `custom_fw/src/v2g_net.c`. **Still GATED / not
+recovered:** the exact Req-side EXI grammars / root-event numbering [?], the DIN-vs-ISO `DC_EVSEStatus` layout
 [?], the exact EVSEIsolationStatus→level 3/4 mapping, and the CP/PP analog front-end acquisition (TIM4 CP
-capture anchors). The confirmed measurement + actuation field maps + the autonomous session sequence/timers
-are wired; the live network transport stays gated until recovered/bench-validated. Host-tested
-(`test_{slac,cp,sdp,v2gtp,din70121,ccs2,exi,din_session}.c`); built-image power-GPIO safety + pow10 table +
-session timer constants disasm-verified (`custom_fw/verify_ccs2.py`).
+capture anchors); the lwIP TCP reliability + mbedTLS crypto third-party stacks are represented by hooks. The
+confirmed measurement + actuation field maps + the autonomous session sequence/timers + the live transport
+carriage are wired (communication only). Host-tested
+(`test_{slac,cp,sdp,v2gtp,din70121,ccs2,exi,din_session,v2g_net}.c`); built-image power-GPIO safety + pow10 table +
+session timer constants + transport cipher list/demux disasm-verified (`custom_fw/verify_ccs2.py`).
 
 > **Method note:** strings/peripherals in this image are referenced **PC-relative (ADR T1/T3, LDR
 > literal T1/T2)** into inline rodata tables — *not* movw/movt immediates. LDR-literal T2's U-bit is
@@ -868,19 +870,97 @@ gated layer).
   grammar messages (`CurrentDemandRes` complete; CableCheck/PreCharge/SessionStop; `CurrentDemandReq` encode),
   `src/din_session.c` (autonomous SM: state enum, timers, retry cap 20, CD modulo cadence, FAILED→shutdown + fault
   post — **inert**, records the fault code, drives no GPIO). `ccs2_step` drives `din_session_step` and sources the
-  EVSE handshake flags from it while a session is active; decoded Res enter via the gated `ccs2_rx_exi` hook;
-  `main` publishes `din_st_state/fault/retry/active` (SWD-readable). Host-tested: `test_exi` **55**,
-  `test_din_session` **39**, `test_din70121` **36**, `test_ccs2` **21** (full suite **401 checks, 0 failures**).
-  Built image disasm-verified (`custom_fw/verify_ccs2.py`, **36 checks**): every CCS2/EXI/session pure-logic
-  function references **no** peripheral base `0x40000000–0x400FFFFF` (power-GPIO safe), the autonomous symbols +
-  `main→din_session_get` are present, and the five timer constants + retry cap 20 are compiled in (−O2 packs them
-  into LDR-literal pool words, e.g. `0x36B09C40` = the two u16 40000/14000). The session RX engine + EXI decode
-  primitives are `--gc-sections`-eliminated from the autonomous image (no live transport calls them yet) and
-  host-tested separately. `CUSTOM.UPG` re-wrapped (132102 B, CRC residue 0 + app-verbatim + stock round-trip).
-- **Still GATED:** the live UDP/TCP/IPv6 + mbedTLS transport (network reassembly feeding `ccs2_rx_exi`), the exact
-  Req-side EXI grammars / root-event numbering [?], the DIN-vs-ISO `DC_EVSEStatus` layout [?], the CD secondary
-  interval set-site [?], and the exact EVSEIsolationStatus→level 3/4 mapping. Partial optional-choice grammars are
-  marked [?] in the source; inert/gated so acceptable until bench-validated.
+  EVSE handshake flags from it while a session is active; decoded Res enter via `ccs2_rx_exi` (now fed by the live
+  transport, `analyze94`); `main` publishes `din_st_state/fault/retry/active` (SWD-readable). Host-tested: `test_exi`
+  **55**, `test_din_session` **39**, `test_din70121` **36**, `test_ccs2` **21** (full suite **490 checks, 0 failures**
+  with `v2g_net` 89, `analyze94`). Built image disasm-verified (`custom_fw/verify_ccs2.py`, **56 checks**): every
+  CCS2/EXI/session/transport pure-logic function references **no** peripheral base `0x40000000–0x400FFFFF`
+  (power-GPIO safe), the autonomous symbols + `main→din_session_get` are present, and the five timer constants +
+  retry cap 20 are compiled in (−O2 packs them into LDR-literal pool words, e.g. `0x36B09C40` = the two u16
+  40000/14000). The session RX engine + EXI decode primitives are now **retained** in the autonomous image (the live
+  `v2g_net` RX path reaches them, `analyze94`) and host-tested. `CUSTOM.UPG` re-wrapped (132102 B, CRC residue 0 +
+  app-verbatim + stock round-trip).
+- **Still GATED:** the exact Req-side EXI grammars / root-event numbering [?], the DIN-vs-ISO `DC_EVSEStatus`
+  layout [?], the CD secondary interval set-site [?], and the exact EVSEIsolationStatus→level 3/4 mapping.
+  Partial optional-choice grammars are marked [?] in the source; inert/gated so acceptable until bench-validated.
+  (The live UDP/TCP/IPv6 + mbedTLS transport that feeds `ccs2_rx_exi` was **subsequently recovered by `analyze94`**
+  — transport addendum below.)
+
+**Live-transport addendum — UDP/TCP/IPv6 + mbedTLS carriage (`analyze94`, custom_fw `v2g_net` layer).** The
+network transport `analyze92`/`analyze93` left gated is recovered byte-exactly from C013 by `analyze94.py`
+(Agent G IPv6/UDP/TCP wire framing + Agent H TLS/stream carriage) and replicated **INERT** in
+`custom_fw/src/v2g_net.c`, wired into `ccs2.c`/`main.c` (communication only — drives **no** power-stage GPIO).
+The heavy third-party stacks (lwIP TCP reliability: SYN/ACK/retransmit/congestion; mbedTLS crypto:
+ECDHE/AES/SHA256/X509) are **not** reimplemented bare-metal — they are represented by hooks, exactly as the stock
+RTOS is represented by the bare-metal single loop. The replica reproduces the adapter's transport **glue** + the
+byte-level wire framing + the protocol decisions (addressing, demux, deframe, TLS decision, mode mapping, timers,
+EXI dispatch).
+
+- **(G) IPv6 addressing + RX/TX demux (lwIP raw-API plumbing).** Link-local address
+  `netif_create_ip6_linklocal_address 0x08090D68`: `fe80::/64` + **modified-EUI-64** from the QCA7005 PIB MAC —
+  `addr[0]=0x000080fe` (LE `fe80::`), IID `[hw0^2,hw1,hw2,FF,FE,hw3,hw4,hw5]` via `htonl`; netif `0x20020690`
+  (size `0xA4`, input@+0x80, linkoutput@+0x88, output_ip6@+0x8c); `ethernetif_init 0x08093202` (`from_mac=1` →
+  hwaddr=PIB MAC). **RX:** QCA dispatch `0x0808938A` → cb `0x08060866` → `low_level_input 0x080931A6`
+  (`ETH_PAD_SIZE=2`) → `ethernet_input 0x0809D914` (EtherType read `ldrh` **LE byte-swapped**: IPv4 `cmp #8`, ARP
+  `cmp #0x608`, IPv6 `cmp #0xDD86`) → `ip6_input 0x0809B88E` (version==6; next-header demux `0x0809BB2C`:
+  **6→tcp_input `0x08099BA6`, 17→udp_input `0x0809002C`, 58→icmp6_input `0x0809B3D0`, 59→drop**). **TX:**
+  `ip6_output_if 0x0809BBEC` (40 B hdr: `vtf=htonl(0x60000000)`, plen BE@4, nexth@6, hoplim@7, src@8, dst@24) →
+  `ethip6_output 0x0809B35C` (mcast MAC `33:33:dst[12..15]`; ND6 `0x0809D5D6` gated) → `ethernet_output
+  0x0809D9E4` → `low_level_output 0x08093186` → QCA write `0x08093DA8`. `udp_sendto_if_src 0x0809028A` (UDP hdr
+  src@0/dst@2/len@4/chksum@6 + `inet_chksum_pseudo` proto 17); `tcp_output_segment 0x08092A6E`
+  (`seq=htonl(snd_nxt)`, `window=htons(rcv_wnd)`, chksum proto 6); `inet_chksum 0x08098CAC` (one's-complement
+  fold). Ephemeral UDP src port = **STM32 HW RNG** (`0x50060800`) ring, `ubfx(rand,0,14)+0xC000` (not an LCG).
+  TCP pcb: `recv_cb@+0xa0=0x08060A82` (pbuf deref + `tcp_recved`), `sent_cb@+0x9c=0x08060A38` (sem post
+  `0x200003C8`); connected-cb `0x08060ACE` registers poll cb `0x08060A58` (interval 1, **idle≥300 (0x12c) →
+  tcp_close**); write primitive `0x08060B44` = mutex + `tcp_write`(COPY) + `tcp_output`.
+- **(H) TLS decision + mbedTLS config + stream carriage — LOAD-BEARING WIRE CORRECTION.** ISO15118-2/DIN70121
+  SDP security byte **`0x00`=TLS, `0x10`=No-TLS**. TLS decision state4 `0x080207BC`: `ldrb r0,[r4,#0x23]; cbz r0
+  → 0x080207F0` (TLS branch, state+=2 → state6 mbedTLS setup); byte≠0 → mode1 plain (state+=1 → state5). So
+  **TLS iff SECC security byte==0** — the firmware **code is correct**. The **inverted** items were the firmware
+  log labels ('TLS'/'NO TLS'), the prior `sdp_security_trigger` memory label, and the prior `sdp.c` replica
+  `use_tls=(!=0)` (now `==(0)`); **mode1=PLAIN / mode2=TLS** (the earlier brief had it backwards). Request builder
+  `0x080204FA`: count==0 → `0x10` (No-TLS, no root certs); count>0 → `0x00` (TLS); response copy `0x080205F2/F4`
+  `buf[0x1a]` → ctx+0x23 verbatim. **mbedTLS setup `0x080604D2`**: `ssl_init` (memset `0xDC`) → `ssl_config_init`
+  (`0x78`) → `x509_crt_init` (`0x134`) → ≤5×`x509_crt_parse` → `config_defaults`(client) → `conf_authmode`
+  (**2=VERIFY_REQUIRED**, `bfi` bits[3:2]) → `conf_ca_chain` → `conf_rng` (cb `0x08060497`) → `ssl_setup` →
+  `ssl_set_bio` (`f_send 0x0806043E` / `f_recv 0x08060414`) → `ssl_set_timer_cb`. **Cipher list `0x080B0668` =
+  {`0xC023` ECDHE-ECDSA-AES128-CBC-SHA256, `0xC025` ECDH-ECDSA-AES128-CBC-SHA256, 0}** (exactly 2; the "5" is the
+  CA-cert loop bound). Cert source RAM `0x20018A48` (getter `0x08051ADC`), flash PnC partition `0x001F8010`.
+  **"Stream ctx" `0x20020314` IS `mbedtls_ssl_context`** (220 B/`0xDC`); the 2×8509 B (`0x213D`) buffers are the
+  TLS in_buf/out_buf, **not** a V2GTP ring. `ssl_write 0x0808F950` → `write_real 0x0808E94A` (5 B record header +
+  encrypt) → flush `0x0808E8D8` `blx f_send` → `tcp_write`; `ssl_read 0x0808F818` → `fetch_input 0x0808EB40`;
+  handshake-progress `0x0806058C` (timeout 5000).
+- **(H) EXI dispatch + trace ring + send router.** The **EXI ring `0x20001FEC` is a diagnostic TRACE buffer**
+  (16×128 B, idx byte `0x200003B9 &0xf`, 4 B LE RTOS-tick prefix + ≤124 B frame; feed `0x08020194`, `cmp #0x7c`
+  cap), fed by dispatch (RX) + send router (TX), drained **only** at shutdown state `0xf4` (log dump) — the
+  **live RX path BYPASSES the ring**. Live RX: dispatch `0x08020224` (`v2gtp_parse 0x080212C2` type `0x180`=
+  `0x8001` EXI, `framelen=rev([buf+4])+8`) → session-rx entry `0x0802E76A` (flag+sem) → session RX engine
+  `0x080353B2` → decode wrapper `0x08033C24` (= `ccs2_rx_exi` → `exi_decode_header` → `din_session_rx`). **Send
+  router `0x08020338`**: mode=[ctx `0x20000BBC`+0x29]; 1→fnA `0x08020328`→`tcp_write 0x08060B44`;
+  2→fnB `0x08060682`→`ssl_write 0x0808F950`; loop-until-all-sent cap `0x1388`=5000 ms, budget `0xc350`=50000 ms,
+  blocks on sent-sem. Send entry `0x0802104A` TX-pending `0x20002A54` {ts,timeout,buf,len,flag} −6 if pending,
+  cooldown `0xB4`=180 ms. Time base ms (TIM7 1 ms tick, accessor `0x0808A236`). Transport SM states: 3 UDP close +
+  TCP connect (timer 30000); 4 TLS decision; 5 plain rx; 6 TLS setup; 7 handshake; 8 mode2; 9 ssl_read wrapper
+  `0x08060636`; `0xf0` flush; `0xf1` fail; `0xf4` shutdown.
+- **Replication + verification.** `src/v2g_net.c` (EUI-64 link-local + mcast MAC, IPv6/UDP/TCP header build/parse,
+  Internet + pseudo-header checksum, Ethernet framing, V2GTP stream deframe, TLS decision/config record, transport
+  SM, RX demux → SDP/EXI dispatch, TX UDP/TCP send via hooks, diagnostic trace ring). `ccs2_rx` routes IPv6
+  `0x86DD` → `v2g_net_rx_ethernet`; `ccs2_step` drives `v2g_net_step` + starts TCP at SDP-done; `ccs2_init` wires
+  the Ethernet TX hook to `qca7005_frame_send` + the SDP UDP send hook; `main` derives the link-local address from
+  the PIB MAC (`v2g_net_set_local_mac`), sends the `CurrentDemandReq` via `v2g_net_tcp_send` (inert — only when
+  ESTABLISHED), and publishes `v2g_net_st/mode/rx/tx` (SWD-readable). The `sdp.c`/`sdp.h` TLS labels were corrected
+  to the wire (`SDP_SECURITY_TLS=0x00`, `SDP_SECURITY_NONE=0x10`, `use_tls=(secc_security==0)`). Host-tested:
+  `test_v2g_net` **89**, `test_sdp` **31**, `test_ccs2` **21** (full suite **490 checks, 0 failures**). Built image
+  disasm-verified (`custom_fw/verify_ccs2.py`, **56 checks**): the `v2g_net` pure-logic functions reference **no**
+  peripheral base `0x40000000–0x400FFFFF` (power-GPIO safe), the wired transport symbols + `main` integration calls
+  are present, the cipher list {`0xC023`,`0xC025`} + IPv6 EtherType (`0xDD86` LE) + next-header UDP 17/TCP 6 demux
+  are compiled in (the small helpers are −O2-inlined into their callers, verified via constants). The live RX path
+  now **reaches** the EXI decode chain (`ccs2_rx_exi`/`exi_decode_header`/`din_session_rx`/`v2gtp_parse`), so those
+  are no longer gc-eliminated. `CUSTOM.UPG` re-wrapped (132102 B, CRC residue 0 + app-verbatim + stock round-trip).
+- **Still GATED (third-party stacks, represented by hooks):** lwIP TCP reliability (SYN/ACK/retransmit/congestion),
+  mbedTLS crypto (ECDHE/AES/SHA256/X509), ND6 neighbor resolution (`neighbor_mac` placeholder), the CA flash→RAM
+  populator, and the SECC-peer wire convention capture [?]. The asserted power-stage drive stays the last gated
+  layer.
 
 ### 5.10 USB log stick — firmware-match proof & device provenance  [C unless noted]
 
@@ -2279,9 +2359,30 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   cap 20 `0x0803829C`, CD modulo cadence `0x080396F6` + secondary interval `0x08039698`, fault setter
   `0x0802C9D0`→`0x20000774`, CableCheck isolation advance `0x080366AE`, session reset `0x08035318`. Replicated
   INERT in `custom_fw/src/{exi,din70121,din_session}.c` + wired into `ccs2.c`/`main.c` (host-tested `test_exi` 55
-  / `test_din_session` 39 / full suite 401 checks; built-image power-GPIO safety + timer constants disasm-verified
-  `custom_fw/verify_ccs2.py` 36 checks). Live UDP/TCP/IPv6+TLS transport + Req-side grammars [?] stay GATED.
+  / `test_din_session` 39 / full suite 490 checks; built-image power-GPIO safety + timer constants disasm-verified
+  `custom_fw/verify_ccs2.py` 56 checks). The live UDP/TCP/IPv6+TLS transport was subsequently recovered by
+  `analyze94`; Req-side grammars [?] stay GATED.
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze93.py'`.
+- `analyze94.py` — **live UDP/TCP/IPv6 + mbedTLS transport decoder (§5.9 live-transport addendum, custom_fw
+  `v2g_net` layer)**: recovers the network carriage `analyze92`/`analyze93` left gated (Agent G IPv6/UDP/TCP wire
+  framing + Agent H TLS/stream). (G) dumps `netif_create_ip6_linklocal_address 0x08090D68` (fe80:: + modified-EUI-64
+  IID hw0^2 from PIB MAC), `ethernetif_init 0x08093202`, RX demux `ethernet_input 0x0809D914` (EtherType LE
+  0xDD86) → `ip6_input 0x0809B88E` → next-header demux `0x0809BB2C` (6 TCP/17 UDP/58 ICMPv6/59 drop), TX
+  `ip6_output_if 0x0809BBEC` / `ethip6_output 0x0809B35C` (mcast 33:33) / `udp_sendto_if_src 0x0809028A` /
+  `tcp_output_segment 0x08092A6E` / `inet_chksum 0x08098CAC`, TCP pcb callbacks (recv@+0xa0 `0x08060A82` /
+  sent@+0x9c `0x08060A38` / poll idle≥300 `0x08060A58`) + write primitive `0x08060B44`. (H) dumps the **TLS
+  decision state4 `0x080207BC`** (`ldrb [ctx+0x23]; cbz → TLS` — **TLS iff security byte==0**; asserts ldrb+cbz),
+  security select `0x080204FA`, mbedTLS setup `0x080604D2` + **cipher list `0x080B0668`={0xC023,0xC025,0}**
+  (asserts the words), `ssl_write 0x0808F950`→`write_real 0x0808E94A` (5B record hdr+encrypt), `ssl_read
+  0x0808F818`, handshake-progress `0x0806058C`, send router `0x08020338` (mode1 plain/mode2 TLS, cap 5000/budget
+  50000ms), send entry `0x0802104A` (TX-pending cooldown 180ms), EXI dispatch `0x08020224`, trace-ring feed
+  `0x08020194` (16×128B diagnostic, live RX bypasses). **LOAD-BEARING WIRE CORRECTION:** SDP security 0x00=TLS /
+  0x10=No-TLS — the firmware code (TLS-on-byte==0) is correct; the log labels + prior `sdp.c` `use_tls(!=0)` +
+  `sdp_security_trigger` memory label were inverted (now corrected). Replicated INERT in `custom_fw/src/v2g_net.c`
+  + wired into `ccs2.c`/`main.c` (host-tested `test_v2g_net` 89 / full suite 490 checks; built-image power-GPIO
+  safety + cipher list + EtherType/next-header demux disasm-verified `custom_fw/verify_ccs2.py` 56 checks). The
+  lwIP TCP reliability + mbedTLS crypto third-party stacks stay GATED (represented by hooks).
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze94.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
@@ -2345,32 +2446,44 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   post — INERT, records the fault code, drives no GPIO), `src/ccs2.c` (EVCC controller glue: RX EtherType
   dispatch + session sequencing driving `din_session_step` + `ccs2_evse()` handshake outputs sourced from the
   session SM + `ccs2_fill_current_ctrl()` EVSE measurements + `ccs2_demand()` CurrentDemandReq actuation image +
-  gated `ccs2_rx_exi()` decoded-Res entry);
-  **communication only, drives NO power GPIO**; EXI grammar + session timers RECOVERED (analyze93); live
-  UDP/TCP/IPv6+TLS transport + Req-side grammars [?] + CP front-end acquisition still GATED; host-unit-tested
-  `test_{v2gtp,slac,cp,sdp,din70121,ccs2,exi,din_session}.c` (14/54/32/31/36/21/55/39 checks; full suite 401);
-  built-image power-GPIO safety + pow10 table + session timer constants disasm-verified `verify_ccs2.py`
-  (36 checks); `main.c`
+  `ccs2_rx_exi()` decoded-Res entry [now fed by the live transport]);
+  **live UDP/TCP/IPv6 + mbedTLS transport (§5.9 live-transport addendum, analyze94)**: `src/v2g_net.c` (EUI-64
+  link-local from PIB MAC + mcast MAC, IPv6/UDP/TCP header build/parse, Internet + pseudo-header checksum,
+  Ethernet framing, V2GTP stream deframe, **TLS decision [TLS iff SECC security byte==0; wire 0x00=TLS/0x10=
+  No-TLS — CORRECTED]** + mbedTLS config record [cipher list {0xC023,0xC025}, authmode 2], transport SM
+  [connect 30000ms / idle≥300 close / TLS handshake], RX demux → SDP/EXI dispatch → `ccs2_rx_exi`, TX UDP/TCP
+  send via hooks, 16×128B diagnostic trace ring; lwIP TCP reliability + mbedTLS crypto are GATED third-party
+  hooks); `sdp.c`/`sdp.h` TLS labels corrected to the wire (`SDP_SECURITY_TLS=0x00`/`NONE=0x10`, `use_tls=(==0)`);
+  **communication only, drives NO power GPIO**; EXI grammar + session timers RECOVERED (analyze93) + live
+  transport carriage RECOVERED (analyze94); Req-side grammars [?] + CP front-end acquisition + lwIP/mbedTLS
+  third-party stacks still GATED; host-unit-tested
+  `test_{v2gtp,slac,cp,sdp,din70121,ccs2,exi,din_session,v2g_net}.c` (14/54/32/31/36/21/55/39/89 checks; full
+  suite 490); built-image power-GPIO safety + pow10 table + session timer constants + transport cipher
+  list/EtherType/next-header demux disasm-verified `verify_ccs2.py` (56 checks); `main.c`
   (rcc→gpio_safe→**hv**→can→chademo→**charge_stm**→**current_ctrl**→tick→`cpsie i`→**qca7005_init**
-  [blocking IWDG-fed bring-up, publish `ccs2_qca_ok`]→**ccs2_init**, then 100 Hz loop: IWDG feed
+  [blocking IWDG-fed bring-up, publish `ccs2_qca_ok`]→**ccs2_init**→**v2g_net_set_local_mac** [EUI-64 link-local
+  from PIB MAC], then 100 Hz loop: IWDG feed
   + `heartbeat` + publish `hv_outvol/hv_raw/hv_adc_raw/hv_cal_ok` + RX parse + **cp_step** [CP front-end
   stubbed unplugged] + **ccs2_step** + **charge_stm_step** with EVSE inputs from `ccs2_evse()` (publish
   `stm_state/stm_interlock/stm_engage/stm_action`) + **current_ctrl_step** in state-30 with EVSE measurements
   from `ccs2_fill_current_ctrl()` (publish `cc_setpoint/cc_cap/cc_target_v`) + **ccs2_demand** inert
-  CurrentDemandReq EXI image in state-30 (publish `ccs2_cd_req/ccs2_cd_req_len`) + periodic TX + can_service
+  CurrentDemandReq EXI image in state-30 (publish `ccs2_cd_req/ccs2_cd_req_len`) + **v2g_net_tcp_send** [inert —
+  only when ESTABLISHED] + periodic TX + can_service
   + **qca7005_service**→`ccs2_rx` [publish `ccs2_mac_valid/ccs2_rx_frames/ccs2_st/ccs2_link/ccs2_secc/
-  ccs2_proto`] + **din_session_get** [publish `din_st_state/din_st_fault/din_st_retry/din_st_active`];
+  ccs2_proto`] + **din_session_get** [publish `din_st_state/din_st_fault/din_st_retry/din_st_active`] +
+  **v2g_net_get** [publish `v2g_net_st/v2g_net_mode/v2g_net_rx/v2g_net_tx`];
   **no ASSERTED power-stage drive**),
-  `build.sh`/`verify_pad.py`/`verify_ccs2.py`/`README.md`. Built + verified (13332 B code / 5800 B bss, vectors
+  `build.sh`/`verify_pad.py`/`verify_ccs2.py`/`README.md`. Built + verified (17568 B code / 26512 B bss, vectors
   `MSP=0x20030000`/`reset=0x080201AD`, SysTick + CAN1_RX0 + DMA2_Stream0 strong overrides at IRQ15/IRQ20/
   IRQ56 confirmed, adc_init/spi4_init/hv_get_raw register writes + interpolation + engagement-guard compares
-  disasm-checked, charge_stm_step + current_ctrl_step + the pure-logic CCS2/EXI/session modules have no
-  peripheral/GPIO stores, pow10 converter table + session timer constants present, CRC residue 0, app verbatim
-  + stock round-trip).
+  disasm-checked, charge_stm_step + current_ctrl_step + the pure-logic CCS2/EXI/session/transport modules have no
+  peripheral/GPIO stores, pow10 converter table + session timer constants + transport cipher list {0xC023,0xC025}
+  + IPv6 EtherType/next-header demux present, CRC residue 0, app verbatim + stock round-trip).
   `outvol` accuracy must be bench-verified vs a reference before the gated engagement/power layer.
   Power-stage drive stays GATED behind a compile-time safety flag until bench-validated; the CCS2 EVSE-side
   subsystem now supplies the stm + current-control EVSE inputs and the CurrentDemandReq actuation, and runs the
-  autonomous EXI session sequence/timers (analyze93; live network transport still gated). Build outputs
+  autonomous EXI session sequence/timers (analyze93) over the live UDP/TCP/IPv6 + mbedTLS transport carriage
+  (analyze94; lwIP TCP reliability + mbedTLS crypto third-party stacks represented by hooks). Build outputs
   git-ignored; `CUSTOM.UPG` is a bench-flash candidate (untracked).
 - `SERVICE.UPG` / `SERVICE_DUMP.UPG` / `SERVICE_DUMP_APP5.UPG` — built service images (§5.13e/f/i):
   `SERVICE.UPG` = byte-identical stock round-trip (safe recovery); `SERVICE_DUMP.UPG` = stock + one-shot

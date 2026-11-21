@@ -25,12 +25,13 @@ static void mk_res(uint8_t *b, uint8_t security, uint16_t port)
 
 int main(void)
 {
-    /* --- security select (0x080204FA): (count & 0xFF)==0 -> 0x10 else 0x00, LOW-BYTE-ONLY --- */
-    CHECK(sdp_security_select(0) == SDP_SECURITY_TLS,    "count 0 -> TLS 0x10");
-    CHECK(sdp_security_select(1) == SDP_SECURITY_NONE,   "count 1 -> no-TLS 0x00");
-    CHECK(sdp_security_select(5) == SDP_SECURITY_NONE,   "count 5 -> no-TLS");
-    CHECK(sdp_security_select(0x100) == SDP_SECURITY_TLS,"count 0x100 -> TLS (low byte 0)");
-    CHECK(sdp_security_select(0x101) == SDP_SECURITY_NONE,"count 0x101 -> no-TLS (low byte 1)");
+    /* --- security select (0x080204FA): count low-byte==0 -> 0x10 (No-TLS) else 0x00 (TLS).
+     *     Wire 0x00=TLS / 0x10=No-TLS (CORRECTED): no root certs -> request No-TLS. --- */
+    CHECK(sdp_security_select(0) == SDP_SECURITY_NONE,   "count 0 -> No-TLS 0x10");
+    CHECK(sdp_security_select(1) == SDP_SECURITY_TLS,    "count 1 -> TLS 0x00");
+    CHECK(sdp_security_select(5) == SDP_SECURITY_TLS,    "count 5 -> TLS");
+    CHECK(sdp_security_select(0x100) == SDP_SECURITY_NONE,"count 0x100 -> No-TLS (low byte 0)");
+    CHECK(sdp_security_select(0x101) == SDP_SECURITY_TLS,"count 0x101 -> TLS (low byte 1)");
 
     /* --- SDP request build: 01 FE 90 00 00 00 00 02 <SEC> 00 --- */
     uint8_t req[16];
@@ -79,9 +80,9 @@ int main(void)
     CHECK(sdp_select_protocol(3) == 0, "SchemaID 3 -> shutdown");
 
     /* --- SM: init -> request -> injected response -> TCP_CONNECT, TLS decision --- */
-    sdp_init(0);   /* count 0 -> TLS req */
+    sdp_init(0);   /* count 0 -> No-TLS req (0x10) */
     const sdp_t *s = sdp_get();
-    CHECK(s->req_security == SDP_SECURITY_TLS, "init req security TLS");
+    CHECK(s->req_security == SDP_SECURITY_NONE, "init req security No-TLS (count 0)");
     CHECK(s->retries == SDP_RETRY_COUNT, "init retries 50");
     sdp_step(0);   /* IDLE -> REQ -> send -> WAIT_RES */
     CHECK(s->state == SDP_ST_WAIT_RES, "step -> WAIT_RES");
@@ -89,7 +90,7 @@ int main(void)
     mk_res(res, SDP_SECURITY_TLS, 15118);
     sdp_rx(res, 28);
     CHECK(s->state == SDP_ST_TCP_CONNECT, "valid res -> TCP_CONNECT");
-    CHECK(s->secc_port == 15118 && s->use_tls == 1, "SECC port + TLS iff security!=0");
+    CHECK(s->secc_port == 15118 && s->use_tls == 1, "SECC port + TLS iff security==0");
     /* no-TLS response -> use_tls 0 */
     sdp_init(1);
     sdp_step(0);

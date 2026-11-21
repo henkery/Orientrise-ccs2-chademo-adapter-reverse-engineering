@@ -1,11 +1,12 @@
-/* ccs2.c — CCS2 EVCC top-level controller (REPORT §5.9, Agent B/C/D/E/F / analyze92-93).
+/* ccs2.c — CCS2 EVCC top-level controller (REPORT §5.9, Agent B/C/D/E/F/G/H / analyze92-94).
  * Integrates transport->SLAC->SDP->DIN and supplies the charge_stm + current_ctrl EVSE inputs.
  * The autonomous DIN EXI session SM (din_session, Agent F timers/sequence) + the EXI grammar codec
- * (exi/din70121, Agent E) are now BUILT and wired: ccs2_step drives din_session_step and, while a
- * session is active, sources the EVSE handshake flags from it. INERT: communication only — no
- * power-stage GPIO. The live UDP/TCP/IPv6+TLS transport stays GATED (not recovered); decoded Res
- * enter via ccs2_rx_exi (bench injection / future transport). Confirmed measurement + actuation
- * paths wired. The bench flag-setters remain an alternate injection path when no session is active.
+ * (exi/din70121, Agent E) + the live UDP/TCP/IPv6 + mbedTLS transport (v2g_net, Agent G/H) are now
+ * BUILT and wired: ccs2_rx routes IPv6 -> v2g_net_rx_ethernet (UDP->SDP / TCP->deframe->ccs2_rx_exi),
+ * ccs2_step drives v2g_net_step + din_session_step and starts the TCP transport at SDP-done. INERT:
+ * communication only — no power-stage GPIO. The lwIP TCP reliability + mbedTLS crypto are gated
+ * third-party hooks; decoded Res also enter via ccs2_rx_exi (bench injection). Confirmed measurement
+ * + actuation paths wired. The bench flag-setters remain an alternate injection path.
  */
 #include "ccs2.h"
 #include "slac.h"
@@ -15,11 +16,18 @@
 #include "din_session.h"
 #include "exi.h"
 #include "qca7005.h"
+#include "v2g_net.h"
+#include "tick.h"
 
 static uint8_t state;
 static ccs2_evse_t evse;
 
 static void z(uint8_t *p, uint16_t n) { for (uint16_t i = 0; i < n; i++) p[i] = 0; }
+
+/* Hook adapters: the transport TX hooks return void; qca7005_frame_send / v2g_net_udp_send return
+ * int (status). The inert replica ignores the status (no TX space / not-established -> dropped). */
+static void net_eth_send(const uint8_t *frame, uint16_t len) { (void)qca7005_frame_send(frame, len); }
+static void net_udp_send(const uint8_t *frame, uint16_t len) { (void)v2g_net_udp_send(frame, len); }
 
 void ccs2_init(void)
 {
@@ -29,7 +37,13 @@ void ccs2_init(void)
     cp_init();
     din70121_init();
     din_session_init();   /* autonomous DIN EXI session SM (Agent F timers/sequence; inert) */
-    sdp_init(0);   /* Root-cert count 0 -> TLS request (config-side; gated until cert config wired) */
+    sdp_init(0);   /* Root-cert count 0 -> No-TLS request (0x10); gated until cert config wired */
+    /* Live UDP/TCP/IPv6 + mbedTLS transport (v2g_net, Agent G/H / analyze94): wire the Ethernet TX
+     * hook to the QCA7005 PLC modem + the SDP UDP send hook. INERT communication carriage — the
+     * lwIP TCP reliability + mbedTLS crypto stay gated hooks; no power GPIO. */
+    v2g_net_init();
+    v2g_net_set_eth_send(net_eth_send);
+    sdp_set_send(net_udp_send);
 }
 
 /* Sync the EVSE handshake outputs from the autonomous session SM (authoritative while active). */
@@ -47,6 +61,7 @@ void ccs2_step(uint32_t tick)
 {
     evse.plug_in = cp_plug_in();
     evse.link_up = slac_link_up();
+    v2g_net_step(tick * 10u);   /* transport carriage: TCP connect timeout / idle close / TLS progress */
 
     switch (state) {
     case CCS2_IDLE:
@@ -67,6 +82,11 @@ void ccs2_step(uint32_t tick)
         if (sdp_get()->state == SDP_ST_TCP_CONNECT || sdp_get()->state == SDP_ST_DONE) {
             evse.secc_found = 1;
             evse.protocol = sdp_get()->selected_protocol;
+            /* SECC resolved -> open the TCP transport (state3, timer 30000; TLS iff security==0).
+             * The connected event / TLS handshake are gated hooks; the carriage advances via
+             * v2g_net_step + bench injection. Communication only — no power drive. */
+            v2g_net_start_tcp(sdp_get()->secc_ip, sdp_get()->secc_port,
+                              sdp_get()->secc_security, tick * 10u);
             ccs2_session_start();
             din_session_start(tick * 10u);   /* autonomous SM: SessionSetupReq -> await Res (ms) */
         }
@@ -124,8 +144,10 @@ void ccs2_rx(const uint8_t *frame, uint16_t len)
     uint16_t et = ((uint16_t)frame[12] << 8) | frame[13];
     if (et == 0x88E1u) {           /* HomePlug MME -> SLAC matching */
         slac_rx(frame, len);
+    } else if (et == 0x86DDu) {    /* IPv6 -> live transport demux (UDP->SDP / TCP->deframe->EXI) */
+        v2g_net_rx_ethernet(frame, len, tick_get() * 10u);
     }
-    /* IP (0x86DD IPv6 / 0x0800 IPv4) -> SDP/DIN over the gated UDP/TCP transport (not wired). */
+    /* IPv4 (0x0800) / ARP (0x0806): not used by the EVCC session data path. */
 }
 
 const ccs2_evse_t *ccs2_evse(void) { return &evse; }
