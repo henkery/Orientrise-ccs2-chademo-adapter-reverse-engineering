@@ -54,7 +54,8 @@
 #include "cp_adc.h"
 #include "din_session.h"
 #include "v2g_net.h"
-#include "nd6.h"
+#include "v2g_stack.h"
+#include "hw_rng.h"
 #include "ca_store.h"
 
 #define IWDG_KR   (*(volatile uint32_t *)0x40003000u)
@@ -134,13 +135,10 @@ volatile uint32_t v2g_net_mode = 0;    /* 0 none / 1 plain / 2 TLS              
 volatile uint32_t v2g_net_rx   = 0;    /* EXI frames dispatched to ccs2_rx_exi              */
 volatile uint32_t v2g_net_tx   = 0;    /* V2GTP frames sent                                 */
 
-/* IPv6 ND6 neighbor resolution + PnC CA cert store (SWD-readable; INERT communication only —
- * Agent N / analyze96). nd6 resolves the SECC link-local -> MAC for unicast TCP/TX (replaces the
- * gated ND6 hook); ca_store reads the ext-SPI PnC cert store and its Root-cert count gates the SDP
- * TLS decision. Neither drives a power pin. */
-volatile uint32_t nd6_ns_sent  = 0;    /* ND6 Neighbor Solicitations sent                   */
-volatile uint32_t nd6_na_sent  = 0;    /* ND6 Neighbor Advertisements sent                  */
-volatile uint32_t nd6_reachable = 0;   /* neighbors currently REACHABLE                     */
+/* PnC CA cert store (SWD-readable; INERT communication only — Agent N / analyze96). ca_store reads
+ * the ext-SPI PnC cert store; its Root-cert count gates the SDP TLS decision and its DER roots feed
+ * the mbedTLS CA chain (v2g_stack_tls_setup). IPv6 ND6 is now lwIP nd6 (driven by v2g_stack_poll).
+ * Communication only — no power pin. */
 volatile uint32_t ca_root_count = 0;   /* valid PnC Root certs (SDP TLS gate)               */
 volatile uint32_t ca_store_present = 0;/* ext-SPI cert store header+checksum valid          */
 
@@ -178,6 +176,8 @@ void main(void)
      * The SLAC/SDP/DIN session layers above it are built next. */
     ccs2_qca_ok = (qca7005_init() == 0);
     qca7005_set_rx_cb(ccs2_rx_dispatch);
+    hw_rng_init();                          /* STM32 HW-RNG (0x50060800) -> mbedTLS f_rng */
+    v2g_stack_set_rng(hw_rng_f_rng, NULL);  /* recovered RNG source (NOT ctr_drbg) */
     ccs2_init();         /* SLAC + CP + SDP + DIN70121 + EVCC controller + transport (comm only) */
     /* Derive the adapter link-local IPv6 + Ethernet src MAC from the QCA7005 PIB MAC
      * (netif_create_ip6_linklocal_address 0x08090D68 / ethernetif_init from_mac=1). */
@@ -323,19 +323,9 @@ void main(void)
         v2g_net_rx   = vn->rx_frames;
         v2g_net_tx   = vn->tx_frames;
 
-        /* IPv6 ND6 (Agent N / §5.9): 1 s neighbor-cache timer (nd6_tmr 0x0809D012 — reachable
-         * countdown / delay->probe / probe retransmit). The 100 Hz loop divides by 100. ND6 RX
-         * (NS/NA/RA) is driven by v2g_net_rx_ethernet's ICMPv6 branch; TX MAC resolution by
-         * nd6_lookup in v2g_net_tcp_send. Communication only — no power drive. */
-        static uint32_t nd6_div = 0;
-        if (++nd6_div >= 100u) { nd6_div = 0; nd6_tmr(); }
-        const nd6_t *n6 = nd6_get();
-        nd6_ns_sent = n6->ns_sent;
-        nd6_na_sent = n6->na_sent;
-        uint32_t reach = 0;
-        for (uint8_t i = 0; i < ND6_CACHE_SIZE; i++)
-            if (n6->cache[i].state == ND6_STATE_REACHABLE) reach++;
-        nd6_reachable = reach;
+        /* PnC CA cert store (Agent N / §5.9): publish the Root-cert count (SDP TLS gate) + store
+         * presence. IPv6 ND6 neighbor resolution is now lwIP nd6_input/nd6_tmr (the recovered nd6
+         * symbols), driven inside v2g_stack_poll via v2g_net_step. Communication only — no power. */
         ca_root_count = ca_store_root_count();
         ca_store_present = ca_store_get()->store_present;
 

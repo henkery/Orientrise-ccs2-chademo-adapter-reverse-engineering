@@ -5,7 +5,7 @@
  * carriage wired into ccs2_step/ccs2_rx):
  *   nix-shell -p gcc --run 'gcc -O2 -Wall -Wextra -Isrc -o test_ccs2 test_ccs2.c \
  *       src/ccs2.c src/slac.c src/sdp.c src/cp.c src/din70121.c src/exi.c src/din_session.c \
- *       src/v2gtp.c src/v2g_net.c && ./test_ccs2'
+ *       src/v2gtp.c src/v2g_net.c src/ca_store.c && ./test_ccs2'
  */
 #include <stdio.h>
 #include <stdint.h>
@@ -13,6 +13,7 @@
 #include "ccs2.h"
 #include "din70121.h"
 #include "qca7005.h"
+#include "v2g_stack.h"
 
 static int checks = 0, failures = 0;
 #define CHECK(cond, msg) do { checks++; if (!(cond)) { failures++; \
@@ -26,6 +27,28 @@ const uint8_t *qca7005_mac(void) { return mac; }
 uint32_t tick_get(void) { return 0; }
 /* spi4 stub: ca_store (linked via ccs2) defaults to spi4_read; no ext flash on the host. */
 int spi4_read(uint32_t addr, uint8_t *dst, uint32_t len) { (void)addr; (void)dst; (void)len; return -1; }
+
+/* v2g_stack no-op stubs: the live lwIP+mbedTLS stack is validated by test_tls_mbedtls.c +
+ * verify_ccs2.py; the ccs2 glue (via v2g_net) only needs the integration-layer symbols to link. */
+void v2g_stack_init(const uint8_t m[6], v2g_stack_eth_send_fn fn) { (void)m; (void)fn; }
+void v2g_stack_set_rng(v2g_stack_rng_fn fn, void *c) { (void)fn; (void)c; }
+void v2g_stack_local_ip(uint8_t out[16]) { memset(out, 0, 16); }
+void v2g_stack_rx_ethernet(const uint8_t *f, uint16_t l) { (void)f; (void)l; }
+void v2g_stack_poll(uint32_t t) { (void)t; }
+void v2g_stack_set_udp_recv(v2g_stack_udp_recv_fn fn) { (void)fn; }
+int  v2g_stack_udp_send(const uint8_t *d, uint16_t l) { (void)d; return (int)l; }
+void v2g_stack_set_tcp_cbs(v2g_stack_connected_fn a, v2g_stack_app_recv_fn b, v2g_stack_closed_fn c)
+{ (void)a; (void)b; (void)c; }
+int  v2g_stack_tcp_connect(const uint8_t ip[16], uint16_t p) { (void)ip; (void)p; return 0; }
+int  v2g_stack_tcp_send(const uint8_t *d, uint16_t l) { (void)d; return (int)l; }
+void v2g_stack_tcp_close(void) {}
+int  v2g_stack_tcp_is_connected(void) { return 1; }
+int  v2g_stack_tls_setup(const ca_store_t *ca) { (void)ca; return 0; }
+int  v2g_stack_tls_handshake(void) { return 1; }
+int  v2g_stack_tls_write(const uint8_t *d, uint16_t l) { (void)d; return (int)l; }
+int  v2g_stack_tls_read(uint8_t *o, uint16_t c) { (void)o; (void)c; return 0; }
+int  v2g_stack_tls_done(void) { return 0; }
+void v2g_stack_tls_free(void) {}
 
 static void st16(uint8_t *p, uint16_t v) { p[0] = v & 0xFF; p[1] = v >> 8; }
 

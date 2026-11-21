@@ -16,3 +16,7 @@ test_ccs2
 test_exi
 test_din_session
 test_v2g_net
+test_ca_store
+test_cp_capture
+test_cp_adc
+test_tls_mbedtls

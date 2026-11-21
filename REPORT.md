@@ -1094,6 +1094,62 @@ power GPIO. The remaining two hooks (lwIP TCP reliability + mbedTLS crypto/TLS) 
   (132102 B, CRC residue 0 + app-verbatim + stock round-trip).
 - **Still GATED:** lwIP TCP reliability (SYN/ACK/retransmit/congestion) + mbedTLS crypto (ECDHE/AES/SHA256/X509) +
   the TLS handshake/record SM — the remaining two hooks; the asserted power-stage drive stays the last gated layer.
+  (Superseded for the library layers by the library-identification addendum below: the stock stack IS lwIP +
+  mbedTLS, now vendored byte-faithfully; only the asserted power-stage drive remains gated.)
+
+#### Library identification + recovered-config mapping (`analyze97.py`, byte-exact) — stock stack IS lwIP 2.1.x + mbedTLS 2.28 client-only
+
+The four GATED third-party hooks beneath the live transport are **not bespoke code**: the C013 CCS2 network stack
+IS the open-source **lwIP 2.1.x** (IPv6/ND6/TCP/UDP) + **Mbed-TLS 2.28** (TLS 1.2, EVCC client). Identification is
+structural — the recovered symbol addresses are lwIP/mbedTLS functions and the `ssl_setup` call graph matches the
+mbedTLS client API; the recovered config constants map one-to-one onto the library option macros.
+
+- **(lwIP) IPv6/ND6/TCP.** The IPv6/ND6 layer recovered in analyze96 (`ethernet_input 0x0809D914` / `ip6_input
+  0x0809B88E` / `icmp6_input 0x0809B3D0` / `nd6_input 0x0809C926` / `nd6_tmr 0x0809D012` / `ethip6_output
+  0x0809B35C`) are lwIP symbols; the neighbor-cache layout + NS/NA/RA wire + state enum match lwIP `nd6` (the
+  NS-receive DELAY/counter=5 is a C013 deviation from stock STALE=3). TCP reliability constants recovered
+  byte-exact: MSS 1460 (`0x5b4`) / WND 11680 (`0x2da0`) / SND_BUF 14600 (`0x3908` = 10·MSS) / SND_QUEUELEN 40
+  (`0x28`) / SYNMAXRTX 3 / MAXRTX 4 / fasttmr 250 ms / MSL 60 s; `tcp_backoff` {1,2,3,4,5,6,7,7,…} +
+  `tcp_persist_backoff` {3,6,12,24,48,96,120} are lwIP defaults. IPv6-only (no IPv4/ARP), frag/reass ON (V2GTP EXI
+  frames up to 8509 B > MTU). ND6 reachable_time 30000 / retrans_timer 1000 / 8 neighbors.
+- **(mbedTLS) ssl_setup API sequence.** `ssl_setup 0x080604D2` (caller `0x080208CA`, analyze96) calls the mbedTLS
+  2.28 client API in order over ssl ctx `0x20020314` / ssl_config `0x200203F0` (= `0x20020468`−0x78) / ca_chain
+  `0x20020468`: `ssl_init 0x0808F322` @`0x080604E6` → `ssl_config_init 0x0808FAD0` @`0x080604EE` →
+  `x509_crt_init 0x0805D6F8` @`0x080604F4` → Root loop (`ldm r6!,{r1}` / `cbz r1` NULL-term / `ldm r1!,{r2}`
+  der_len+DER / `x509_crt_parse 0x0805D76C` @`0x08060506` / `cmp r7,#5` / `blt`, ≤5 roots) → `ssl_conf_ca_chain
+  0x0808FAD6` @`0x08060520` (gated `cbz r7` @`0x08060514`) → `ssl_conf_authmode 0x0808F442` @`0x08060534` →
+  `ssl_conf_rng 0x0808F504` @`0x08060540`. Ciphersuite `int[]` @`0x080B0668` = {`0xC023`
+  ECDHE-ECDSA-AES128-CBC-SHA256, `0xC025` ECDH-ECDSA-AES128-CBC-SHA256, `0x0000` terminator} (32-bit words, mbedTLS
+  `int[]`). **Authmode mapping:** `cmp.w r8,#0` (arg1 = SECC security byte) @`0x08060528` / `beq 0x08060568` →
+  `movs r1,#2` VERIFY_REQUIRED @`0x08060568`, else `movs r1,#1` VERIFY_OPTIONAL @`0x0806052E` — security==0 (TLS)
+  → REQUIRED. RNG = STM32 HW-RNG `0x50060800` (**not** ctr_drbg) → entropy/DRBG modules off, custom `f_rng` wired
+  by glue. Crypto primitives (AES BE ROM tables / SHA256 / secp256r1 ECDHE+ECDSA / X509 DER) recovered byte-exact
+  (Agent M, analyze95).
+- **(recovered TLS config).** TLS 1.2 CLIENT-only (no server — the adapter is the EVCC), EtM (config bit9,
+  `orr #0x600`) + EMS (bit10), P_SHA256 PRF, sig_hashes {SHA256, SHA224, MD5} (no SHA1), max record content
+  `0x2000` (8192), curve secp256r1 ONLY, AES-128-CBC + PKCS7 padding. X509 DER chain verify (CA store is DER; no
+  PEM/base64).
+- **(custom_fw library pivot).** `custom_fw/third_party/` vendors **mbedTLS 2.28.9** + **lwIP 2.1.4**, configured
+  byte-faithfully to the recovered values via `src/mbedtls_config.h` (CLIENT-only `SSL_CLI_C` / `SSL_PROTO_TLS1_2`
+  / EtM+EMS / IN=OUT=MAX_CONTENT_LEN 8192 / `ECDHE_ECDSA`+`ECDH_ECDSA` / secp256r1-only / AES-CBC+PKCS7+ROM /
+  SHA256+MD5 no SHA1/512 / X509 DER no PEM / `MEMORY_BUFFER_ALLOC_C` static 64K CCM heap /
+  `NO_PLATFORM_ENTROPY`+`NO_DEFAULT_ENTROPY_SOURCES` / no RSA/GCM) + `src/lwipopts.h` (`NO_SYS` 1 raw API /
+  IPv6-only / TCP+UDP+ICMP6 / ETHERNET 1 ARP 0 / frag+reass / MSS1460 WND11680 SND_BUF14600 QUEUELEN40 SYNMAXRTX3
+  MAXRTX4 TMR250 MSL60000 / ND6 30000/1000/8 / `SUPPORT_CUSTOM_PBUF` 1 / static pools `MEM_LIBC_MALLOC` 0).
+  Freestanding `-nostdlib` via a tiny libc shim + `arch/cc.h`; lwIP `NO_SYS=1` raw API; mbedTLS heap over a static
+  pool. The recovered **GLUE stays** — `v2g_net.c` (transport SM + V2GTP deframe + EXI dispatch + TLS decision),
+  `sdp.c`, `qca7005.c` netif driver, `ca_store.c` populator → `mbedtls_x509_crt_parse` + `ssl_conf_ca_chain`,
+  `hw_rng.c` `f_rng` — wiring into the library APIs (`v2g_stack.c` = lwIP netif + raw pcb + mbedTLS bio bridge).
+  The hand-rolled crypto/ecc/x509/tcp/tls/nd6 replicas are retired (mechanisms remain documented here +
+  analyze95/96/97 + validated by `test_tls_mbedtls`). `analyze97.py` **63 checks** re-confirms the cipher list +
+  ssl_setup API sequence + authmode mapping from the bytes and asserts the vendored configs reproduce the recovered
+  values. Host `test_tls_mbedtls` **21** proves the recovered mbedTLS config end-to-end with the real library
+  (negotiates `0xC023`, VERIFY_REQUIRED enforced empty-CA → −0x2700/0x08, `0xC025` alt negotiates, encrypted
+  app-data round-trip); full host suite **641 checks / 0 failures** across 16 tests; built image disasm-verified
+  `verify_ccs2.py` **201 checks**; `CUSTOM.UPG` re-wrapped (132102 B, CRC residue 0 + app-verbatim + stock
+  round-trip).
+- **Still GATED:** the asserted power-stage drive (contactor/relay GPIO sequencing) stays the last gated layer
+  (§5.21/§7); the library network/crypto layers are now present and inert-validated, not gated-to-implement.
 
 ### 5.10 USB log stick — firmware-match proof & device provenance  [C unless noted]
 
@@ -2561,6 +2617,25 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   no-peripheral-base disasm-verified `custom_fw/verify_ccs2.py` (171 checks). The lwIP TCP reliability + mbedTLS
   crypto/TLS hooks stay GATED; the asserted power-stage drive stays the last gated layer.
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze96.py'`.
+- `analyze97.py` — **stock-stack library identification + recovered-config mapping decoder (§5.9 library-identification
+  addendum, custom_fw mbedTLS+lwIP pivot)**: grounds the "vendor the real libraries" pivot in the C013 bytes — the
+  stock CCS2 network stack IS lwIP 2.1.x (IPv6/ND6/TCP/UDP; the analyze96 `nd6_input`/`ethernet_input`/`ip6_input`
+  symbols ARE lwIP) + Mbed-TLS 2.28 (TLS 1.2 EVCC client). (A) Re-confirms the mbedTLS `ssl_setup 0x080604D2` client
+  API call sequence — `ssl_init 0x0808F322` / `ssl_config_init 0x0808FAD0` / `x509_crt_init 0x0805D6F8` /
+  `x509_crt_parse 0x0805D76C` (Root loop ≤5, NULL-term ptr-array) / `ssl_conf_ca_chain 0x0808FAD6` /
+  `ssl_conf_authmode 0x0808F442` / `ssl_conf_rng 0x0808F504` over ssl ctx `0x20020314` / conf `0x200203F0` /
+  ca_chain `0x20020468`; ciphersuite `int[]` @`0x080B0668` = {`0xC023`, `0xC025`, `0`} (32-bit words); authmode
+  mapping `cmp.w r8,#0` @`0x08060528` / `beq 0x08060568` → `movs r1,#2` VERIFY_REQUIRED else `movs r1,#1`
+  @`0x0806052E` (security==0 → REQUIRED). (B) Asserts the vendored `custom_fw/src/mbedtls_config.h` (CLIENT-only
+  TLS1.2 + EtM/EMS + 8192 content + ECDHE_ECDSA/ECDH_ECDSA + secp256r1-only + AES-CBC/PKCS7/ROM + SHA256/MD5 no
+  SHA1/512 + X509 DER no PEM + MEMORY_BUFFER_ALLOC_C + HW-RNG no entropy/DRBG + no RSA/GCM) and `lwipopts.h`
+  (NO_SYS 1 IPv6-only TCP/UDP/ICMP6 + frag/reass + MSS1460/WND11680/SND_BUF14600/QUEUELEN40/SYNMAXRTX3/MAXRTX4/
+  TMR250/MSL60000 + ND6 30000/1000/8 + custom-pbuf + static pools) reproduce the recovered config values. **63
+  checks** (cipher list 3 + ssl_setup API 16 + authmode 4 + mbedtls_config mapping 23 + lwipopts mapping 17).
+  The hand-rolled crypto/ecc/x509/tcp/tls/nd6 replicas are retired in favor of vendored mbedTLS 2.28.9 + lwIP 2.1.4
+  (recovered GLUE wires into the library APIs); host `test_tls_mbedtls` 21 proves the config end-to-end with the
+  real library, full host suite 641/0, `verify_ccs2.py` 201. The asserted power-stage drive stays the last gated layer.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze97.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,

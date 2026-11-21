@@ -1,14 +1,21 @@
-/* test_v2g_net.c — host unit test for the V2G network transport (custom_fw/src/v2g_net.c,
- * REPORT §5.9, Agent G/H / analyze94). Build + run:
+/* test_v2g_net.c — host unit test for the V2G network transport GLUE (custom_fw/src/v2g_net.c,
+ * REPORT §5.9, Agent G/H / analyze94). LIBRARY PIVOT: the live IPv6/ND6/TCP/UDP + TLS stack is now
+ * the REAL vendored lwIP 2.1.x + mbedTLS 2.28 (src/v2g_stack.c). This test owns the recovered GLUE
+ * that sits ABOVE the stack: the byte-exact reference wire helpers, the V2GTP stream deframe, the
+ * EXI dispatch -> ccs2_rx_exi, the TLS decision, and the transport connection SM (connect /
+ * handshake / established / idle-close / connect-timeout) + send router. The v2g_stack integration
+ * layer is STUBBED + spied here (the real lwIP/mbedTLS stack is validated by test_tls_mbedtls.c +
+ * verify_ccs2.py + the firmware build); ccs2_rx_exi / sdp_rx are spied (heavy upper modules unlinked).
+ * Build + run:
  *   nix-shell -p gcc --run 'gcc -O2 -Wall -Wextra -Isrc -o test_v2g_net \
- *       test_v2g_net.c src/v2g_net.c src/v2gtp.c src/nd6.c && ./test_v2g_net'
- * ccs2_rx_exi + sdp_rx are spied here (the heavy ccs2/sdp/din modules are not linked). */
+ *       test_v2g_net.c src/v2g_net.c src/v2gtp.c && ./test_v2g_net' */
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include "v2g_net.h"
 #include "v2gtp.h"
-#include "nd6.h"
+#include "v2g_stack.h"
+#include "ca_store.h"
 
 static int checks = 0, failures = 0;
 #define CHECK(cond, msg) do { checks++; if (!(cond)) { failures++; \
@@ -31,13 +38,42 @@ void sdp_rx(const uint8_t *buf, uint16_t len)
     spy_sdp_len = len;
     memcpy(spy_sdp, buf, len < sizeof spy_sdp ? len : sizeof spy_sdp);
 }
-static uint8_t  spy_eth[1518]; static uint16_t spy_eth_len; static int spy_eth_calls;
-static void eth_send_spy(const uint8_t *frame, uint16_t len)
-{
-    spy_eth_calls++;
-    spy_eth_len = len;
-    memcpy(spy_eth, frame, len < sizeof spy_eth ? len : sizeof spy_eth);
-}
+
+/* ---- stubbed v2g_stack integration layer (spy the glue -> stack wiring) ---- */
+static uint8_t stub_mac[6];
+static int stub_init_calls, stub_poll_calls, stub_connect_calls;
+static uint8_t stub_connect_ip[16]; static uint16_t stub_connect_port;
+static int stub_tls_setup_calls, stub_tls_handshake_calls, stub_tls_handshake_ret = 1;
+static int stub_tcp_send_calls, stub_tls_write_calls, stub_udp_send_calls;
+static int stub_tcp_close_calls, stub_tls_free_calls;
+static uint16_t stub_tcp_send_len;
+static v2g_stack_connected_fn stub_connected_fn;
+static v2g_stack_app_recv_fn stub_recv_fn;
+static v2g_stack_closed_fn stub_closed_fn;
+
+void v2g_stack_init(const uint8_t mac[6], v2g_stack_eth_send_fn eth_send)
+{ stub_init_calls++; memcpy(stub_mac, mac, 6); (void)eth_send; }
+void v2g_stack_set_rng(v2g_stack_rng_fn fn, void *ctx) { (void)fn; (void)ctx; }
+void v2g_stack_local_ip(uint8_t out[16]) { v2g_net_ipv6_linklocal(stub_mac, out); }  /* EUI-64, as lwIP */
+void v2g_stack_rx_ethernet(const uint8_t *frame, uint16_t len) { (void)frame; (void)len; }
+void v2g_stack_poll(uint32_t now_ms) { (void)now_ms; stub_poll_calls++; }
+void v2g_stack_set_udp_recv(v2g_stack_udp_recv_fn fn) { (void)fn; }
+int  v2g_stack_udp_send(const uint8_t *data, uint16_t len) { (void)data; stub_udp_send_calls++; return (int)len; }
+void v2g_stack_set_tcp_cbs(v2g_stack_connected_fn c, v2g_stack_app_recv_fn r, v2g_stack_closed_fn cl)
+{ stub_connected_fn = c; stub_recv_fn = r; stub_closed_fn = cl; }
+int  v2g_stack_tcp_connect(const uint8_t secc_ip[16], uint16_t port)
+{ stub_connect_calls++; memcpy(stub_connect_ip, secc_ip, 16); stub_connect_port = port; return 0; }
+int  v2g_stack_tcp_send(const uint8_t *data, uint16_t len)
+{ (void)data; stub_tcp_send_calls++; stub_tcp_send_len = len; return (int)len; }
+void v2g_stack_tcp_close(void) { stub_tcp_close_calls++; }
+int  v2g_stack_tcp_is_connected(void) { return 1; }
+int  v2g_stack_tls_setup(const ca_store_t *ca) { (void)ca; stub_tls_setup_calls++; return 0; }
+int  v2g_stack_tls_handshake(void) { stub_tls_handshake_calls++; return stub_tls_handshake_ret; }
+int  v2g_stack_tls_write(const uint8_t *data, uint16_t len) { (void)data; stub_tls_write_calls++; return (int)len; }
+int  v2g_stack_tls_read(uint8_t *out, uint16_t cap) { (void)out; (void)cap; return 0; }
+int  v2g_stack_tls_done(void) { return stub_tls_handshake_ret == 0; }
+void v2g_stack_tls_free(void) { stub_tls_free_calls++; }
+const ca_store_t *ca_store_get(void) { return NULL; }
 
 /* build a minimal valid V2GTP EXI frame (type 0x8001) with an n-byte payload */
 static uint16_t mk_exi(uint8_t *b, uint16_t plen)
@@ -132,9 +168,13 @@ int main(void)
     CHECK(v2g_net_tls_decision(0x10) == 0, "TLS decision: security 0x10 -> plain (No-TLS)");
     CHECK(v2g_net_tls_decision(0x30) == 0, "TLS decision: nonzero -> plain");
 
-    /* --- local MAC setter -> EUI-64 link-local (netif_create_ip6_linklocal_address 0x08090D68) --- */
+    /* --- local MAC setter -> brings up the stack + EUI-64 link-local (0x08090D68) --- */
     v2g_net_init();
+    stub_init_calls = 0;
     v2g_net_set_local_mac(mac);
+    CHECK(stub_init_calls == 1, "set_local_mac brings up v2g_stack_init (lwIP netif)");
+    CHECK(stub_connected_fn != NULL && stub_recv_fn != NULL && stub_closed_fn != NULL,
+          "set_local_mac wires the TCP connected/recv/closed callbacks");
     uint8_t ll[16]; v2g_net_ipv6_linklocal(mac, ll);
     CHECK(memcmp(v2g_net_get()->local_ip, ll, 16) == 0, "set_local_mac -> EUI-64 link-local IPv6");
 
@@ -169,34 +209,46 @@ int main(void)
 
     /* --- transport SM: plain path --- */
     v2g_net_init();
-    v2g_net_set_eth_send(eth_send_spy);
     const v2g_net_t *nt = v2g_net_get();
     CHECK(nt->state == V2G_NET_IDLE, "net init idle");
     CHECK(nt->ciphers[0] == 0xC023 && nt->ciphers[1] == 0xC025, "net cipher list {0xC023,0xC025}");
     CHECK(nt->authmode == 2, "net authmode VERIFY_REQUIRED");
     uint8_t secc[16]; memset(secc, 0, 16); secc[0] = 0xFE; secc[1] = 0x80; secc[15] = 0x02;
+    stub_connect_calls = 0;
     v2g_net_start_tcp(secc, 15118, 0x10, 1000);   /* security 0x10 -> plain */
     CHECK(nt->state == V2G_NET_TCP_CONNECT, "start_tcp -> TCP_CONNECT");
     CHECK(nt->use_tls == 0 && nt->mode == V2G_NET_MODE_PLAIN, "plain: use_tls 0 mode1");
     CHECK(nt->secc_port == 15118, "start_tcp secc port");
+    CHECK(stub_connect_calls == 1 && stub_connect_port == 15118 &&
+          memcmp(stub_connect_ip, secc, 16) == 0, "start_tcp -> v2g_stack_tcp_connect(secc,port)");
     v2g_net_tcp_connected(1100);
     CHECK(nt->state == V2G_NET_ESTABLISHED, "plain connected -> ESTABLISHED");
     CHECK(nt->tcp_connected == 1, "tcp connected flag");
+    CHECK(stub_tls_setup_calls == 0, "plain mode does NOT set up TLS");
     /* idle close at 300 polls */
     for (int i = 0; i < 299; i++) v2g_net_step(2000 + (uint32_t)i * 10);
     CHECK(nt->state == V2G_NET_ESTABLISHED, "idle 299 polls still established");
+    CHECK(stub_poll_calls >= 299, "step drives v2g_stack_poll (lwIP timeouts)");
     v2g_net_step(2000 + 299 * 10);
     CHECK(nt->state == V2G_NET_CLOSED, "idle 300 polls -> CLOSED");
+    CHECK(stub_tcp_close_calls >= 1, "idle close -> v2g_stack_tcp_close");
 
     /* --- transport SM: TLS path --- */
     v2g_net_init();
+    stub_tls_setup_calls = 0; stub_tls_handshake_calls = 0; stub_tls_handshake_ret = 1;
     v2g_net_start_tcp(secc, 15118, 0x00, 1000);   /* security 0x00 -> TLS */
     CHECK(nt->use_tls == 1 && nt->mode == V2G_NET_MODE_TLS, "TLS: use_tls 1 mode2");
     v2g_net_tcp_connected(1100);
     CHECK(nt->state == V2G_NET_TLS_HANDSHAKE, "TLS connected -> TLS_HANDSHAKE");
     CHECK(nt->tls_done == 0, "TLS handshake pending");
+    CHECK(stub_tls_setup_calls == 1, "TLS connected -> v2g_stack_tls_setup (mbedTLS config + CA)");
+    CHECK(stub_tls_handshake_calls >= 1, "TLS connected drives v2g_stack_tls_handshake");
     v2g_net_step(1200);
-    CHECK(nt->state == V2G_NET_TLS_HANDSHAKE, "TLS handshake not done stays");
+    CHECK(nt->state == V2G_NET_TLS_HANDSHAKE, "TLS handshake WANT_READ stays in handshake");
+    /* handshake completes -> ESTABLISHED */
+    stub_tls_handshake_ret = 0;
+    v2g_net_step(1300);
+    CHECK(nt->state == V2G_NET_ESTABLISHED && nt->tls_done == 1, "TLS handshake done -> ESTABLISHED");
     /* connect timeout (plain) */
     v2g_net_init();
     v2g_net_start_tcp(secc, 15118, 0x10, 0);
@@ -219,88 +271,45 @@ int main(void)
     r = v2g_net_exi_dispatch(sdpf, 28, 5000);
     CHECK(r == 0 && spy_exi_calls == 0, "non-EXI type not dispatched to ccs2_rx_exi");
 
-    /* --- RX ethernet: UDP SDP -> sdp_rx spy --- */
+    /* --- RX ethernet entry forwards to the live stack (lwIP demux is library-validated) --- */
     v2g_net_init();
-    spy_sdp_calls = 0;
-    uint8_t rxbuf[128];
-    uint8_t sdppay[10] = {0x01, 0xFE, 0x90, 0x01, 0, 0, 0, 0x14, 0x00, 0x00};
-    /* eth + ip6(nh=UDP) + udp + sdp payload */
-    uint16_t udp_total = (uint16_t)(8 + 10);
-    uint16_t o = v2g_net_eth_build(rxbuf, dmac, smac, V2G_ETHTYPE_IPV6);
-    o += v2g_net_ip6_build(rxbuf + o, udp_total, V2G_IP6_NH_UDP, 255, secc, src);
-    o += v2g_net_udp_build(rxbuf + o, 15118, 0xC001, 10);
-    memcpy(rxbuf + o, sdppay, 10); o += 10;
-    v2g_net_rx_ethernet(rxbuf, o, 7000);
-    CHECK(spy_sdp_calls == 1, "RX UDP -> sdp_rx called");
-    CHECK(spy_sdp_len == 10, "RX UDP SDP payload len 10");
-    CHECK(memcmp(spy_sdp, sdppay, 10) == 0, "RX UDP SDP payload bytes");
+    uint8_t rxbuf[64]; memset(rxbuf, 0, sizeof rxbuf);
+    v2g_net_rx_ethernet(rxbuf, 14, 7000);   /* thin forward -> v2g_stack_rx_ethernet */
+    CHECK(nt->state == V2G_NET_IDLE, "rx_ethernet forwards to stack without altering SM");
 
-    /* --- RX ethernet: TCP -> deframe -> EXI dispatch spy --- */
+    /* --- send router: udp_send -> v2g_stack_udp_send (SDP multicast) --- */
     v2g_net_init();
-    spy_exi_calls = 0;
-    uint8_t tcpframe[128];
-    uint16_t tcp_total = (uint16_t)(20 + el);
-    o = v2g_net_eth_build(tcpframe, dmac, smac, V2G_ETHTYPE_IPV6);
-    o += v2g_net_ip6_build(tcpframe + o, tcp_total, V2G_IP6_NH_TCP, 255, secc, src);
-    o += v2g_net_tcp_build(tcpframe + o, 15118, 0xC001, 0, 0, 0x18, 0xa02d);
-    memcpy(tcpframe + o, exi, el); o += el;
-    v2g_net_rx_ethernet(tcpframe, o, 8000);
-    CHECK(spy_exi_calls == 1, "RX TCP -> deframe -> ccs2_rx_exi");
-    CHECK(spy_exi_len == el && spy_exi_ms == 8000, "RX TCP EXI frame len + ms");
-    CHECK(memcmp(spy_exi, exi, el) == 0, "RX TCP EXI frame bytes");
-    /* non-IPv6 ethertype ignored */
-    spy_exi_calls = 0;
-    tcpframe[12] = 0x08; tcpframe[13] = 0x00;   /* IPv4 */
-    v2g_net_rx_ethernet(tcpframe, o, 8000);
-    CHECK(spy_exi_calls == 0, "RX non-IPv6 ethertype ignored");
-
-    /* --- TX udp_send -> eth_send spy (SDP multicast frame structure) --- */
-    v2g_net_init();
-    v2g_net_set_eth_send(eth_send_spy);
-    memcpy((void *)nt->local_ip, src, 16);   /* set adapter link-local */
-    spy_eth_calls = 0;
+    stub_udp_send_calls = 0;
     uint8_t sdpreq[10]; memset(sdpreq, 0, 10);
     sdpreq[8] = 0x10; sdpreq[9] = 0;   /* {security, transport=0} */
     v2gtp_encode(sdpreq, 2, V2GTP_TYPE_SDP_REQ);
     int sn = v2g_net_udp_send(sdpreq, 10);
     CHECK(sn == 10, "udp_send returns payload len");
-    CHECK(spy_eth_calls == 1, "udp_send -> eth_send");
-    CHECK(spy_eth[12] == 0x86 && spy_eth[13] == 0xDD, "udp_send ethertype IPv6");
-    CHECK(spy_eth[0] == 0x33 && spy_eth[1] == 0x33, "udp_send mcast dst MAC 33:33");
-    CHECK(spy_eth[14 + 6] == V2G_IP6_NH_UDP, "udp_send ip6 next-header UDP");
-    /* UDP dst port 15118 @ eth+ip6+udp+2 */
-    CHECK(spy_eth[14 + 40 + 2] == 0x3B && spy_eth[14 + 40 + 3] == 0x0E, "udp_send dst port 15118");
+    CHECK(stub_udp_send_calls == 1, "udp_send -> v2g_stack_udp_send");
+    CHECK(nt->tx_frames == 1, "udp_send tx_frames count");
 
-    /* --- TX tcp_send -> eth_send spy (established plain) --- */
+    /* --- send router: tcp_send plain established -> v2g_stack_tcp_send --- */
     v2g_net_init();
-    v2g_net_set_eth_send(eth_send_spy);
-    memcpy((void *)nt->local_ip, src, 16);
+    stub_tcp_send_calls = 0;
     v2g_net_start_tcp(secc, 15118, 0x10, 0);
     v2g_net_tcp_connected(100);
-    /* Resolve the SECC neighbor via ND6 (NA injection) so unicast TX has a dst MAC: create the
-     * INCOMPLETE entry, then a solicited NA (Override) -> REACHABLE + TLLA MAC (nd6_lookup). */
-    uint8_t secc_mac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01};
-    uint8_t na[32]; nd6_build_na(na, secc, secc_mac, ND6_NA_SOLICITED);
-    nd6_find_or_create(secc);
-    nd6_input(na, 32, secc, src);
-    spy_eth_calls = 0;
     int tn = v2g_net_tcp_send(exi, el, 200);
-    CHECK(tn == (int)el, "tcp_send returns frame len");
-    CHECK(spy_eth_calls == 1, "tcp_send -> eth_send");
-    CHECK(memcmp(spy_eth, secc_mac, 6) == 0, "tcp_send dst MAC = ND6-resolved SECC MAC");
-    CHECK(spy_eth[14 + 6] == V2G_IP6_NH_TCP, "tcp_send ip6 next-header TCP");
-    CHECK((spy_eth[14 + 40 + 12] >> 4) == 5, "tcp_send tcp data offset 5");
-    CHECK(spy_eth[14 + 40 + 13] == 0x18, "tcp_send tcp flags ACK|PSH");
-    /* unresolved neighbor -> tcp_send defers (ND6 lookup pending) */
-    v2g_net_init();
-    v2g_net_set_eth_send(eth_send_spy);
-    memcpy((void *)nt->local_ip, src, 16);
-    v2g_net_start_tcp(secc, 15118, 0x10, 0);
-    v2g_net_tcp_connected(100);
-    CHECK(v2g_net_tcp_send(exi, el, 200) == -1, "tcp_send unresolved neighbor -> -1 (ND6 pending)");
+    CHECK(tn == (int)el, "tcp_send plain returns frame len");
+    CHECK(stub_tcp_send_calls == 1 && stub_tcp_send_len == el, "tcp_send plain -> v2g_stack_tcp_send");
     /* tcp_send before established -> error */
     v2g_net_init();
     CHECK(v2g_net_tcp_send(exi, el, 200) == -1, "tcp_send before established -> -1");
+
+    /* --- send router: tcp_send TLS established -> v2g_stack_tls_write (ssl_write) --- */
+    v2g_net_init();
+    stub_tls_write_calls = 0; stub_tcp_send_calls = 0; stub_tls_handshake_ret = 0;
+    v2g_net_start_tcp(secc, 15118, 0x00, 0);
+    v2g_net_tcp_connected(100);   /* TLS setup + handshake(done) -> ESTABLISHED */
+    CHECK(nt->state == V2G_NET_ESTABLISHED, "TLS established for send-router test");
+    tn = v2g_net_tcp_send(exi, el, 200);
+    CHECK(tn == (int)el, "tcp_send TLS returns frame len");
+    CHECK(stub_tls_write_calls == 1, "tcp_send TLS -> v2g_stack_tls_write (mbedTLS ssl_write)");
+    CHECK(stub_tcp_send_calls == 0, "tcp_send TLS does NOT use plain tcp_send");
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

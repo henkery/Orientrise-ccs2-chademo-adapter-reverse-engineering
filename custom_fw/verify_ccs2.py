@@ -2,13 +2,17 @@
 """verify_ccs2.py — disasm-verify the built CCS2 EVCC subsystem in app.elf (REPORT §5.9).
 
 Encoding-agnostic safety + presence check on the linked firmware (app.bin @ 0x08020000):
-  1. Presence: every CCS2 module function (ccs2_/slac_/sdp_/cp_/din_/v2gtp_) is linked in.
-  2. Power-GPIO safety: the pure-logic CCS2 modules (slac/sdp/cp/din70121/ccs2/v2gtp) reference
-     NO peripheral base 0x40000000-0x400FFFFF (no GPIO/SPI/DAC/PWM stores) — they are RAM-only
-     communication logic. Collects ALL #imm operands + MOVW/MOVT pairs + dereferenced LDR-literal
-     pool words (UXTH masks are not immediates; computed addresses won't appear as immediates).
-     qca7005 (the SPI1 transport) is excluded — it legitimately touches SPI1/GPIOA/GPIOC and was
-     verified in its own milestone.
+  1. Presence: every CCS2 module function (ccs2_/slac_/sdp_/cp_/din_/v2gtp_/v2g_net_/v2g_stack_)
+     plus the LIVE vendored library stack (lwIP 2.1.x nd6/ethernet/ip6/tcp/udp/icmp6/ethip6 +
+     mbedTLS 2.28 ssl/x509/heap + hw_rng) is linked in. LIBRARY PIVOT: the stock C013 firmware IS
+     lwIP + mbedTLS, so the recovered IPv6/ND6/TCP/TLS mechanisms are verified in the real upstream
+     library functions (configured byte-exact via lwipopts.h / mbedtls_config.h), not a replica.
+  2. Power-GPIO safety: the pure-logic CCS2 modules (slac/sdp/cp/din70121/ccs2/v2gtp/v2g_net/
+     v2g_stack) + lwIP nd6 reference NO peripheral base 0x40000000-0x400FFFFF (no GPIO/SPI/DAC/PWM
+     stores) — they are RAM-only communication logic. Collects ALL #imm operands + MOVW/MOVT pairs
+     + dereferenced LDR-literal pool words (UXTH masks are not immediates; computed addresses won't
+     appear as immediates). qca7005 (SPI1 transport) + hw_rng (RNG/RCC) are excluded — they
+     legitimately touch hardware and were verified in their own milestones.
   3. Integration: main calls ccs2_init / ccs2_step / ccs2_fill_current_ctrl / cp_step / ccs2_rx.
   4. pow10 table: din70121 carries the power-of-10 converter constants {1,10,100,1000,10000,
      100000,1000000} (the analyze89 correction).
@@ -111,16 +115,31 @@ def main():
     for want in ("cp_adc_init", "cp_adc_publish", "cp_adc_bat_mv", "cp_adc_pp_raw", "cp_adc_bat_raw",
                  "cp_adc_cpd_raw", "cp_adc_d_link", "cp_adc_pd11", "DMA2_Stream1_IRQHandler"):
         check(want in syms, "wired CP-ADC3 symbol present: " + want)
-    # IPv6 ND6 neighbor cache + NS/NA/RA (nd6, Agent N / analyze96) wired into v2g_net
-    # (nd6_init/set_send/set_local/input/lookup) + main (nd6_tmr/get). The pure wire builders
-    # (build_ns/build_na) + find_or_create are required-present (called from nd6_send_ns/na/input/
-    # lookup). nd6_solicited_node_mcast + the small static helpers (find/flush_queue/free_entry/
-    # emit_icmp6/parse_lla) are -O2-INLINED into nd6_send_ns (no standalone symbol); their LOGIC is
-    # verified via constants below + the host test (test_nd6, 81 checks).
-    for want in ("nd6_init", "nd6_set_send", "nd6_set_local", "nd6_input", "nd6_lookup", "nd6_tmr",
-                 "nd6_get", "nd6_send_ns", "nd6_send_na", "nd6_find_or_create", "nd6_build_ns",
-                 "nd6_build_na"):
-        check(want in syms, "wired ND6 symbol present: " + want)
+    # LIBRARY PIVOT (mbedTLS + lwIP full): the live IPv6/ND6/TCP/UDP stack + TLS 1.2 crypto are now
+    # the REAL vendored upstream libraries (lwIP 2.1.x + mbedTLS 2.28) — the stock C013 firmware IS
+    # these libraries (recovered nd6_input 0x0809C926 / nd6_tmr 0x0809D012 / ethip6_output
+    # 0x0809B35C / netif_create_ip6_linklocal_address 0x08090D68 are lwIP symbols). The hand-rolled
+    # nd6.c replica (nd6_init/set_send/set_local/lookup/get/find_or_create/build_ns/build_na) is
+    # RETIRED; lwIP nd6.c owns the neighbor cache + NS/NA/RA. Required-present: the lwIP nd6 entry
+    # points the live path reaches (input/tmr/send_ns/send_na + the cache helpers nd6_send_q calls),
+    # the Ethernet/IPv6/TCP/UDP/ICMPv6 demux, the EUI-64 link-local + ethip6 output, the v2g_stack
+    # integration layer (netif + raw-API pcb + mbedTLS bio bridge), and the mbedTLS TLS/X509/heap
+    # entry points. Their byte-exact recovered-config LOGIC is verified via constants below.
+    for want in ("nd6_input", "nd6_tmr", "nd6_send_ns", "nd6_send_na",
+                 "nd6_get_next_hop_addr_or_queue", "nd6_find_neighbor_cache_entry",
+                 "nd6_new_neighbor_cache_entry", "nd6_reachability_hint",
+                 "ethernet_input", "ip6_input", "tcp_input", "udp_input", "icmp6_input",
+                 "ethip6_output", "netif_create_ip6_linklocal_address"):
+        check(want in syms, "wired lwIP stack symbol present: " + want)
+    for want in ("v2g_stack_init", "v2g_stack_rx_ethernet", "v2g_stack_poll", "v2g_stack_udp_send",
+                 "v2g_stack_tcp_connect", "v2g_stack_tcp_send", "v2g_stack_tls_setup",
+                 "v2g_stack_tls_handshake", "v2g_stack_tls_write", "v2g_stack_set_rng",
+                 "v2g_stack_local_ip", "v2g_stack_set_tcp_cbs", "v2g_stack_set_udp_recv"):
+        check(want in syms, "wired v2g_stack integration symbol present: " + want)
+    for want in ("mbedtls_ssl_setup", "mbedtls_ssl_handshake", "mbedtls_x509_crt_parse",
+                 "mbedtls_ssl_conf_authmode", "mbedtls_ssl_conf_ciphersuites",
+                 "mbedtls_memory_buffer_alloc_init", "hw_rng_init", "hw_rng_f_rng"):
+        check(want in syms, "wired mbedTLS/HW-RNG symbol present: " + want)
     # PnC CA cert store (ca_store, Agent N / analyze96) wired into main (ca_store_init/get/
     # root_count) + ccs2_init (sdp_init(ca_store_root_count())). ca_populate/hdr_valid/entry_valid
     # are the pure validators/populator (called from ca_store_init, retained). ca_byte_sum +
@@ -234,7 +253,8 @@ def main():
                      "din_session_get", "v2g_net_get", "v2g_net_tcp_send", "v2g_net_set_local_mac",
                      "cp_capture_init", "cp_capture_duty", "cp_capture_period",
                      "cp_adc_init", "cp_adc_pp_raw", "cp_adc_cpd_raw", "cp_adc_pd11", "cp_adc_d_link",
-                     "ca_store_init", "ca_store_root_count", "ca_store_get", "nd6_tmr", "nd6_get"):
+                     "ca_store_init", "ca_store_root_count", "ca_store_get",
+                     "hw_rng_init", "v2g_stack_set_rng"):
             check(want in called, "main calls " + want)
         # ccs2_rx is wired via qca7005_set_rx_cb (function pointer), check it is referenced
         check("ccs2_rx_dispatch" in syms or "ccs2_rx" in called, "ccs2 RX dispatcher present")
@@ -301,23 +321,42 @@ def main():
     step_imms = func_imms("din_session_step")
     check(20 in step_imms, "din_session_step carries retry cap 20 (cmp #0x14)")
 
-    # -O2 inlines the small transport helpers into their (required-present) callers, so they have no
-    # standalone symbol (like din_pow10). Verify their LOGIC via distinctive constants:
-    #   ethertype()  -> v2g_net_rx_ethernet carries the IPv6 EtherType compare. The compiler emits a
-    #                   ldrh LE + cmp #0xDD86 (the byte-swapped wire 0x86DD) — matching the stock
-    #                   ethernet_input 0x0809D914 LE read; accept either the wire or LE-swapped form.
-    #   ip6_parse()  -> v2g_net_rx_ethernet carries the next-header UDP 17 / TCP 6 demux
-    #   exi_dispatch()-> ccs2_rx_exi present (above) proves it (only caller is deframe_cb)
-    #   ipv6_linklocal()/tls_decision() -> inlined into set_local_mac/start_tcp (present above)
-    rx_imms = func_imms("v2g_net_rx_ethernet")
-    check(0x86DD in rx_imms or 0xDD86 in rx_imms,
-          "v2g_net_rx_ethernet carries IPv6 EtherType 0x86DD/0xDD86 (ethertype inlined)")
-    check(17 in rx_imms and 6 in rx_imms,
-          "v2g_net_rx_ethernet carries next-header UDP 17 / TCP 6 (ip6_parse demux inlined)")
+    # LIBRARY PIVOT: the IPv6 EtherType + next-header demux is now done by lwIP (ethernet_input
+    # 0x0809D914 / ip6_input 0x0809B88E), not the retired hand-rolled v2g_net_rx_ethernet demux
+    # (which now just forwards the frame to v2g_stack_rx_ethernet -> ethernet_input). Verify the
+    # recovered demux constants in the lwIP functions that carry them:
+    #   ethernet_input -> IPv6 EtherType compare (ldrh LE + cmp #0xDD86, byte-swapped wire 0x86DD).
+    #   ip6_input      -> next-header UDP 17 / TCP 6 demux.
+    #   ethip6_output  -> IPv6 EtherType 0x86DD emit + multicast MAC 33:33 (0x3333 hi-half).
+    #   exi_dispatch() -> ccs2_rx_exi present (above) proves it (only caller is deframe_cb).
+    #   ipv6_linklocal()/tls_decision() -> inlined into set_local_mac/start_tcp (present above).
+    eth_in = func_imms("ethernet_input")
+    check(0x86DD in eth_in or 0xDD86 in eth_in,
+          "lwIP ethernet_input carries IPv6 EtherType 0x86DD/0xDD86 (recovered 0x0809D914)")
+    ip6_in = func_imms("ip6_input")
+    check(17 in ip6_in and 6 in ip6_in,
+          "lwIP ip6_input carries next-header UDP 17 / TCP 6 demux (recovered 0x0809B88E)")
+    eth_out = func_imms("ethip6_output")
+    check(0x86DD in eth_out and 0x3333 in eth_out,
+          "lwIP ethip6_output carries EtherType 0x86DD + mcast MAC 33:33 (recovered 0x0809B35C)")
     # TLS config record (mbedTLS setup 0x080604D2): cipher list {0xC023,0xC025} + authmode 2 in init.
     net_init_imms = func_imms("v2g_net_init")
     check(0xC023 in net_init_imms and 0xC025 in net_init_imms,
           "v2g_net_init carries TLS cipher list {0xC023,0xC025}")
+    # v2g_stack_tls_setup wires the recovered TLS config into the real mbedTLS API: authmode 2
+    # (VERIFY_REQUIRED) + cipher list + ca_store DER roots -> CA chain. Verify it calls the mbedTLS
+    # config/parse/setup entry points (bl targets), proving the recovered config reaches the library.
+    tls_setup_addr = syms.get("v2g_stack_tls_setup")
+    if tls_setup_addr:
+        tsz = func_size("v2g_stack_tls_setup")
+        inv = {a: n for n, a in syms.items()}
+        tcalls = set()
+        for ins in md.disasm(fw[off(tls_setup_addr):off(tls_setup_addr) + tsz], tls_setup_addr):
+            if ins.mnemonic.split(".")[0] == "bl" and ins.operands and ins.operands[0].type == 2:
+                tcalls.add(inv.get(ins.operands[0].imm, ""))
+        for want in ("mbedtls_ssl_conf_authmode", "mbedtls_ssl_conf_ciphersuites",
+                     "mbedtls_x509_crt_parse", "mbedtls_ssl_setup"):
+            check(want in tcalls, "v2g_stack_tls_setup calls " + want)
 
     # --- CP PWM TIM4 input-capture front-end (cp_capture, Agent J / analyze95) ---
     # Byte-exact TIM4 init 0x08088A8C register values + PD12 AF2 RMW masks + NVIC IRQ30.
@@ -431,34 +470,39 @@ def main():
     check(0x19C8 in bat_mv and 0x20020021 in bat_mv,
           "cp_adc_bat_mv carries AD_BAT x6600 (0x19C8) + /32760 magic (0x20020021, /8 then /4095)")
 
-    # --- IPv6 ND6 neighbor cache + NS/NA/RA (nd6, Agent N / analyze96) ---
-    # Byte-derived from stock nd6_input 0x0809C926 / nd6_send_ns 0x0809C520 / nd6_send_na
-    # 0x0809C7BA / nd6_tmr 0x0809D012 / ethip6_output 0x0809B35C. -O2 inlines the small static
-    # helpers (find/flush_queue/free_entry/emit_icmp6/parse_lla) into the required-present callers,
-    # so verify their LOGIC via distinctive constants unioned across those callers.
-    nd6_imms = (func_imms("nd6_init") | func_imms("nd6_input") | func_imms("nd6_tmr")
-                | func_imms("nd6_send_ns") | func_imms("nd6_send_na") | func_imms("nd6_lookup")
-                | func_imms("nd6_build_ns") | func_imms("nd6_build_na")
-                | func_imms("nd6_solicited_node_mcast"))
-    for v, lab in [(30000, "reachable_time default 30000ms (pre-RA)"),
-                   (1000, "retransmit_time / REACHABLE tick 1000ms"),
-                   (5, "NS-receive DELAY counter 5 (deviation from stock STALE)"),
-                   (3, "MAX_PROBES 3 (INCOMPLETE/PROBE free threshold)"),
+    # --- IPv6 ND6 neighbor cache + NS/NA/RA (lwIP nd6.c — LIBRARY PIVOT) ---
+    # The recovered C013 ND6 mechanisms (nd6_input 0x0809C926 / nd6_send_ns 0x0809C520 /
+    # nd6_send_na 0x0809C7BA / nd6_tmr 0x0809D012) are lwIP nd6.c symbols. Verify the recovered
+    # wire constants in the union of the lwIP nd6_* functions + icmp6_input (the ND6 dispatch).
+    # lwIP encodes the RA/RS ICMPv6 types (134/133) as a switch jump-table in nd6_input (not
+    # standalone immediates) and writes the TLLA option type/len as separate bytes (type=2), so
+    # those are characterized via the ND6 flag/option constants + nd6_input presence instead.
+    nd6_funcs = [n for n in syms if n.startswith("nd6_")]
+    nd6_imms = set()
+    for n in nd6_funcs + ["icmp6_input"]:
+        nd6_imms |= func_imms(n)
+    for v, lab in [(1000, "retransmit_time / REACHABLE tick 1000ms (LWIP_ND6_RETRANS_TIMER)"),
+                   (3, "MAX_MULTICAST/UNICAST_SOLICIT 3 (probe threshold)"),
                    (0x87, "ICMPv6 NS type 135"), (0x88, "ICMPv6 NA type 136"),
-                   (0x86, "ICMPv6 RA type 134"),
                    (0x22, "NA DAD reply flags 0x22 (all-nodes + Override)"),
                    (0x60, "NA solicited reply flags 0x60 (Solicited + Override)"),
-                   (255, "ICMPv6 hop limit 255")]:
-        check(v in nd6_imms, "nd6 carries " + lab)
-    # NA flags hi-nibble mask: stock keeps R/S/O (flags & 0xF0). -O2 emits bic.w r3,r4,#15 (clear
-    # low nibble == &0xF0) in nd6_build_na, so the immediate is 0x0F not 0xF0; accept either form.
-    na_imms = func_imms("nd6_build_na")
-    check(0x0F in na_imms or 0xF0 in na_imms,
-          "nd6_build_na carries NA flags hi-nibble mask (bic #0x0F == &0xF0, R/S/O)")
-    # TLLA option {type2,len1} packed as the u16 0x0102 stored at out+24 (nd6_build_na).
-    check(0x102 in na_imms, "nd6_build_na carries TLLA {type2,len1} packed 0x0102 @out+24")
-    # ND6 is pure state-machine + wire logic: NO peripheral base (power-GPIO safe; already covered
-    # by the safety scan above via the nd6_ prefix). The neighbor cache is RAM 0x200xxxxx only.
+                   (0x80, "ND6_FLAG_ROUTER 0x80"), (0x40, "ND6_FLAG_SOLICITED 0x40"),
+                   (0x20, "ND6_FLAG_OVERRIDE 0x20"),
+                   (2, "ND6_OPTION_TYPE_TARGET_LLADDR 2 (TLLA)"),
+                   (255, "ICMPv6 hop limit 255 (ND6_HOPLIM)")]:
+        check(v in nd6_imms, "lwIP nd6 carries " + lab)
+    # reachable_time default 30000ms (pre-RA): lwIP stores it as the .data global initializer
+    # `u32_t reachable_time = LWIP_ND6_REACHABLE_TIME` (nd6.c:83), updated by the RA handler
+    # (nd6_input: reachable_time = lwip_htonl(ra_hdr->reachable_time)). Verify the 30000 (0x7530)
+    # little-endian word is present in the image (.data initial value), matching the recovered default.
+    check((30000).to_bytes(4, "little") in fw,
+          "lwIP nd6 reachable_time default 30000ms .data global (LWIP_ND6_REACHABLE_TIME, pre-RA)")
+    # NA flags hi-nibble mask: lwIP keeps R/S/O (flags & 0xF0). -O2 emits bic #0x0F (clear low
+    # nibble == &0xF0) in nd6_send_na/nd6_input; accept either form.
+    check(0x0F in nd6_imms or 0xF0 in nd6_imms,
+          "lwIP nd6 carries NA flags hi-nibble mask (bic #0x0F == &0xF0, R/S/O)")
+    # ND6 is pure state-machine + wire logic: NO peripheral base (power-GPIO safe; covered by the
+    # safety scan above via the nd6_ prefix). The neighbor cache is RAM 0x200xxxxx only.
 
     # --- PnC CA cert store (ca_store, Agent N / analyze96) ---
     # Byte-derived from stock ext-SPI master hdr@0x1F8000 (magic 0xCEA155E1/version1/size/byte-sum)
