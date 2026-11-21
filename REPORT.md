@@ -1151,6 +1151,84 @@ mbedTLS client API; the recovered config constants map one-to-one onto the libra
 - **Still GATED:** the asserted power-stage drive (contactor/relay GPIO sequencing) stays the last gated layer
   (§5.21/§7); the library network/crypto layers are now present and inert-validated, not gated-to-implement.
 
+#### Library internal mechanisms (`analyze98.py` / `analyze99.py` / `analyze100.py`, byte-exact) — lwIP TCP reliability + mbedTLS TLS handshake/record + crypto/X509
+
+The vendored libraries' internal mechanisms are recovered byte-exact from C013 (the stock firmware IS lwIP 2.1.x
++ mbedTLS 2.x). Three reproducible decoders re-derive every load-bearing constant/offset/call-target and assert
+it: `analyze98.py` (lwIP TCP reliability, **71 checks**), `analyze99.py` (mbedTLS TLS handshake/record, **110
+checks**), `analyze100.py` (mbedTLS crypto/X509, **52 checks**).
+
+- **(TCP reliability — `analyze98.py`)** lwIP 2.1.x raw-API TCP (2.1.2/2.1.3-era fingerprints: `tcp_input_pcb`
+  global, `last_timer` dedup, `TF_CLOSEPEND` deferred close, `refused_data` retry, `tcp_pbuf_prealloc` +
+  `TCP_OVERSIZE`, `connected_cb` in pcb). Chain `tcp_input 0x08099BA6` → `tcp_process 0x080996B8` (tbb state
+  table @`0x0809976C`, bytes `04 7b e9 f1 ef e9 ee ed`) → `tcp_receive 0x08098EDC`. SYN seqno = `snd_lbb` =
+  iss−1; SYN/ACK with ackno == lastack+1 → ESTABLISHED, cwnd = 4380, `connected_cb(arg,pcb,OK)`. Output seg
+  seqno = htonl(snd_lbb) / ackno = htonl(rcv_nxt) / wnd = htons(rcv_ann_wnd), window = min(snd_wnd,cwnd), Nagle.
+  Timers `sys_timeout(250ms)` → `tcp_tmr 0x08091B88`: `tcp_fasttmr 0x08091B10` every call (delayed-ACK /
+  CLOSEPEND / refused retry), `tcp_slowtmr 0x0809155C` every odd call (500 ms, reached via a **16-bit B
+  tail-call** — invisible to a BL/B.W-only xref scan): RTO = (sa+sv/8)<<backoff[nrtx], slow-start / cong-avoid,
+  RTO collapse + fast-recovery, keepalive, ZWP, TIME_WAIT. Close `tcp_close 0x08091CD8`: unread data → RST else
+  `send_fin 0x080925A4` / TIME_WAIT. **pcb 184 B**: state@0x34, rcv_nxt@0x44, rcv_wnd@0x48, rcv_ann_wnd@0x4a,
+  mss@0x52, rto@0x60, lastack@0x64, cwnd@0x68, ssthresh@0x6a, snd_nxt@0x6c, snd_lbb@0x78, snd_wnd@0x7c,
+  snd_buf@0x80, snd_queuelen@0x82, unsent@0x88, unacked@0x8c, ooseq@0x90, refused_data@0x94, cbs sent@0x9c /
+  recv@0xa0 / connected@0xa4 / poll@0xa8 / err@0xac. Config byte-verified: MSS 1460 / WND 11680 / SND_BUF 14600 /
+  SND_QUEUELEN 40 / OVERSIZE 1460 / TMR 250 / SLOW 500 / SYNMAXRTX 3 / MAXRTX 4 / TIME_WAIT 240 ticks (120 s) /
+  eff_send_mss 1 / LISTEN_BACKLOG 0 / timestamps+SACK+wscale OFF / ports 49152–65535. **CORRECTIONS to
+  `analyze94`:** `rcv_nxt`@0x44 (not snd_nxt); `snd_nxt`@0x6c; announce uses `rcv_ann_wnd`@0x4a;
+  `0x08091514` = `tcp_pcb_purge` (`send_fin` = `0x080925A4`); `bound_pcbs`@`0x20000B14` (`0x20000B18` = listen);
+  **no `iss` field** (`snd_lbb`@0x78, global iss@`0x20000B0C`); `ip6_output_if` = `0x0809BC80`
+  (`0x0809BBEC` = `ip6_output_if_src`); `inet_chksum_pseudo` = `0x08098CAC`. Stock lwIP is dual-stack
+  (`ip_addr_t` 20 B, type@+0x10); the adapter uses IPv6 only — the vendored `lwipopts.h` IPv6-only config is a
+  functional subset (V2G is IPv6). [?] exact patch level, `MEMP_NUM_TCP_SEG` pool size, initial iss RAM value.
+- **(TLS handshake/record — `analyze99.py`)** `mbedtls_ssl_handshake 0x0808F78E` (while state != 0x10 { step })
+  → `handshake_step 0x0808F772` (conf+0x74 bit0 endpoint; client → `0x080985A2`, server → −0x7080
+  FEATURE_UNAVAILABLE — server NOT compiled) → `ssl_handshake_client_step 0x080985A2` (TBB @`0x080985C4`, table
+  `0x080985C8` bytes `08 0a 0e 13 17 1b 1f 3d 41 45 49 4d 51 55 59 5c`). **17 states (0…16), HANDSHAKE_OVER =
+  0x10** (deviates from stock 16-state / 0x0F): ClientHello `0x08097B50` → ServerHello `0x08097E9A` → Certificate
+  `0x0808ED06` → ServerKEX `0x080981F8` → CertReq `0x080983DC` → HelloDone (inline) → client-cert state7
+  `0x0808EB8C` (skip, no own cert) → client-kex state8 `0x080989D6` → cert-verify state9 `0x080984A0` → CCS
+  `0x0808EF48` → Finished `0x0808F10C` → parseCCS `0x0808EF62` → parseFin `0x0808F1AC` → flush → wrapup
+  `0x0808F070`. **`derive_keys 0x0808E0B8` runs at the state9 head** (client-kex split 7/8/9 deviates from stock).
+  Record write `ssl_write_real 0x0808E94A` → `ssl_encrypt_buf 0x0808E3DE` → flush `0x0808E8D8`; read
+  `read_record 0x0808EB40` → `fetch_record 0x0808EAA8` → `fetch_input 0x0808E85A` (bio) +
+  `parse_record_header 0x0808FD1E` + `ssl_decrypt_buf 0x0808E598`. 5 B header, CBC explicit-IV, max content
+  0x2000; in_msglen@ssl+0x80, in_left@0x78. Finished verify_data via `safer_memcmp 0x0808FCD2` (12 B). Config:
+  TLS1.2-only (min/max 3.3), EtM+EMS (`orr #0x600`), authmode 2, PRF always P_SHA256 (wrapper `0x0808E00A`
+  `movs r0,#6`), suites {C023,C025} = AES-128-CBC/SHA256 (cipher5/mac6/kex4|0xA), key16/mac32/iv16, curve
+  secp256r1 only (grp3/tls0x17/256b, table `0x080B04E0`). ECDHE `make_public 0x08094AF0` / `calc_secret
+  0x08094B62`. bio `f_send 0x0806043E` → `tcp_write 0x08060B44`, `f_recv 0x08060414`, drive `0x0806058C`
+  (5000 ms), WANT_READ −0x6900 / WRITE −0x6880. **CORRECTIONS:** OVER = 16; derive_keys in cert-verify; the
+  "max_out_content version table" is the **mfl_code** table (`0x0808F71E` indexes RAM `0x20000A6C` by conf
+  bits[8:6]); `ssl+0x40` = transform **struct** ptr (not a fn ptr; encryption is the fixed `ssl_encrypt_buf`);
+  `conf+0x54` = sig_hashes (RAM `0x20000A80`) / `+0x58` = curve_list; ext builders `0x08098712` = sig_algs
+  (0x000D) / `0x080987A8` = supported_groups (0x000A). Version: no string (VERSION_C off); mbedTLS 2.x
+  (≈2.16–2.28) [?] from features; the 17-state enum + derive_keys-in-cert-verify suggest a vendor-modified
+  mbedTLS [?]. The vendored upstream mbedTLS 2.28.9 implements the standard 16-state SM — wire-interoperable
+  (standard TLS 1.2); the C013 internal SM quirks do not change the protocol.
+- **(crypto primitives + X509 — `analyze100.py`)** standard mbedTLS 2.x, canonical-asserted (emulation from the
+  recovered tables reproduces NIST/RFC vectors). AES-128 init `0x0805B078` / setkey_enc `0x0805B098`
+  (128/192/256 → 10/12/14 rounds) / enc `0x0805B2E8` / dec `0x0805B654` / ECB `0x0805B9AC` / CBC `0x0805B9C0`;
+  tables **BE** FSb `0x080AD21C` / RSb `0x080AE31C` / Te0-3 `0x080AD31C…` / Td0-3 `0x080AE41C…` / Rcon
+  `0x080AF41C` (Te0[0] = 0xC66363A5); reproduces NIST SP800-38A. SHA-256(+224) starts `0x0805C0F0`
+  (is224@ctx+0x68) / update `0x0805C9AC` / finish `0x0805CA22`; K1 `0x080AF874` / K2 `0x080AFE6C` (**LE**,
+  K[0] = 0x428A2F98) / H0 `0x0805C514`; "abc" reproduced. HMAC-SHA256 starts `0x0808CB2A` (ipad/opad 0x36/0x5c) /
+  finish `0x0808CBF8`; mac 32; RFC4231 reproduced; uses SHA256-A via md_info `0x080B0638` → wrapper `0x080973E8`.
+  Curve secp256r1 only (`group_load cmp #3`); params **MPI LE-limb**, both canonical sets (set1 p/Gx/Gy/n
+  `0x080AFA80/AA0/AC0/AE0`; set2 `0x080B04F8…`; a = p−3 computed); `ecp_mul 0x0805F78C`; mpi `inv_mod
+  0x0805EF28` / `cmp 0x0805EA04`. ECDSA verify `0x0805FE30` (r/s memcpy + range<n, s⁻¹, BE→LE `REV` hash, u1/u2
+  mod-mul `0x0805FA86`, muladd, x == r). X509 `crt_init 0x0805D6F8` (0x134) / `parse 0x0805D76C` / `parse_der
+  0x0805D700` / `verify 0x0805E7A0` → `verify_with_profile 0x0805E6CE` (profile `0x080AF9B4`); ASN.1
+  `0x0808A71A/740/772`. RNG = CUSTOM STM32 HW-RNG `0x50060800` → ring `0x20022720`; producer `0x0808915C` /
+  f_rng `0x080891E2` — **NOT ctr_drbg**. **CORRECTIONS:** AES tables BE vs SHA256/md_info LE vs curve MPI-LE-limb;
+  md type 3/5/6 = standard MD5/SHA224/SHA256 (the earlier "non-standard" note is retracted). Version: string
+  absent (VERSION_C off); mbedTLS 2.x inferred (error codes −0x2800/−0x4E80/−0x5100, md_info layout,
+  verify_with_profile) [?].
+- **Replication note.** These mechanisms are owned by the vendored lwIP 2.1.4 + mbedTLS 2.28.9 (configured
+  byte-faithfully, `analyze97`); the decoders document the stock implementation as a fidelity reference. The C013
+  deviations from upstream (ND6 NS-receive DELAY/counter 5 [`analyze96`], TLS 17-state enum /
+  derive_keys-in-cert-verify) are internal SM quirks that do not change the wire protocol — the standard
+  libraries interoperate. The asserted power-stage drive stays GATED LAST (§5.21/§7).
+
 ### 5.10 USB log stick — firmware-match proof & device provenance  [C unless noted]
 
 **Files the device writes to the stick** (observed on the user's unit after boot + charging sessions,
@@ -2636,6 +2714,37 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   (recovered GLUE wires into the library APIs); host `test_tls_mbedtls` 21 proves the config end-to-end with the
   real library, full host suite 641/0, `verify_ccs2.py` 201. The asserted power-stage drive stays the last gated layer.
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze97.py'`.
+- `analyze98.py` — **lwIP TCP reliability decoder (§5.9 library-internal-mechanisms addendum)**: re-derives the
+  stock lwIP 2.1.x raw-API TCP byte-exact — `tcp_input 0x08099BA6` → `tcp_process 0x080996B8` (tbb state table
+  @`0x0809976C`) → `tcp_receive 0x08098EDC`; SYN/ACK ackno == lastack+1 → ESTABLISHED cwnd = 4380;
+  `tcp_tmr 0x08091B88` fasttmr `0x08091B10` (250 ms) / slowtmr `0x0809155C` (500 ms, via a 16-bit B tail-call);
+  184 B pcb layout (state@0x34 / rcv_nxt@0x44 / snd_nxt@0x6c / snd_lbb@0x78 / cwnd@0x68 / rcv_ann_wnd@0x4a …);
+  config MSS1460 / WND11680 / SND_BUF14600 / QUEUELEN40 / TMR250 / SYNMAXRTX3 / MAXRTX4. **CORRECTS `analyze94`:**
+  rcv_nxt@0x44 (not snd_nxt); snd_nxt@0x6c; `0x08091514` = tcp_pcb_purge (send_fin = `0x080925A4`);
+  bound_pcbs@`0x20000B14`; no `iss` field (global iss@`0x20000B0C`); ip6_output_if = `0x0809BC80`;
+  inet_chksum_pseudo = `0x08098CAC`. **71 checks**.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze98.py'`.
+- `analyze99.py` — **mbedTLS TLS handshake/record decoder (§5.9 library-internal-mechanisms addendum)**:
+  `ssl_handshake 0x0808F78E` (while state != 0x10) → `handshake_step 0x0808F772` (client → `0x080985A2`,
+  server → −0x7080 not compiled) → client_step TBB @`0x080985C4`; **17 states HANDSHAKE_OVER = 0x10** (deviates
+  from stock 16 / 0x0F), `derive_keys 0x0808E0B8` at the state9 head (client-kex split 7/8/9); record
+  write_real `0x0808E94A` / encrypt_buf `0x0808E3DE` / flush `0x0808E8D8`, read_record `0x0808EB40` /
+  fetch_record `0x0808EAA8` / parse_hdr `0x0808FD1E` / decrypt_buf `0x0808E598`; `safer_memcmp 0x0808FCD2` (12 B);
+  config TLS1.2 / EtM+EMS (`orr #0x600`) / authmode 2 / PRF P_SHA256 / suites {C023,C025} / secp256r1; bio
+  f_send `0x0806043E` → tcp_write `0x08060B44`. **CORRECTIONS:** mfl_code table `0x0808F71E` (not a version
+  table); ssl+0x40 = transform **struct** ptr; conf+0x54 = sig_hashes / +0x58 = curve_list; ext sig_algs
+  `0x08098712` (0x000D) / supported_groups `0x080987A8` (0x000A). **110 checks**.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze99.py'`.
+- `analyze100.py` — **mbedTLS crypto/X509 decoder (§5.9 library-internal-mechanisms addendum)**: standard
+  mbedTLS 2.x canonical, emulation from the recovered tables reproduces NIST/RFC vectors — AES-128 setkey_enc
+  `0x0805B098` / enc `0x0805B2E8` / dec `0x0805B654` / CBC `0x0805B9C0`, **BE** tables FSb `0x080AD21C` / Te0-3
+  `0x080AD31C` (Te0[0] = 0xC66363A5); SHA256(+224) `0x0805C0F0/9AC/A22` **LE** K1 `0x080AF874`; HMAC
+  `0x0808CB2A/CBF8` RFC4231; secp256r1 **MPI LE-limb** (p/Gx/Gy/n `0x080AFA80/AA0/AC0/AE0`, a = p−3),
+  `ecp_mul 0x0805F78C`, ECDSA verify `0x0805FE30`; X509 crt_init `0x0805D6F8` / parse `0x0805D76C` / verify
+  `0x0805E7A0` → verify_with_profile `0x0805E6CE`; RNG = HW-RNG `0x50060800` → ring `0x20022720` **NOT
+  ctr_drbg**. **CORRECTIONS:** AES BE vs SHA256/md_info LE vs curve MPI-LE-limb; md type 3/5/6 = standard
+  MD5/SHA224/SHA256 (the "non-standard" note is retracted). **52 checks**.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze100.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
