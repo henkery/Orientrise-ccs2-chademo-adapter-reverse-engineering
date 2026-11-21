@@ -94,6 +94,7 @@ void ccs2_step(uint32_t tick)
             v2g_net_start_tcp(sdp_get()->secc_ip, sdp_get()->secc_port,
                               sdp_get()->secc_security, tick * 10u);
             ccs2_session_start();
+            din_session_set_evccid(qca7005_mac(), 6u);   /* EVCCID = unit MAC (SessionSetupReq) */
             din_session_start(tick * 10u);   /* autonomous SM: SessionSetupReq -> await Res (ms) */
         }
         break;
@@ -127,21 +128,28 @@ void ccs2_step(uint32_t tick)
 }
 
 /* Gated transport entry: a decoded DIN EXI Res frame (8-byte V2GTP header + leading 0x80 + 7-bit
- * root event + body) -> the autonomous session RX transition engine. The live UDP/TCP/IPv6+TLS
- * reassembly that produces these frames is NOT recovered (gated); this is the bench-injection /
- * future-transport hook. Returns the din_session_rx result (EXI_OK / negative error). */
+ * root 0x4D + DIN header + 6-bit subev + body) -> the autonomous session RX transition engine. The
+ * DIN document framing (analyze101/102) is stripped here: exi_decode_header recovers the single
+ * root 0x4D, exi_din_decode_doc_start consumes the DIN header (SessionID) + the 6-bit message
+ * subev, leaving the body for din_session_rx. The live UDP/TCP/IPv6+TLS reassembly that produces
+ * these frames is NOT recovered (gated); this is the bench-injection / future-transport hook.
+ * Returns the din_session_rx result (EXI_OK / negative error). */
 int ccs2_rx_exi(const uint8_t *frame, uint16_t len, uint32_t now_ms)
 {
     if (len <= EXI_V2GTP_HDR_LEN) return EXI_ERR_HEADER;
     exi_stream_t s;
     exi_decode_init(&s, frame + EXI_V2GTP_HDR_LEN, len - EXI_V2GTP_HDR_LEN);
-    uint8_t ev;
-    int r = exi_decode_header(&s, &ev);
+    uint8_t root;
+    int r = exi_decode_header(&s, &root);          /* leading 0x80 + 7-bit root event */
     if (r) return r;
-    /* body = remaining stream bytes after the leading 0x80 + 7-bit event (2 bytes consumed). */
+    if (root != EXI_DIN_ROOT) return EXI_ERR_EVENT;   /* DIN document root 0x4D only */
+    uint8_t subev, sid[DIN_SID_MAX]; uint16_t sid_len;
+    r = exi_din_decode_doc_start(&s, &subev, sid, &sid_len);   /* DIN header + 6-bit subev */
+    if (r) return r;
+    /* body = remaining stream bytes after the framing (root + DIN header + subev consumed). */
     const uint8_t *body = frame + EXI_V2GTP_HDR_LEN + s.pos;
     uint16_t body_len = (uint16_t)(len - EXI_V2GTP_HDR_LEN - s.pos);
-    return din_session_rx(ev, body, body_len, now_ms);
+    return din_session_rx(subev, body, body_len, now_ms);
 }
 
 void ccs2_rx(const uint8_t *frame, uint16_t len)

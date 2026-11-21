@@ -277,3 +277,70 @@ int exi_encode_header(exi_stream_t *s, uint8_t ev)
     if (r) return r;
     return exi_write_bits(s, 7, ev);
 }
+
+/* Inter-field 1-bit event-code gate (analyze103): readBits(1); a set gate shunts to `err`. */
+int exi_read_gate(exi_stream_t *s, int err)
+{
+    uint32_t g;
+    int r = exi_read_bits(s, 1, &g);
+    if (r) return r;
+    return g ? err : EXI_OK;
+}
+int exi_write_gate(exi_stream_t *s) { return exi_write_bits(s, 1, 0); }
+
+/* DIN document framing (analyze101/102). Encode the ev4d prefix after the leading 0x80 + 7-bit
+ * root 0x4D: pre-gate + DIN header (gid 0x6c SessionID + gid 0x6d choice 2) + post-gate + 6-bit
+ * message choice. The DIN header SessionID uses the varlen-length + octet-string primitives
+ * (0x0809392A + 0x08093B5E == exi_write_octet's u16-varlen length + octets for len < 128). */
+int exi_din_encode_doc_start(exi_stream_t *s, uint8_t choice, const uint8_t *sid, uint16_t sid_len)
+{
+    int r = exi_write_gate(s);                 /* ev4d pre-header gate (0x08070700) */
+    if (r) return r;
+    r = exi_write_gate(s);                     /* gid 0x6c g1 (0x0806F924) */
+    if (r) return r;
+    r = exi_write_gate(s);                     /* gid 0x6c g2 (0x0806F930) */
+    if (r) return r;
+    r = exi_write_octet(s, sid, sid_len);      /* varlen-len + SessionID octets (0x6c) */
+    if (r) return r;
+    r = exi_write_gate(s);                     /* gid 0x6c g3 (0x0806F950) */
+    if (r) return r;
+    r = exi_write_bits(s, 2, 2);               /* gid 0x6d choice 2 (DIN; ISO gates clear) */
+    if (r) return r;
+    r = exi_write_gate(s);                     /* ev4d post-header gate (0x08070718) */
+    if (r) return r;
+    return exi_write_bits(s, 6, choice);       /* ev03 dispatcher message choice (0x0806D6D2) */
+}
+
+/* ev4d trailing EE gate (0x08070732), written after the message body. */
+int exi_din_encode_doc_end(exi_stream_t *s) { return exi_write_gate(s); }
+
+/* Decode mirror of exi_din_encode_doc_start: pre-gate + DIN header (returns SessionID) + post-gate
+ * + 6-bit subev. The DIN header gid 0x6d choice MUST be 2 (ISO-only extensions absent); the body
+ * dispatcher gate is cmp #0x24 (36). Leaves the stream at the body start. */
+int exi_din_decode_doc_start(exi_stream_t *s, uint8_t *subev, uint8_t *sid, uint16_t *sid_len)
+{
+    int r = exi_read_gate(s, EXI_ERR_GATE);    /* ev4d pre-header gate (0x0806A354) */
+    if (r) return r;
+    r = exi_read_gate(s, EXI_ERR_GATE);        /* gid 0x6c g1 */
+    if (r) return r;
+    r = exi_read_gate(s, EXI_ERR_GATE);        /* gid 0x6c g2 */
+    if (r) return r;
+    uint16_t n;
+    r = exi_read_octet(s, sid, DIN_SID_MAX, &n);  /* varlen-len + SessionID octets (0x6c) */
+    if (r) return r;
+    *sid_len = n;
+    r = exi_read_gate(s, EXI_ERR_GATE);        /* gid 0x6c g3 */
+    if (r) return r;
+    uint32_t hd;
+    r = exi_read_bits(s, 2, &hd);              /* gid 0x6d choice */
+    if (r) return r;
+    if (hd != 2u) return EXI_ERR_EVENT;        /* DIN expects choice 2 (no ISO header extension) */
+    r = exi_read_gate(s, EXI_ERR_GATE);        /* ev4d post-header gate (0x0806A372) */
+    if (r) return r;
+    uint32_t sub;
+    r = exi_read_bits(s, 6, &sub);             /* body dispatcher subev (0x08066DEA) */
+    if (r) return r;
+    if (sub >= DIN_BODY_SUBEV_COUNT) return EXI_ERR_EVENT;   /* cmp #0x24 */
+    *subev = (uint8_t)sub;
+    return EXI_OK;
+}

@@ -43,6 +43,33 @@ static uint16_t mk_evse_status(uint8_t *buf, uint8_t present, uint8_t iso,
     return (uint16_t)exi_encode_finish(&s);
 }
 
+/* Stream-based DC_EVSEStatus writer (embed mid-body for the B2 Res round-trips). */
+static void wr_evse_status(exi_stream_t *s, uint8_t iso, uint8_t code, uint8_t notif)
+{
+    exi_write_bits(s, 2, 0);                    /* E0 present */
+    exi_write_bits(s, 1, 0); exi_write_bits(s, 2, iso); exi_write_bits(s, 1, 0);
+    exi_write_bits(s, 1, 0); exi_write_bits(s, 1, 0);
+    exi_write_bits(s, 4, code);
+    exi_write_bits(s, 1, 0); exi_write_bits(s, 1, 0); exi_write_bits(s, 1, 0);
+    exi_write_u32(s, 0);
+    exi_write_bits(s, 1, 0); exi_write_bits(s, 1, 0); exi_write_bits(s, 1, 0);
+    exi_write_bits(s, 2, notif);
+    exi_write_bits(s, 1, 0); exi_write_bits(s, 1, 0);
+}
+static void wr_pvt(exi_stream_t *s, int8_t mult, uint8_t unit, uint16_t value)
+{
+    exi_pvt_t p = { .mult = mult, .unit = unit, .unit_present = 1, .value = value };
+    exi_write_pvt(s, &p);
+}
+/* Strip a Req document's framing -> root check + DIN header + 6-bit choice. */
+static int req_choice(const uint8_t *buf, uint16_t len, uint8_t *choice, uint8_t *sid, uint16_t *sid_len)
+{
+    exi_stream_t s; exi_decode_init(&s, buf + EXI_V2GTP_HDR_LEN, len - EXI_V2GTP_HDR_LEN);
+    uint8_t root; int r = exi_decode_header(&s, &root); if (r) return r;
+    if (root != EXI_DIN_ROOT) return EXI_ERR_EVENT;
+    return exi_din_decode_doc_start(&s, choice, sid, sid_len);
+}
+
 int main(void)
 {
     /* --- pow10 converter table (0x0804E786) --- */
@@ -159,6 +186,130 @@ int main(void)
     exi_encode_finish(&ss);
     exi_decode_init(&ss, sb, 1);
     CHECK(din_dc_evse_status_decode(&ss, &st) == EXI_ERR_GATE, "evsestatus G1!=0 -> -133");
+
+    /* --- B2: DC_EVStatus ev17 encoder known vector (EVReady=1, soc=0x46 -> 0x28 0x02 0x30) --- */
+    uint8_t evb[8];
+    exi_encode_init(&ss, evb, 8, 0);
+    CHECK(din_dc_ev_status_encode(&ss, 1, 0x46) == EXI_OK, "DC_EVStatus encode OK");
+    uint32_t evn = exi_encode_finish(&ss);
+    CHECK(evn == 3 && evb[0] == 0x28 && evb[1] == 0x02 && evb[2] == 0x30,
+          "DC_EVStatus wire 0x28 0x02 0x30 (23-bit default grammar)");
+
+    /* --- B2: all 9 Req encoders produce a valid DIN document (root 0x4D + choice + SID) --- */
+    din70121_init();
+    din_meas_t *mm = din70121_meas_mut();
+    din_set_ev_target(mm, 150, 420, (3u) | (3u << 3));
+    mm->evse_max_current = 200; mm->evse_max_current_f = 3;
+    mm->evse_max_voltage = 500; mm->evse_max_voltage_f = 3;
+    uint8_t rb[256]; uint8_t sid[DIN_SID_MAX]; uint16_t sid_len; uint8_t choice;
+    uint8_t evccid[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
+    uint8_t sid1[1] = { 0x00 };
+    int rn;
+    struct { const char *name; uint8_t want; } reqs[] = {
+        { "SessionSetup", DIN_REQ_SESSIONSETUP }, { "ServiceDiscovery", DIN_REQ_SERVICEDISCOVERY },
+        { "CPD", DIN_REQ_CPD }, { "CableCheck", DIN_REQ_CABLECHECK },
+        { "PreCharge", DIN_REQ_PRECHARGE }, { "PowerDelivery", DIN_REQ_POWERDELIVERY },
+        { "CurrentDemand", DIN_REQ_CURRENTDEMAND }, { "Welding", DIN_REQ_WELDING },
+        { "SessionStop", DIN_REQ_SESSIONSTOP },
+    };
+    for (unsigned i = 0; i < sizeof reqs / sizeof reqs[0]; i++) {
+        switch (reqs[i].want) {
+        case DIN_REQ_SESSIONSETUP:
+            rn = din_sessionsetup_req_encode(rb, sizeof rb, sid1, 1, evccid, 6); break;
+        case DIN_REQ_SERVICEDISCOVERY:
+            rn = din_servicediscovery_req_encode(rb, sizeof rb, sid1, 1); break;
+        case DIN_REQ_CPD:
+            rn = din_cpd_req_encode(rb, sizeof rb, sid1, 1, mm, 1, 70); break;
+        case DIN_REQ_CABLECHECK:
+            rn = din_cablecheck_req_encode(rb, sizeof rb, sid1, 1, 1, 70); break;
+        case DIN_REQ_PRECHARGE:
+            rn = din_precharge_req_encode(rb, sizeof rb, sid1, 1, mm, 1, 70); break;
+        case DIN_REQ_POWERDELIVERY:
+            rn = din_powerdelivery_req_encode(rb, sizeof rb, sid1, 1, 0); break;
+        case DIN_REQ_CURRENTDEMAND:
+            rn = din_cd_req_encode_exi(mm, rb, sizeof rb, sid1, 1); break;
+        case DIN_REQ_WELDING:
+            rn = din_welding_req_encode(rb, sizeof rb, sid1, 1, 1, 70); break;
+        default:
+            rn = din_sessionstop_req_encode(rb, sizeof rb, sid1, 1); break;
+        }
+        char msg[80];
+        snprintf(msg, sizeof msg, "%sReq encode len>0", reqs[i].name);
+        CHECK(rn > (int)EXI_V2GTP_HDR_LEN, msg);
+        int cr = req_choice(rb, (uint16_t)rn, &choice, sid, &sid_len);
+        snprintf(msg, sizeof msg, "%sReq framing root 0x4D + choice 0x%02X + SID", reqs[i].name, reqs[i].want);
+        CHECK(cr == EXI_OK && choice == reqs[i].want && sid_len == 1 && sid[0] == 0x00, msg);
+    }
+
+    /* --- B2: SessionSetupRes decoder (gate gate RC gate EVSEID + opt timestamp) --- */
+    exi_encode_init(&ss, sb, 64, 0);
+    exi_write_gate(&ss); exi_write_gate(&ss);
+    exi_write_bits(&ss, 5, 1);                  /* RC = OK_NewSessionEstablished */
+    exi_write_gate(&ss);
+    uint8_t id[3] = { 0x41, 0x42, 0x43 };
+    exi_write_octet(&ss, id, 3);                /* EVSEID */
+    exi_write_bits(&ss, 2, 1);                  /* timestamp absent */
+    sn = (uint16_t)exi_encode_finish(&ss);
+    uint8_t rc, evseid[32]; uint16_t evseid_len;
+    CHECK(din_sessionsetup_res_decode_exi(sb, sn, &rc, evseid, &evseid_len) == EXI_OK,
+          "SessionSetupRes decode OK");
+    CHECK(rc == 1 && evseid_len == 3 && evseid[0] == 0x41 && evseid[2] == 0x43,
+          "SessionSetupRes RC=1 + EVSEID ABC");
+
+    /* --- B2: ServiceDiscoveryRes decoder (RC first) --- */
+    exi_encode_init(&ss, sb, 64, 0); exi_write_bits(&ss, 5, 0);
+    sn = (uint16_t)exi_encode_finish(&ss);
+    CHECK(din_servicediscovery_res_decode_exi(sb, sn, &rc) == EXI_OK && rc == 0,
+          "ServiceDiscoveryRes RC=0");
+
+    /* --- B2: CPDRes decoder (RC + processing + choices + DCparam ev15) --- */
+    exi_encode_init(&ss, sb, 128, 0);
+    exi_write_bits(&ss, 5, 0);                  /* RC */
+    exi_write_bits(&ss, 1, 0);                  /* processing finished */
+    exi_write_bits(&ss, 2, 1);                  /* sched choice DIN=1 */
+    exi_write_bits(&ss, 2, 1);                  /* AC/DC choice DIN=1 -> DCparam */
+    wr_evse_status(&ss, 1, 0, 0);               /* DC_EVSEStatus */
+    wr_pvt(&ss, 0, 1, 200);                     /* maxCurrent */
+    exi_write_bits(&ss, 2, 1);                  /* maxPower absent */
+    wr_pvt(&ss, 0, 3, 500);                     /* maxVoltage */
+    wr_pvt(&ss, 0, 1, 0);                       /* minCurrent */
+    wr_pvt(&ss, 0, 3, 0);                       /* minVoltage */
+    exi_write_bits(&ss, 2, 1);                  /* opt absent */
+    wr_pvt(&ss, 0, 1, 250);                     /* peak */
+    exi_write_bits(&ss, 2, 1);                  /* energy absent */
+    sn = (uint16_t)exi_encode_finish(&ss);
+    uint8_t proc; din_dc_charge_param_t param;
+    CHECK(din_cpd_res_decode_exi(sb, sn, &rc, &proc, &param) == EXI_OK, "CPDRes decode OK");
+    CHECK(rc == 0 && proc == 0, "CPDRes RC=0 processing finished");
+    CHECK(param.max_current.value == 200 && param.max_voltage.value == 500 &&
+          param.peak_current.value == 250 && param.max_power_present == 0 &&
+          param.energy_present == 0, "CPDRes DCparam limits (maxI200/maxV500/peak250, opt absent)");
+    CHECK(param.status.isolation_status == 1, "CPDRes DCparam DC_EVSEStatus isolation valid");
+
+    /* --- B2: PowerDeliveryRes decoder (gate gate RC gate choice=1 DC_EVSEStatus gate) --- */
+    exi_encode_init(&ss, sb, 64, 0);
+    exi_write_gate(&ss); exi_write_gate(&ss);
+    exi_write_bits(&ss, 5, 0); exi_write_gate(&ss);
+    exi_write_bits(&ss, 2, 1);                  /* EVSEStatus choice DIN=1 */
+    wr_evse_status(&ss, 1, 2, 0);
+    exi_write_gate(&ss);
+    sn = (uint16_t)exi_encode_finish(&ss);
+    CHECK(din_powerdelivery_res_decode_exi(sb, sn, &rc, &st) == EXI_OK && rc == 0 &&
+          st.isolation_status == 1 && st.status_code == 2, "PowerDeliveryRes RC=0 + DC_EVSEStatus");
+
+    /* --- B2: WeldingDetectionRes decoder (gate gate RC gate gate DC_EVSEStatus gate PVT gate) --- */
+    exi_encode_init(&ss, sb, 64, 0);
+    exi_write_gate(&ss); exi_write_gate(&ss);
+    exi_write_bits(&ss, 5, 0); exi_write_gate(&ss); exi_write_gate(&ss);
+    wr_evse_status(&ss, 1, 0, 0);
+    exi_write_gate(&ss);
+    wr_pvt(&ss, 0, 3, 410);                     /* EVSEPresentVoltage */
+    exi_write_gate(&ss);
+    sn = (uint16_t)exi_encode_finish(&ss);
+    din_meas_t wm; memset(&wm, 0, sizeof wm);
+    CHECK(din_welding_res_decode_exi(sb, sn, &wm, &rc, &st) == EXI_OK && rc == 0 &&
+          wm.evse_present_voltage == 410 && wm.evse_present_voltage_f == 3,
+          "WeldingRes RC=0 + presentV 410 f3");
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

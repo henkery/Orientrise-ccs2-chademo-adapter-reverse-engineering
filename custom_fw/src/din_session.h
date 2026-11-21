@@ -20,6 +20,7 @@
 #ifndef DIN_SESSION_H
 #define DIN_SESSION_H
 #include <stdint.h>
+#include "exi.h"
 
 /* Session state enum 0..13 (state = which Res is awaited; F §state table). */
 typedef enum {
@@ -94,7 +95,16 @@ typedef struct {
     uint16_t phase_status;      /* EVSE charge-phase meas+0x3D1E: 3=CableCheck/4=PreCharge/7=error */
     uint8_t  session_active;
     uint8_t  charging_complete;
-    /* last produced Req image (inert; SWD-readable). */
+    /* B2 DIN document framing inputs (analyze101/102). sid = DIN header SessionID (gid 0x6c);
+     * the inert replica uses a 1-byte 0x00 placeholder (SessionSetupReq builder default). evccid =
+     * EVCCID hexBinary (unit MAC, 6 bytes) emitted by SessionSetupReq. charge_progress selects the
+     * PowerDelivery ChargeProgress bool (0=Start state 9 / 1=Stop state 11). */
+    uint8_t  sid[DIN_SID_MAX];
+    uint16_t sid_len;
+    uint8_t  evccid[6];
+    uint16_t evccid_len;
+    uint8_t  charge_progress;
+    /* last produced Req image (inert; SWD-readable). req_ev = the DIN_REQ_* message choice. */
     uint8_t  req_ev;
     uint16_t req_len;
 } din_session_t;
@@ -102,6 +112,8 @@ typedef struct {
 void din_session_init(void);
 void din_session_set_tx(din_session_tx_fn fn);
 void din_session_set_fp(uint16_t fp);          /* parameterize the runtime-negotiated divisor */
+/* Set the EVCCID hexBinary (unit MAC) emitted by SessionSetupReq; clamped to 6 bytes. */
+void din_session_set_evccid(const uint8_t *id, uint16_t len);
 /* Begin a session (SDP done): state 1 -> SessionSetupReq -> state 2. */
 void din_session_start(uint32_t now_ms);
 /* Poll task 0x08038192: timer/retry/re-send engine (never advances on success). Call each tick. */

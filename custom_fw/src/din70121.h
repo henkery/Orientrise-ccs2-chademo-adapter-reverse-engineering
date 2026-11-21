@@ -164,13 +164,89 @@ int din_cablecheck_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *re
 int din_precharge_res_decode_exi(const uint8_t *body, uint16_t len, din_meas_t *m,
                                  uint8_t *response_code, din_dc_evse_status_t *status);
 
-/* SessionStopRes grammar decoder 0x08063C04 (ev0x1e): EMPTY message (1-bit choice 0=empty/1=err). */
+/* SessionStopRes grammar decoder ev43 0x08062A7E (subev 0x20): EMPTY message (1-bit choice
+ * 0=empty/valid, 1=err -110). CORRECTED by analyze102 (was mis-mapped to ev1e 0x08063C04). */
 int din_sessionstop_res_decode_exi(const uint8_t *body, uint16_t len);
 
-/* CurrentDemandReq grammar encoder (ev for the Req production; D application field map 0x0802C2CE
- * + exi primitives): framing (leading 0x80 + 7-bit event) + DC_EVStatus + EVTargetCurrent/Voltage
- * PVTs + EVMaximum* limits. Writes into buf (cap bytes, 8-byte V2GTP header reserved at [0..7]);
- * returns total encoded length (header + body) or negative EXI error. INERT: image only, send gated. */
-int din_cd_req_encode_exi(din_meas_t *m, uint8_t *buf, uint16_t cap, uint8_t req_ev);
+/* ---- B2 DIN document message codec (analyze101/102/103) ----
+ * All messages ride the DIN document framing (exi.h: root 0x4D + header + 6-bit choice/subev).
+ * Req encoders write the FULL document (8-byte V2GTP reserved at [0..7] + leading 0x80 + root
+ * 0x4D + DIN header + 6-bit choice + body + EE gate) into buf[cap], returning total length or a
+ * negative EXI error. Res decoders operate on the BODY (after the framing, which ccs2_rx_exi
+ * strips via exi_decode_header + exi_din_decode_doc_start). INERT: images only; live send gated;
+ * no power GPIO. `sid`/`sid_len` = the DIN header SessionID (gid 0x6c). */
+
+/* DC_EVStatus (ev17 0x0806A936) encoder — the EV->EVSE status sub-production shared by CableCheck/
+ * PreCharge/CurrentDemand/Welding/CPD Req. Recovered default grammar (builder presence flags
+ * [body+8]/[body+0x10]=0): gate0 gate0 EVReady(bool) gate0 + choice(2,2) gate0 4-bit(0) gate0 +
+ * gate0 gate0 EVRESSSOC(7-bit) gate0 + terminal gate0 (23 bits). `soc` = 7-bit percent (the stock
+ * CableCheck builder default is 0x46 = 70). Writes the body sub-stream (advances s). */
+int din_dc_ev_status_encode(exi_stream_t *s, uint8_t ev_ready, uint8_t soc);
+
+/* CPD Res DC_EVSEChargeParameter (ev15 0x080650D2) — the EVSE DC limits (analyze102). Wire order:
+ * DC_EVSEStatus@+0, maxCurrent PVT@+0xC (req), maxPower PVT@+0x14 (opt), maxVoltage@+0x20 (req),
+ * minCurrent@+0x28 (req), minVoltage@+0x30 (req), opt PVT@+0x38 (opt), PVT@+0x44 (req), energy
+ * PVT@+0x4C (opt). Optional fields use a 2-bit choice (0=present+flag, 1=skip). */
+typedef struct {
+    din_dc_evse_status_t status;   /* DC_EVSEStatus @+0                          */
+    exi_pvt_t max_current;         /* EVSEMaximumCurrentLimit @+0xC (required)   */
+    exi_pvt_t max_power;           /* EVSEMaximumPowerLimit @+0x14 (optional)    */
+    uint8_t   max_power_present;
+    exi_pvt_t max_voltage;         /* EVSEMaximumVoltageLimit @+0x20 (required)  */
+    exi_pvt_t min_current;         /* EVSEMinimumCurrentLimit @+0x28 (required)  */
+    exi_pvt_t min_voltage;         /* EVSEMinimumVoltageLimit @+0x30 (required)  */
+    exi_pvt_t opt_limit;           /* optional PVT @+0x38                        */
+    uint8_t   opt_limit_present;
+    exi_pvt_t peak_current;        /* PVT @+0x44 (required)                      */
+    exi_pvt_t energy;              /* EVSEMaximumEnergyLimit? @+0x4C (optional)  */
+    uint8_t   energy_present;
+} din_dc_charge_param_t;
+int din_dc_charge_param_decode(exi_stream_t *s, din_dc_charge_param_t *out);
+
+/* Req encoders (full DIN document; choice per exi.h DIN_REQ_*). */
+int din_sessionsetup_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
+                                const uint8_t *evccid, uint16_t evccid_len);
+int din_servicediscovery_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len);
+int din_cpd_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
+                       const din_meas_t *m, uint8_t ev_ready, uint8_t soc);
+int din_cablecheck_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
+                              uint8_t ev_ready, uint8_t soc);
+int din_precharge_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
+                             const din_meas_t *m, uint8_t ev_ready, uint8_t soc);
+int din_powerdelivery_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
+                                 uint8_t charge_progress);
+int din_welding_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
+                           uint8_t ev_ready, uint8_t soc);
+int din_sessionstop_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len);
+
+/* CurrentDemandReq grammar encoder (ev11 0x0806BDDC, full field list analyze101 Group I): DIN
+ * framing (choice 0x0D) + DC_EVStatus + EVTargetCurrent PVT@0x14 + optional EVMaximumPower/Current/
+ * VoltageLimit PVTs (gates 0x24/0x30/0x3C) + BulkChargingComplete@0x40 (gate 0x44) + ChargingComplete
+ * @0x48 + optional RemainingTimeToFullSOC/ToBulkSOC (gates 0x54/0x60) + EVTargetVoltage PVT@0x64.
+ * Writes the full document into buf[cap] (8-byte V2GTP reserved); returns length or EXI error. */
+int din_cd_req_encode_exi(din_meas_t *m, uint8_t *buf, uint16_t cap,
+                          const uint8_t *sid, uint16_t sid_len);
+
+/* Res decoders (BODY after framing; leading 1-bit gates per analyze102). */
+/* SessionSetupRes ev41 0x08062B1E (subev 0x1E): gate gate RC(5) gate EVSEID(len varlen + octets,
+ * clamp 32) + optional EVSETimeStamp (2-bit choice; 8-byte fixed). */
+int din_sessionsetup_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *response_code,
+                                    uint8_t *evseid, uint16_t *evseid_len);
+/* ServiceDiscoveryRes ev3d 0x08063370 (subev 0x1A): RC(5) + ChargeServiceList + ServiceList +
+ * optional EnergyTransferModeList. The replica extracts RC (session advancement) and structurally
+ * consumes the lists [? full list sub-grammar partial]; the raw body is preserved by the writer. */
+int din_servicediscovery_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *response_code);
+/* CPDRes ev0c 0x08065BFC (subev 0x08): RC(5) + processing flag(1)@body+1 + sched-choice(2) +
+ * AC/DC-param choice(2); DIN -> DCparam ev15. `processing` = body[1] (1=ongoing). */
+int din_cpd_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *response_code,
+                           uint8_t *processing, din_dc_charge_param_t *param);
+/* PowerDeliveryRes ev2e 0x08063DBA (subev 0x14): gate gate RC(5) gate EVSEStatus-choice(2);
+ * DIN choice 1 -> DC_EVSEStatus@+0x20. LINEAR (no list). */
+int din_powerdelivery_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *response_code,
+                                     din_dc_evse_status_t *status);
+/* WeldingDetectionRes ev4f 0x08062754 (subev 0x22): gate gate RC(5) gate DC_EVSEStatus@+4 gate
+ * EVSEPresentVoltage PVT@+0x10 -> meas.evse_present_voltage (+factor). */
+int din_welding_res_decode_exi(const uint8_t *body, uint16_t len, din_meas_t *m,
+                               uint8_t *response_code, din_dc_evse_status_t *status);
 
 #endif /* DIN70121_H */

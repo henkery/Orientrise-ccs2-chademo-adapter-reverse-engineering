@@ -30,17 +30,45 @@
 #define EXI_ERR_GATE     (-133)  /* inter-field 1-bit event-code gate != 0 (mvn #0x84)   */
 #define EXI_ERR_GRAMMAR  (-500)  /* grammar-state gate error (0xFFFFFE0C)                */
 
-/* Root events (7-bit) for the DIN DC messages — CORRECTED ground-truth numbering (E §1 was
- * +2-shifted in the b-thunk region; rebuilt from the actual tbb path, rebuild_ev_map.py). */
-#define EXI_EV_CABLECHECK_RES        0x05u
-#define EXI_EV_CURRENTDEMAND_RES     0x12u
-#define EXI_EV_DC_EVSE_CHARGE_PARAM  0x15u
-#define EXI_EV_DC_EVSE_STATUS        0x16u
-#define EXI_EV_CPD_RES_WRAPPER       0x1Du
-#define EXI_EV_SESSIONSTOP           0x1Eu
-#define EXI_EV_PRECHARGE_RES         0x30u
-#define EXI_EV_WELDING_RES           0x4Fu
-#define EXI_EV_COUNT                 81u    /* root gate cmp #0x51 */
+/* DIN document model (analyze101/102 — CORRECTS the earlier per-message-root model). ALL DIN
+ * messages (Req AND Res) ride a SINGLE 7-bit root event 0x4D (ev4d), followed by a DIN header
+ * (gid 0x6c SessionID + gid 0x6d) and a 6-bit message choice. The body dispatcher 0x08066DD0
+ * (readBits6, cmp #0x24 = 36, tbb 0x08066E06) interleaves the Req and Res productions by their
+ * 6-bit code. The former EXI_EV_* "root events" were the production grammar-ids (ev05/ev12/…),
+ * NOT wire root events — the wire root is always 0x4D. Encode chain: encoder root 0x0806FA9C
+ * (W40 bit1 DIN gate) -> writeBits(7,0x4D) -> ev4d 0x080706F6 (pre-gate + header-sub 0x0806F8FC
+ * + post-gate + ev03 dispatcher 0x0806D6D2 writeBits(6,choice) + EE gate). Decode mirror: root
+ * decoder 0x0806997A (readBits7, cmp#0x51) -> ev4d 0x0806A33E -> Header 0x0806978A -> body
+ * dispatcher 0x08066DD0 (readBits6 subev) -> production. */
+#define EXI_DIN_ROOT                 0x4Du  /* 7-bit DIN document root event (ev4d)            */
+#define EXI_EV_COUNT                 81u    /* root gate cmp #0x51                             */
+#define DIN_BODY_SUBEV_COUNT         36u    /* body dispatcher gate cmp #0x24                  */
+
+/* Req message choices (6-bit; encoder ev03 dispatcher 0x0806D6D2, analyze101 Group E). */
+#define DIN_REQ_CABLECHECK           0x01u  /* ev04 0x0806D698 */
+#define DIN_REQ_CPD                  0x07u  /* ev0b 0x0806CEF0 */
+#define DIN_REQ_CURRENTDEMAND        0x0Du  /* ev11 0x0806BDDC */
+#define DIN_REQ_POWERDELIVERY        0x13u  /* ev2d 0x0806B814 */
+#define DIN_REQ_PRECHARGE            0x15u  /* ev2f 0x0806B4DE */
+#define DIN_REQ_SERVICEDISCOVERY     0x19u  /* ev3c 0x0806B06A */
+#define DIN_REQ_SESSIONSETUP         0x1Du  /* ev40 0x0806ABEA */
+#define DIN_REQ_SESSIONSTOP          0x1Fu  /* ev42 0x0806AB0E */
+#define DIN_REQ_WELDING              0x21u  /* ev4e 0x0806AA92 */
+
+/* Res message sub-events (6-bit; decoder body dispatcher tbb 0x08066E06, analyze102). */
+#define DIN_RES_CABLECHECK           0x02u  /* ev05 0x08066C5C */
+#define DIN_RES_CPD                  0x08u  /* ev0c 0x08065BFC */
+#define DIN_RES_CURRENTDEMAND        0x0Eu  /* ev12 0x0806471E */
+#define DIN_RES_POWERDELIVERY        0x14u  /* ev2e 0x08063DBA */
+#define DIN_RES_PRECHARGE            0x16u  /* ev30 0x08063A8A */
+#define DIN_RES_SERVICEDISCOVERY     0x1Au  /* ev3d 0x08063370 */
+#define DIN_RES_SESSIONSETUP         0x1Eu  /* ev41 0x08062B1E */
+#define DIN_RES_SESSIONSTOP          0x20u  /* ev43 0x08062A7E */
+#define DIN_RES_WELDING              0x22u  /* ev4f 0x08062754 */
+
+/* DIN header SessionID (gid 0x6c) — hexBinary octet string. Stock SessionSetupReq uses a 1-byte
+ * 0x00 placeholder; post-setup builders copy the negotiated SessionID. Bounded for the replica. */
+#define DIN_SID_MAX                  8u
 
 /* V2GTP framing: [8-byte header][0x80 leading byte][7-bit root event][body]. Payload 0x8001. */
 #define EXI_V2GTP_HDR_LEN   8u
@@ -94,8 +122,29 @@ int exi_write_pvt(exi_stream_t *s, const exi_pvt_t *val);
 /* Framing helpers. Decode: strip the 8-byte V2GTP header (caller passes body), run the leading-byte
  * pre-check (0x08093C66: read 8 bits, reject 0x24, bit5 test) then read the 7-bit root event.
  * Encode: write the leading 0x80 (0x08093C92) then the 7-bit root event (pos starts after the
- * reserved 8-byte V2GTP header). */
+ * reserved 8-byte V2GTP header). For DIN the root event is always EXI_DIN_ROOT (0x4D); the message
+ * is then selected by the 6-bit choice/subev handled by the DIN document layer below. */
 int exi_decode_header(exi_stream_t *s, uint8_t *ev);
 int exi_encode_header(exi_stream_t *s, uint8_t ev);
+
+/* Inter-field 1-bit event-code gates (analyze103). Every DIN sub-production field is bracketed by
+ * 1-bit gates that MUST be 0 on the wire; a set gate shunts to the grammar's error code. */
+int exi_read_gate(exi_stream_t *s, int err);   /* readBits(1); !=0 -> err (e.g. -133/-110/-500) */
+int exi_write_gate(exi_stream_t *s);           /* writeBits(1, 0)                               */
+
+/* DIN document framing (analyze101/102), the layer AFTER exi_encode_header/exi_decode_header has
+ * written/read the leading 0x80 + 7-bit root 0x4D. Wire layout (ev4d 0x080706F6 / 0x0806A33E):
+ *   [1-bit pre-gate] [DIN header] [1-bit post-gate] [6-bit choice/subev] [body] [1-bit EE gate]
+ * DIN header (header-sub 0x0806F8FC): gid 0x6c SessionID = [1-bit g][1-bit g][varlen-len][SID
+ * octets][1-bit g], then gid 0x6d = [2-bit choice 2] (both ISO-only gates clear in DIN; the clear
+ * helper 0x08061D5C zeroes doc+0x54 / doc+0x13F8 so every DIN builder ends writeBits(2,2)).
+ * Encode: exi_din_encode_doc_start writes pre-gate + header + post-gate + 6-bit choice (stream then
+ * at body start); the caller writes the body; exi_din_encode_doc_end writes the EE gate.
+ * Decode: exi_din_decode_doc_start reads pre-gate + header (returns SessionID) + post-gate + 6-bit
+ * subev (stream then at body start); the caller decodes the body; the trailing EE gate is the final
+ * 1-bit (exi_read_gate). Returns EXI_OK / negative EXI error. */
+int exi_din_encode_doc_start(exi_stream_t *s, uint8_t choice, const uint8_t *sid, uint16_t sid_len);
+int exi_din_encode_doc_end(exi_stream_t *s);
+int exi_din_decode_doc_start(exi_stream_t *s, uint8_t *subev, uint8_t *sid, uint16_t *sid_len);
 
 #endif /* EXI_H */

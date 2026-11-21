@@ -175,19 +175,18 @@ static void test_octet(void)
 static void test_framing(void)
 {
     uint8_t buf[32]; exi_stream_t s;
-    /* encode: reserve 8-byte V2GTP, leading 0x80, 7-bit event 0x12 (CurrentDemandRes) */
+    /* encode: reserve 8-byte V2GTP, leading 0x80, 7-bit DIN root event 0x4D (ev4d) */
     exi_encode_init(&s, buf, 32, EXI_V2GTP_HDR_LEN);
-    CK(exi_encode_header(&s, EXI_EV_CURRENTDEMAND_RES) == 0, "encode_header ok");
+    CK(exi_encode_header(&s, EXI_DIN_ROOT) == 0, "encode_header ok");
     CK(buf[8] == 0x80, "framing leading byte buf[8] = 0x80");
     uint32_t n = exi_encode_finish(&s);
-    /* event 0x12 = 0010010 (7 bits) left-aligned into the byte after the 0x80 -> 0x12<<1 = 0x24.
-     * (0x24 is rejected only as a LEADING byte; here it is the event byte after 0x80, which is ok.) */
-    CK(buf[9] == (uint8_t)(EXI_EV_CURRENTDEMAND_RES << 1), "framing event byte = ev<<1");
+    /* root 0x4D = 1001101 (7 bits) left-aligned into the byte after the 0x80 -> 0x4D<<1 = 0x9A. */
+    CK(buf[9] == (uint8_t)(EXI_DIN_ROOT << 1), "framing root byte = 0x4D<<1 = 0x9A");
     /* decode: strip 8-byte header (pass body from buf+8) */
     exi_stream_t d; exi_decode_init(&d, buf + EXI_V2GTP_HDR_LEN, n - EXI_V2GTP_HDR_LEN);
     uint8_t ev;
-    CK(exi_decode_header(&d, &ev) == 0 && ev == EXI_EV_CURRENTDEMAND_RES,
-       "decode_header recovers ev 0x12 (CurrentDemandRes)");
+    CK(exi_decode_header(&d, &ev) == 0 && ev == EXI_DIN_ROOT,
+       "decode_header recovers DIN root 0x4D");
 
     /* pre-check rejects leading 0x24 */
     uint8_t bad[2] = { 0x24, 0x00 };
@@ -203,6 +202,69 @@ static void test_framing(void)
     CK(exi_decode_header(&d, &ev) == EXI_ERR_EVENT, "decode_header event>=81 -> ERR_EVENT");
 }
 
+/* DIN document framing (analyze101/102): root 0x4D + pre-gate + header(gid 0x6c SessionID +
+ * gid 0x6d choice 2) + post-gate + 6-bit choice + body + EE gate. Round-trip + gate rejection. */
+static void test_din_doc_framing(void)
+{
+    uint8_t buf[64]; exi_stream_t s;
+    uint8_t sid[2] = { 0x12, 0x34 };
+    /* full document: leading 0x80 + root 0x4D + doc-start(choice=SessionSetupReq 0x1D, sid) +
+     * a 1-byte body (0xA5) + EE gate. */
+    exi_encode_init(&s, buf, 64, EXI_V2GTP_HDR_LEN);
+    CK(exi_encode_header(&s, EXI_DIN_ROOT) == 0, "din doc encode_header ok");
+    CK(exi_din_encode_doc_start(&s, DIN_REQ_SESSIONSETUP, sid, 2) == 0, "din doc start ok");
+    CK(exi_write_bits(&s, 8, 0xA5) == 0, "din doc body byte ok");
+    CK(exi_din_encode_doc_end(&s) == 0, "din doc EE gate ok");
+    uint32_t n = exi_encode_finish(&s);
+
+    exi_stream_t d; exi_decode_init(&d, buf + EXI_V2GTP_HDR_LEN, n - EXI_V2GTP_HDR_LEN);
+    uint8_t root;
+    CK(exi_decode_header(&d, &root) == 0 && root == EXI_DIN_ROOT, "din doc decode root 0x4D");
+    uint8_t subev, dsid[DIN_SID_MAX]; uint16_t dsid_len;
+    CK(exi_din_decode_doc_start(&d, &subev, dsid, &dsid_len) == 0, "din doc decode start ok");
+    CK(subev == DIN_REQ_SESSIONSETUP, "din doc subev = SessionSetupReq choice 0x1D");
+    CK(dsid_len == 2 && dsid[0] == 0x12 && dsid[1] == 0x34, "din doc SessionID round-trip 1234");
+    uint32_t body;
+    CK(exi_read_bits(&d, 8, &body) == 0 && body == 0xA5, "din doc body byte round-trip 0xA5");
+    CK(exi_read_gate(&d, EXI_ERR_GATE) == 0, "din doc trailing EE gate 0");
+
+    /* every Req choice + Res subev round-trips through the 6-bit field */
+    const uint8_t codes[] = { DIN_REQ_CABLECHECK, DIN_REQ_CPD, DIN_REQ_CURRENTDEMAND,
+        DIN_REQ_POWERDELIVERY, DIN_REQ_PRECHARGE, DIN_REQ_SERVICEDISCOVERY, DIN_REQ_SESSIONSETUP,
+        DIN_REQ_SESSIONSTOP, DIN_REQ_WELDING, DIN_RES_CABLECHECK, DIN_RES_CPD, DIN_RES_CURRENTDEMAND,
+        DIN_RES_POWERDELIVERY, DIN_RES_PRECHARGE, DIN_RES_SERVICEDISCOVERY, DIN_RES_SESSIONSETUP,
+        DIN_RES_SESSIONSTOP, DIN_RES_WELDING };
+    for (unsigned i = 0; i < sizeof codes / sizeof codes[0]; i++) {
+        exi_encode_init(&s, buf, 64, 0);
+        exi_din_encode_doc_start(&s, codes[i], sid, 1);
+        exi_din_encode_doc_end(&s);
+        n = exi_encode_finish(&s);
+        exi_decode_init(&d, buf, n);
+        uint8_t sub, x[DIN_SID_MAX]; uint16_t xl;
+        int r = exi_din_decode_doc_start(&d, &sub, x, &xl);
+        char m[64]; snprintf(m, sizeof m, "din doc choice/subev 0x%02X round-trip", codes[i]);
+        CK(r == 0 && sub == codes[i] && xl == 1, m);
+    }
+
+    /* a set pre-header gate -> EXI_ERR_GATE */
+    exi_encode_init(&s, buf, 64, 0);
+    exi_write_bits(&s, 1, 1);   /* pre-gate set (invalid) */
+    exi_encode_finish(&s);
+    exi_decode_init(&d, buf, 1);
+    uint8_t sub, x[DIN_SID_MAX]; uint16_t xl;
+    CK(exi_din_decode_doc_start(&d, &sub, x, &xl) == EXI_ERR_GATE, "din doc set pre-gate -> -133");
+
+    /* gid 0x6d choice != 2 (ISO header extension) -> EXI_ERR_EVENT */
+    exi_encode_init(&s, buf, 64, 0);
+    exi_write_gate(&s); exi_write_gate(&s); exi_write_gate(&s);   /* pre + g1 + g2 */
+    exi_write_octet(&s, sid, 1);                                  /* SessionID */
+    exi_write_gate(&s);                                           /* g3 */
+    exi_write_bits(&s, 2, 0);                                     /* gid 0x6d choice 0 (ISO) */
+    exi_encode_finish(&s);
+    exi_decode_init(&d, buf, 4);
+    CK(exi_din_decode_doc_start(&d, &sub, x, &xl) == EXI_ERR_EVENT, "din doc gid0x6d!=2 -> ERR_EVENT");
+}
+
 int main(void)
 {
     test_bits_read();
@@ -212,6 +274,7 @@ int main(void)
     test_pvt();
     test_octet();
     test_framing();
+    test_din_doc_framing();
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

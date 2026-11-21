@@ -111,8 +111,8 @@ This foundation is **safe-by-construction** (contactors open, no HV):
   (`ccs2_cd_req`/`ccs2_cd_req_len`) and sent via `v2g_net_tcp_send` — **inert**: it only transmits when the
   transport is ESTABLISHED (gated TCP connect/TLS handshake), so nothing is commanded in normal operation.
   Host-unit-tested (`test_{v2gtp,slac,cp,cp_capture,cp_adc,sdp,din70121,ccs2,exi,din_session,v2g_net,ca_store}.c`,
-  14/54/32/42/42/31/45/23/55/41/90/45 checks; `test_tls_mbedtls` 21 validates the real-library TLS handshake;
-  full host suite 654). `ccs2_st`/`ccs2_link`/`ccs2_secc`/`ccs2_proto` +
+  14/54/32/42/42/31/74/23/85/42/90/45 checks; `test_tls_mbedtls` 21 validates the real-library TLS handshake;
+  full host suite 714). `ccs2_st`/`ccs2_link`/`ccs2_secc`/`ccs2_proto` +
   `din_st_state`/`din_st_fault`/`din_st_retry`/`din_st_active` + `v2g_net_st`/`v2g_net_mode`/`v2g_net_rx`/
   `v2g_net_tx` are SWD-readable.
 - **IWDG**: the loop feeds the watchdog key (`0x40003000`) — harmless whether or not the IWDG is
@@ -244,11 +244,11 @@ then `#define MBEDTLS_SSL_SRV_C` for the harness server — the firmware config 
 | `test_tls_mbedtls.c` + `test_mbedtls_config.h` | host integration test (gcc, no hardware; **real** mbedTLS client/server memory-bio handshake): negotiates 0xC023, VERIFY_REQUIRED enforced (empty-CA→−0x2700/0x08), 0xC025 alt, encrypted app-data round-trip — 21 checks; `test_mbedtls_config.h` = host-only wrapper (`#include "mbedtls_config.h"` + `MBEDTLS_SSL_SRV_C` for the harness server; firmware config stays client-only) |
 | `src/ca_store.c/.h` | **PnC CA cert store** (`analyze96`, communication only): ext-SPI master hdr@`0x1F8000` (magic `0xCEA155E1`/version1/size/byte-sum) validate + data@`0x1F8010` read via `spi4_read` → compact NULL-term Root(0x8101) ptr-array of {der_len,DER} entry+4 pointers (808 B entries, der_len≤800); `ca_store_root_count` feeds the SDP No-TLS gate; ext-SPI→RAM directly (no internal A/B management), no power GPIO (§5.9) |
 | `test_ca_store.c` | host unit test (gcc, no hardware; `spi4_read` stubbed, RAM flash image): header validate, byte-sum, entry/contract validators, compact ptr-array populate (slots 0/2/4→3 roots, NULL-term, {len,DER} deref), `ca_store_init` (hdr+cksum+populate, root_count gate, bad-cksum/magic/version rejected) — 45 checks |
-| `test_v2gtp.c` / `test_slac.c` / `test_cp.c` / `test_sdp.c` / `test_din70121.c` / `test_ccs2.c` / `test_exi.c` / `test_din_session.c` | host unit tests (gcc, no hardware; QCA7005 stubbed where needed): V2GTP framing 14, SLAC sequence walk 54, CP/PP scaling/state/plug 32, SDP security/req/res/protocol 31, DIN pow10/CD-res/CD-req/DC_EVSEStatus-grammar 45, CCS2 integration 23, EXI primitives/PVT/framing 55, session sequence/timers/retry/cadence/faults 41 checks (full host suite **654** with `test_v2g_net` 90 + `test_ca_store` 45 + `test_cp_capture` 42 + `test_cp_adc` 42 + `test_charge_stm` 47 + `test_current_ctrl` 46 + `test_qca7005` 26 + `test_tls_mbedtls` 21) |
+| `test_v2gtp.c` / `test_slac.c` / `test_cp.c` / `test_sdp.c` / `test_din70121.c` / `test_ccs2.c` / `test_exi.c` / `test_din_session.c` | host unit tests (gcc, no hardware; QCA7005 stubbed where needed): V2GTP framing 14, SLAC sequence walk 54, CP/PP scaling/state/plug 32, SDP security/req/res/protocol 31, DIN pow10/CD-res/CD-req/DC_EVSEStatus-grammar + B2 DIN-document codec round-trips 74, CCS2 integration 23, EXI primitives/PVT/framing + DIN-doc framing 85, session sequence/timers/retry/cadence/faults 42 checks (full host suite **714** with `test_v2g_net` 90 + `test_ca_store` 45 + `test_cp_capture` 42 + `test_cp_adc` 42 + `test_charge_stm` 47 + `test_current_ctrl` 46 + `test_qca7005` 26 + `test_tls_mbedtls` 21) |
 | `main.c` | rcc→gpio_safe→hv→ca_store_init→cp_capture_init→cp_adc_init→can→chademo→charge_stm→current_ctrl→tick→`cpsie i`→qca7005_init→hw_rng_init→`v2g_stack_set_rng(hw_rng_f_rng)`→ccs2_init→`v2g_net_set_local_mac` [EUI-64 from PIB MAC], then 100 Hz loop (feed IWDG + `heartbeat` + publish `hv_*` + RX parse + cp_step [real CP/PP front-end: cp_capture duty/period + cp_adc PP/CPD raw + PD11/D_LINK; publish `cp_cap_*`/`cp_plug`/`cp_state`/`cp_pp_mv`/`cp_cpd_mv`/`cp_bat_mv`/`cp_pp_raw`/`cp_cpd_raw`/`cp_d_link`/`cp_pd11`] + ccs2_step [drives din_session_step + v2g_net_step] + `charge_stm_step` with EVSE inputs from `ccs2_evse()` [publish `stm_*`] + `current_ctrl_step` in state-30 from `ccs2_fill_current_ctrl()` [publish `cc_*`] + `ccs2_demand` inert CD-req image + `v2g_net_tcp_send` [inert, only when ESTABLISHED; publish `ccs2_cd_req*`] + periodic TX + can_service + `qca7005_service`→ccs2_rx [publish `ccs2_*`] + `din_session_get` [publish `din_st_*`] + `v2g_net_get` [publish `v2g_net_st/mode/rx/tx`] + `v2g_stack_poll` [lwIP nd6_tmr + TCP timers driven inside v2g_net_step] + `ca_store_get/root_count` [publish `ca_root_count/ca_store_present`]); no asserted power drive |
 | `build.sh` | builds via `nix-shell -p gcc-arm-embedded python3` → `app.elf`/`app.bin`, verifies vectors, pads to sector 5 |
 | `verify_pad.py` | checks `vector[0]==0x20030000`, `vector[1]` is an in-app Thumb address; pads `app.bin` → `app_padded.bin` (128 KB, `0xFF` tail) |
-| `verify_ccs2.py` | disasm-verifies the built CCS2/EXI/session/transport-glue/CP-front-end/lwIP-ND6/CA + `v2g_stack`/mbedTLS/`hw_rng` modules: presence of wired symbols (incl. `din_session_*` + `v2g_net_*`/`v2g_stack_*` + `cp_adc_*`/`cp_capture_*` + lwIP `nd6_*`/`ca_store_*` + `mbedtls_ssl_*`/`x509_crt_parse` + `hw_rng_*`), **power-GPIO safety** (no peripheral base `0x400xxxxx` referenced in the pure-logic modules), main integration calls (incl. `din_session_get`/`v2g_net_get`/`v2g_net_tcp_send`/`cp_adc_init`/`ca_store_init`/`hw_rng_init`/`v2g_stack_set_rng`), pow10 converter table + the five session timer constants + retry cap 20 + transport cipher list {0xC023,0xC025} + IPv6 EtherType/next-header demux + `v2g_stack_tls_setup` bl-targets (ssl_conf_authmode/conf_ciphersuites/x509_crt_parse/ssl_setup) + **cp_adc_init ADC3/DMA2 register-exact values + NVIC ISER1 + read-only D_LINK/PD11 IDR reads (no GPIOB/GPIOE drive) + ISR accumulate/publish + bat_mv scaling** + **lwIP ND6 reachable/retransmit 30000/1000 + ICMPv6 types 135/136/134 + NA flags 0x22/0x60 + bic#0x0F + hop 255; CA magic 0xCEA155E1 + entry 808/DER 800 + Root 0x8101 + ext addrs 0x1F8000/0x1F8010 + data 9792** (−O2-inlined helpers verified via constants/displacements; T2 LDR-literal pool reads 4-aligned); reports bench-only APIs gc-eliminated from the autonomous image — 201 checks |
+| `verify_ccs2.py` | disasm-verifies the built CCS2/EXI/session/transport-glue/CP-front-end/lwIP-ND6/CA + `v2g_stack`/mbedTLS/`hw_rng` modules: presence of wired symbols (incl. `din_session_*` + `v2g_net_*`/`v2g_stack_*` + `cp_adc_*`/`cp_capture_*` + lwIP `nd6_*`/`ca_store_*` + `mbedtls_ssl_*`/`x509_crt_parse` + `hw_rng_*`), **power-GPIO safety** (no peripheral base `0x400xxxxx` referenced in the pure-logic modules), main integration calls (incl. `din_session_get`/`v2g_net_get`/`v2g_net_tcp_send`/`cp_adc_init`/`ca_store_init`/`hw_rng_init`/`v2g_stack_set_rng`), pow10 converter table + the five session timer constants + retry cap 20 + transport cipher list {0xC023,0xC025} + IPv6 EtherType/next-header demux + `v2g_stack_tls_setup` bl-targets (ssl_conf_authmode/conf_ciphersuites/x509_crt_parse/ssl_setup) + **cp_adc_init ADC3/DMA2 register-exact values + NVIC ISER1 + read-only D_LINK/PD11 IDR reads (no GPIOB/GPIOE drive) + ISR accumulate/publish + bat_mv scaling** + **lwIP ND6 reachable/retransmit 30000/1000 + ICMPv6 types 135/136/134 + NA flags 0x22/0x60 + bic#0x0F + hop 255; CA magic 0xCEA155E1 + entry 808/DER 800 + Root 0x8101 + ext addrs 0x1F8000/0x1F8010 + data 9792** (−O2-inlined helpers verified via constants/displacements; T2 LDR-literal pool reads 4-aligned); **B2 DIN-document framing** (root 0x4D compare in `ccs2_rx_exi` + subev bound 36 / gid 0x6d choice 2 in `exi_din_decode_doc_start` + the 9 Req encoders / 5 new Res decoders / `din_dc_ev_status_encode` / `din_session_set_evccid` wired symbols); reports bench-only APIs gc-eliminated from the autonomous image — 222 checks |
 
 Build outputs (`app.elf`, `app.map`, `app.bin`, `app_padded.bin`) are git-ignored.
 
@@ -315,8 +315,8 @@ gcc -O2 -Wall -Wextra -Isrc -o test_ca_store  test_ca_store.c  src/ca_store.c   
 '
 ```
 
-Expected: `14 / 54 / 32 / 42 / 42 / 31 / 45 / 55 / 41 / 23 / 90 / 45 checks, 0 failures` respectively (this
-block **514**; the full host suite is **654** with `test_charge_stm` 47 + `test_current_ctrl` 46 +
+Expected: `14 / 54 / 32 / 42 / 42 / 31 / 74 / 85 / 42 / 23 / 90 / 45 checks, 0 failures` respectively (this
+block **574**; the full host suite is **714** with `test_charge_stm` 47 + `test_current_ctrl` 46 +
 `test_qca7005` 26 + `test_tls_mbedtls` 21).
 `test_slac.c` and `test_ccs2.c` provide their own `qca7005_frame_send`/`qca7005_mac` stubs (do **not** link
 `src/qca7005.c` into those — it collides with the stubs); `test_ccs2.c` also stubs `tick_get`. `test_din70121.c`/
@@ -337,7 +337,7 @@ and runs on the host; the **vendored lwIP + mbedTLS** live stack is validated en
 nix-shell -p gcc-arm-embedded python3 python3Packages.capstone --run 'python3 verify_ccs2.py'
 ```
 
-Expected: `201 checks, 0 failures` — confirms the wired CCS2/EXI/session/transport-glue/CP-front-end/lwIP-ND6/CA
+Expected: `222 checks, 0 failures` — confirms the wired CCS2/EXI/session/transport-glue/CP-front-end/lwIP-ND6/CA
 + `v2g_stack`/mbedTLS/`hw_rng` symbols are linked, the pure-logic modules reference **no** peripheral base
 `0x400xxxxx` (no power GPIO), `main` calls the integration functions (incl. `din_session_get`/`v2g_net_get`/
 `v2g_net_tcp_send`/`v2g_net_set_local_mac`/`cp_adc_init`/`ca_store_init`/`hw_rng_init`/`v2g_stack_set_rng`),
@@ -573,7 +573,7 @@ Built up in incremental, independently-testable layers; power-stage drive stays 
   (mechanisms remain documented in REPORT §5.9 + analyze95/96/97). `analyze97.py` **63 checks** (cipher list +
   ssl_setup API + authmode + recovered→vendored config mapping); host `test_tls_mbedtls` **21** proves the recovered
   config end-to-end with the real library (negotiates 0xC023, VERIFY_REQUIRED enforced empty-CA→−0x2700/0x08,
-  0xC025 alt, encrypted app-data round-trip); full host suite **654/0** across 16 tests; `verify_ccs2.py` **201**;
+  0xC025 alt, encrypted app-data round-trip); full host suite **714/0** across 16 tests; `verify_ccs2.py` **222**;
   `CUSTOM.UPG` re-wrapped (132102 B, CRC residue 0 + app-verbatim + stock round-trip). **Communication only, no
   power GPIO** — the library network/crypto layers are now present + inert-validated, not gated-to-implement.
 
@@ -582,9 +582,17 @@ Built up in incremental, independently-testable layers; power-stage drive stays 
   transport **glue + wire framing + protocol decisions are recovered/built** (`analyze94`, `src/v2g_net.c`);
   the heavy third-party stacks are now **vendored** (lwIP 2.1.4 IPv6/ND6/TCP/UDP + mbedTLS 2.28.9
   ECDHE/AES/SHA256/X509 + the TLS handshake/record SM, configured byte-faithfully — `analyze97`,
-  `src/v2g_stack.c`); what remains is the exact Req-side EXI grammars / root-event numbering [?], the
-  DIN-vs-ISO DC_EVSEStatus layout [?], the exact EVSEIsolationStatus→level 3/4 mapping, and bench validation
-  of the live session. The EXI bit-grammar codec + the distributed session
+  `src/v2g_stack.c`); the **DIN document model is now built** (`analyze101/102/103`, B2): every Req/Res
+  rides the SINGLE root `0x4D` + DIN header (SessionID gid `0x6c` + gid `0x6d` choice 2) + a 6-bit message
+  choice/subev — the old per-message "root events" were production grammar-ids misused as roots (removed).
+  All **9 Req encoders** (SessionSetup/ServiceDiscovery/CPD/CableCheck/PreCharge/PowerDelivery/CurrentDemand/
+  Welding/SessionStop) + **9 Res decoders** are wired through `din_session` TX/RX dispatch and `ccs2_rx_exi`
+  strips the framing; the DC_EVStatus encoder is byte-exact (23-bit default grammar → `0x28 0x02 0x30`), the
+  DC_EVSEStatus layout is the **merged grammar** (no DIN/ISO flag, `analyze103`), and the CPD Res DC-param
+  limits feed `meas`. What remains [? partial]: the exact Req-side inter-field gate sequences (round-trip
+  validated, not all stock gates pinned), the ServiceDiscovery list sub-grammars, per-builder SessionID
+  negotiation, the exact EVSEIsolationStatus→level 3/4 mapping, and bench validation of the live session.
+  The EXI bit-grammar codec + the distributed session
   sequence/timers/retries + FAILED→shutdown (`analyze93`) + the transport carriage (`analyze94`) + the CP/PP
   analog front-end acquisition (`analyze95`, PP/CPD/BAT ADC3 + TIM4 CP input-capture on PD12) + **the PnC CA
   flash→RAM populator** (`analyze96`, `src/ca_store.c`; ND6 neighbor resolution is now lwIP `nd6`) are **already

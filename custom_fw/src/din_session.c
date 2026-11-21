@@ -10,18 +10,11 @@
 #include "din70121.h"
 #include "exi.h"
 
-/* Req root events (separate productions from the Res evs; E §3 encoder root). The application->ev
- * linkage / exact Req numbering is [?] (encoder side not fully recovered); symbolic placeholders
- * used by the inert replica. The SM sequence/timer logic is independent of these values. */
-#define DIN_EV_SESSIONSETUP_REQ     0x01u   /* [?] */
-#define DIN_EV_SERVICEDISCOVERY_REQ 0x03u   /* [?] */
-#define DIN_EV_CPD_REQ              0x07u   /* [?] */
-#define DIN_EV_CABLECHECK_REQ       0x09u   /* [?] */
-#define DIN_EV_PRECHARGE_REQ        0x0Bu   /* [?] */
-#define DIN_EV_POWERDELIVERY_REQ    0x0Du   /* [?] */
-#define DIN_EV_CURRENTDEMAND_REQ    0x0Fu   /* [?] */
-#define DIN_EV_WELDING_REQ          0x11u   /* [?] */
-#define DIN_EV_SESSIONSTOP_REQ      0x13u   /* [?] */
+/* B2 DIN document model (analyze101/102): every Req rides the SINGLE root 0x4D + DIN header + a
+ * 6-bit message choice (exi.h DIN_REQ_*); every Res a 6-bit subev (DIN_RES_*). The old per-message
+ * "root events" were production grammar-ids misused as roots — removed. The TX hook's `ev` arg is
+ * now the DIN_REQ_* choice; the RX `ev` arg is the DIN_RES_* subev. The SM sequence/timer logic is
+ * unchanged. Req bodies are produced by the B2 din70121.c encoders (full document framing). */
 
 static din_session_t sess;
 static din_session_tx_fn tx_hook;
@@ -29,18 +22,35 @@ static uint8_t req_buf[256];
 
 static void z(uint8_t *p, uint16_t n) { for (uint16_t i = 0; i < n; i++) p[i] = 0; }
 
-/* Default TX hook: produce the inert EXI Req image. CurrentDemandReq uses the grammar encoder
- * (din_cd_req_encode_exi); the other Req grammars are partial (E §3) so a minimal framing image
- * (8-byte V2GTP reserved + leading 0x80 + 7-bit event) is produced [? body]. Live send is GATED. */
+/* Default TX hook: produce the inert DIN Req document for message choice `ev` (DIN_REQ_*). Each
+ * encoder writes the full framing (8-byte V2GTP reserved + 0x80 + root 0x4D + DIN header + choice
+ * + body + EE gate) using the session SessionID/EVCCID. Live send is GATED. */
 static int default_tx(uint8_t ev, uint8_t *buf, uint16_t cap)
 {
-    if (ev == DIN_EV_CURRENTDEMAND_REQ)
-        return din_cd_req_encode_exi(din70121_meas_mut(), buf, cap, ev);
-    exi_stream_t s;
-    exi_encode_init(&s, buf, cap, EXI_V2GTP_HDR_LEN);
-    int r = exi_encode_header(&s, ev);
-    if (r < 0) return r;
-    return (int)exi_encode_finish(&s);
+    const uint8_t *sid = sess.sid;
+    uint16_t sid_len = sess.sid_len;
+    switch (ev) {
+    case DIN_REQ_SESSIONSETUP:
+        return din_sessionsetup_req_encode(buf, cap, sid, sid_len, sess.evccid, sess.evccid_len);
+    case DIN_REQ_SERVICEDISCOVERY:
+        return din_servicediscovery_req_encode(buf, cap, sid, sid_len);
+    case DIN_REQ_CPD:
+        return din_cpd_req_encode(buf, cap, sid, sid_len, din70121_meas(), 1u, 70u);
+    case DIN_REQ_CABLECHECK:
+        return din_cablecheck_req_encode(buf, cap, sid, sid_len, 1u, 70u);
+    case DIN_REQ_PRECHARGE:
+        return din_precharge_req_encode(buf, cap, sid, sid_len, din70121_meas(), 1u, 70u);
+    case DIN_REQ_POWERDELIVERY:
+        return din_powerdelivery_req_encode(buf, cap, sid, sid_len, sess.charge_progress);
+    case DIN_REQ_CURRENTDEMAND:
+        return din_cd_req_encode_exi(din70121_meas_mut(), buf, cap, sid, sid_len);
+    case DIN_REQ_WELDING:
+        return din_welding_req_encode(buf, cap, sid, sid_len, 1u, 70u);
+    case DIN_REQ_SESSIONSTOP:
+        return din_sessionstop_req_encode(buf, cap, sid, sid_len);
+    default:
+        return EXI_ERR_EVENT;
+    }
 }
 
 void din_session_init(void)
@@ -53,11 +63,29 @@ void din_session_init(void)
     sess.t_14      = DIN_T_14_MS;
     sess.fp        = DIN_CD_FP_DEFAULT;
     sess.state     = DIN_ST_IDLE;
+    sess.sid[0]    = 0x00u;        /* SessionSetupReq builder SID placeholder (1 byte) */
+    sess.sid_len   = 1u;
+    sess.evccid_len = 6u;          /* EVCCID = 6-byte unit MAC (zeros until ccs2 sets it) */
     tx_hook        = default_tx;
 }
 
 void din_session_set_tx(din_session_tx_fn fn) { tx_hook = fn ? fn : default_tx; }
 void din_session_set_fp(uint16_t fp) { sess.fp = fp; }
+void din_session_set_evccid(const uint8_t *id, uint16_t len)
+{
+    if (len > 6u) len = 6u;
+    for (uint16_t i = 0; i < len; i++) sess.evccid[i] = id[i];
+    sess.evccid_len = len;
+}
+
+static void send_req(uint8_t ev, uint32_t now);
+
+/* PowerDelivery send helper: set ChargeProgress (0=Start / 1=Stop) then emit the Req choice. */
+static void send_powerdelivery(uint8_t progress, uint32_t now)
+{
+    sess.charge_progress = progress;
+    send_req(DIN_REQ_POWERDELIVERY, now);
+}
 
 /* Send the Req for the current state; re-arm the resp-wait anchor (ctx+4 re-armed every send). */
 static void send_req(uint8_t ev, uint32_t now)
@@ -68,21 +96,21 @@ static void send_req(uint8_t ev, uint32_t now)
     sess.req_len = (n > 0) ? (uint16_t)n : 0u;
 }
 
-/* Req event awaited->sent mapping for re-send on resp-wait timeout. */
+/* Req choice awaited->sent mapping for re-send on resp-wait timeout (DIN_REQ_* choices). */
 static uint8_t req_ev_for_state(uint8_t st)
 {
     switch (st) {
-    case DIN_ST_SESSIONSETUP_RES:     return DIN_EV_SESSIONSETUP_REQ;
-    case DIN_ST_SERVICEDISCOVERY_RES: return DIN_EV_SERVICEDISCOVERY_REQ;
-    case DIN_ST_CPD_RES:              return DIN_EV_CPD_REQ;
-    case DIN_ST_CABLECHECK_RES:       return DIN_EV_CABLECHECK_REQ;
-    case DIN_ST_PRECHARGE_RES:        return DIN_EV_PRECHARGE_REQ;
-    case DIN_ST_POWERDELIVERY_START:  return DIN_EV_POWERDELIVERY_REQ;
-    case DIN_ST_CURRENTDEMAND_RES:    return DIN_EV_CURRENTDEMAND_REQ;
-    case DIN_ST_POWERDELIVERY_STOP:   return DIN_EV_POWERDELIVERY_REQ;
-    case DIN_ST_WELDING_RES:          return DIN_EV_WELDING_REQ;
-    case DIN_ST_SESSIONSTOP_RES:      return DIN_EV_SESSIONSTOP_REQ;
-    default:                          return DIN_EV_SESSIONSETUP_REQ;
+    case DIN_ST_SESSIONSETUP_RES:     return DIN_REQ_SESSIONSETUP;
+    case DIN_ST_SERVICEDISCOVERY_RES: return DIN_REQ_SERVICEDISCOVERY;
+    case DIN_ST_CPD_RES:              return DIN_REQ_CPD;
+    case DIN_ST_CABLECHECK_RES:       return DIN_REQ_CABLECHECK;
+    case DIN_ST_PRECHARGE_RES:        return DIN_REQ_PRECHARGE;
+    case DIN_ST_POWERDELIVERY_START:  return DIN_REQ_POWERDELIVERY;
+    case DIN_ST_CURRENTDEMAND_RES:    return DIN_REQ_CURRENTDEMAND;
+    case DIN_ST_POWERDELIVERY_STOP:   return DIN_REQ_POWERDELIVERY;
+    case DIN_ST_WELDING_RES:          return DIN_REQ_WELDING;
+    case DIN_ST_SESSIONSTOP_RES:      return DIN_REQ_SESSIONSTOP;
+    default:                          return DIN_REQ_SESSIONSETUP;
     }
 }
 
@@ -97,7 +125,7 @@ static void post_fault(uint8_t code)
 /* Graceful shutdown: PowerDelivery-stop -> SessionStop -> state 13 (F §FAILED->shutdown). */
 static void shutdown_seq(uint32_t now)
 {
-    send_req(DIN_EV_POWERDELIVERY_REQ, now);   /* PowerDelivery-stop 0x08034A78 */
+    send_powerdelivery(1u, now);               /* PowerDelivery-stop 0x08034A78 (ChargeProgress=1) */
     sess.state = DIN_ST_POWERDELIVERY_STOP;
 }
 
@@ -108,8 +136,9 @@ void din_session_start(uint32_t now)
     sess.ts_total = now; sess.ts_150 = now; sess.ts_40 = now; sess.ts_14 = now;
     sess.retry = 0; sess.fault_code = DIN_FAULT_NONE; sess.fault_flag = 0;
     sess.charging_complete = 0;
+    sess.charge_progress = 0;
     sess.state = DIN_ST_PRE_SETUP;
-    send_req(DIN_EV_SESSIONSETUP_REQ, now);    /* state 1 -> SessionSetupReq */
+    send_req(DIN_REQ_SESSIONSETUP, now);       /* state 1 -> SessionSetupReq */
     sess.state = DIN_ST_SESSIONSETUP_RES;      /* state 2 await Res */
 }
 
@@ -161,29 +190,20 @@ void din_session_step(uint32_t now)
         sess.tick_counter++;                      /* meas[0xC] u8 wraps 200 */
         if (sess.tick_counter >= 200u) sess.tick_counter = 0;
         if (sess.fp && (sess.tick_counter % sess.fp) == 0u)
-            send_req(DIN_EV_CURRENTDEMAND_REQ, now);
+            send_req(DIN_REQ_CURRENTDEMAND, now);
         if (sess.cd_resend_active && sess.cd_interval &&
             (uint32_t)(now - sess.ts_cd) > sess.cd_interval) {
-            send_req(DIN_EV_CURRENTDEMAND_REQ, now);
+            send_req(DIN_REQ_CURRENTDEMAND, now);
             sess.ts_cd = now;
         }
     }
 }
 
-/* Read the 5-bit ResponseCode (first field of every DIN Res). OK=0/1/2 advance; else FAILED. */
-static int read_rc(const uint8_t *body, uint16_t len, uint8_t *rc)
-{
-    exi_stream_t s;
-    exi_decode_init(&s, body, len);
-    uint32_t v;
-    int r = exi_read_bits(&s, 5, &v);
-    if (r) return r;
-    *rc = (uint8_t)v;
-    return EXI_OK;
-}
 static int rc_ok(uint8_t rc) { return rc <= 2u; }   /* OK / OK_NewSessionEstablished */
 
-/* RX transition engine 0x080353B2: decode a Res and advance state on success. */
+/* RX transition engine 0x080353B2: decode a Res (DIN_RES_* subev + EXI body) and advance state on
+ * success. The body has the DIN document framing stripped by ccs2_rx_exi (exi_decode_header +
+ * exi_din_decode_doc_start); each decoder reads its recovered field list (analyze102). */
 int din_session_rx(uint8_t ev, const uint8_t *body, uint16_t len, uint32_t now)
 {
     if (!sess.session_active) return EXI_ERR_EVENT;
@@ -191,7 +211,7 @@ int din_session_rx(uint8_t ev, const uint8_t *body, uint16_t len, uint32_t now)
     int r;
 
     switch (ev) {
-    case EXI_EV_SESSIONSTOP:                       /* SessionStopRes (empty) -> reset */
+    case DIN_RES_SESSIONSTOP:                      /* SessionStopRes (empty) -> reset */
         r = din_sessionstop_res_decode_exi(body, len);
         if (r) return r;
         sess.session_active = 0;
@@ -200,7 +220,49 @@ int din_session_rx(uint8_t ev, const uint8_t *body, uint16_t len, uint32_t now)
         sess.ev_contactor = sess.precharge_relay = 0;
         return EXI_OK;
 
-    case EXI_EV_CABLECHECK_RES: {
+    case DIN_RES_SESSIONSETUP: {                   /* SessionSetupRes ev41 -> 2->3 */
+        uint8_t evseid[32]; uint16_t evseid_len = 0;
+        r = din_sessionsetup_res_decode_exi(body, len, &rc, evseid, &evseid_len);
+        if (r) return r;
+        if (!rc_ok(rc)) { post_fault(DIN_FAULT_RESPONSE); shutdown_seq(now); return EXI_OK; }
+        sess.retry = 0;
+        sess.state = DIN_ST_SERVICEDISCOVERY_RES;  /* 2->3 */
+        send_req(DIN_REQ_SERVICEDISCOVERY, now);
+        return EXI_OK;
+    }
+
+    case DIN_RES_SERVICEDISCOVERY:                 /* ServiceDiscoveryRes ev3d -> 3->6 */
+        r = din_servicediscovery_res_decode_exi(body, len, &rc);
+        if (r) return r;
+        if (!rc_ok(rc)) { post_fault(DIN_FAULT_RESPONSE); shutdown_seq(now); return EXI_OK; }
+        sess.retry = 0;
+        sess.state = DIN_ST_CPD_RES;               /* 3->6 (DIN skips PaymentSelection/ContractAuth 4/5) */
+        send_req(DIN_REQ_CPD, now);
+        return EXI_OK;
+
+    case DIN_RES_CPD: {                            /* CPDRes ev0c -> 6->7 (DCparam limits -> meas) */
+        uint8_t proc = 0;
+        din_dc_charge_param_t param;
+        r = din_cpd_res_decode_exi(body, len, &rc, &proc, &param);
+        if (r) return r;
+        if (!rc_ok(rc)) { post_fault(DIN_FAULT_RESPONSE); shutdown_seq(now); return EXI_OK; }
+        if (proc == 1u) {                          /* EVSEProcessing ongoing -> re-send, stay 6 */
+            send_req(DIN_REQ_CPD, now);
+            return EXI_OK;
+        }
+        din_meas_t *m = din70121_meas_mut();       /* apply the EVSE DC limits (factor = mult+3) */
+        m->evse_max_current   = param.max_current.value;
+        m->evse_max_current_f = (int8_t)(param.max_current.mult + 3);
+        m->evse_max_voltage   = param.max_voltage.value;
+        m->evse_max_voltage_f = (int8_t)(param.max_voltage.mult + 3);
+        sess.chgparam_ok = 1;
+        sess.ts_40 = now; sess.ts_14 = now;        /* engagement-phase timer anchors [? re-arm site] */
+        sess.state = DIN_ST_CABLECHECK_RES;        /* 6->7 */
+        send_req(DIN_REQ_CABLECHECK, now);
+        return EXI_OK;
+    }
+
+    case DIN_RES_CABLECHECK: {
         uint8_t proc = 0;
         din_dc_evse_status_t st;
         r = din_cablecheck_res_decode_exi(body, len, &rc, &proc, &st);
@@ -209,16 +271,16 @@ int din_session_rx(uint8_t ev, const uint8_t *body, uint16_t len, uint32_t now)
         sess.din_isolation = st.isolation_status;  /* DIN wire isolation (session CableCheck rule only) */
         sess.phase_status = 3;                     /* CableCheckRes writer 0x0802C168 -> meas+0x3D1E=3 */
         if (proc == 1u) {                          /* EVSEProcessingState ongoing -> re-send, stay 7 */
-            send_req(DIN_EV_CABLECHECK_REQ, now);
+            send_req(DIN_REQ_CABLECHECK, now);
             return EXI_OK;
         }
         if (st.isolation_status == 1u) {           /* Valid -> advance 7->8 (0x080366AE) */
             sess.cablecheck_fin = 1;
             sess.precharge_flag = 1;               /* evcc_sta+0x23F (case7 [r4+0x23F]=1) */
             sess.state = DIN_ST_PRECHARGE_RES;
-            send_req(DIN_EV_PRECHARGE_REQ, now);
+            send_req(DIN_REQ_PRECHARGE, now);
         } else if (st.isolation_status == 0u) {    /* invalid -> retry / SessionStop */
-            send_req(DIN_EV_CABLECHECK_REQ, now);
+            send_req(DIN_REQ_CABLECHECK, now);
         } else {                                   /* >=2 -> fault code 16 shutdown */
             post_fault(DIN_FAULT_ISOLATION);
             shutdown_seq(now);
@@ -226,7 +288,7 @@ int din_session_rx(uint8_t ev, const uint8_t *body, uint16_t len, uint32_t now)
         return EXI_OK;
     }
 
-    case EXI_EV_PRECHARGE_RES: {
+    case DIN_RES_PRECHARGE: {
         din_dc_evse_status_t st;
         r = din_precharge_res_decode_exi(body, len, din70121_meas_mut(), &rc, &st);
         if (r) return r;
@@ -235,68 +297,57 @@ int din_session_rx(uint8_t ev, const uint8_t *body, uint16_t len, uint32_t now)
                                                     * (the charge_stm engagement prerequisite) */
         sess.precharge_relay = 1;
         sess.state = DIN_ST_POWERDELIVERY_START;   /* 8->9 */
-        send_req(DIN_EV_POWERDELIVERY_REQ, now);   /* PowerDelivery-start */
+        send_powerdelivery(0u, now);               /* PowerDelivery-start (ChargeProgress=0) */
         return EXI_OK;
     }
 
-    case EXI_EV_CURRENTDEMAND_RES: {
+    case DIN_RES_POWERDELIVERY: {                  /* PowerDeliveryRes ev2e -> 9->10 or 11->12 */
+        din_dc_evse_status_t st;
+        r = din_powerdelivery_res_decode_exi(body, len, &rc, &st);
+        if (r) return r;
+        if (!rc_ok(rc)) { post_fault(DIN_FAULT_RESPONSE); shutdown_seq(now); return EXI_OK; }
+        sess.retry = 0;
+        if (sess.state == DIN_ST_POWERDELIVERY_START) {   /* 9->10 */
+            sess.ev_contactor = 1;
+            sess.state = DIN_ST_CURRENTDEMAND_RES;
+            sess.ts_cd = now;
+            sess.tick_counter = 0;
+            send_req(DIN_REQ_CURRENTDEMAND, now);
+        } else if (sess.state == DIN_ST_POWERDELIVERY_STOP) {  /* 11->12 */
+            sess.state = DIN_ST_WELDING_RES;
+            send_req(DIN_REQ_WELDING, now);
+        } else {
+            return EXI_ERR_EVENT;
+        }
+        return EXI_OK;
+    }
+
+    case DIN_RES_CURRENTDEMAND: {
         r = din_cd_res_decode_exi(body, len, din70121_meas_mut(), &rc);
         if (r) return r;
         if (!rc_ok(rc)) { post_fault(DIN_FAULT_RESPONSE); shutdown_seq(now); return EXI_OK; }
         sess.retry = 0;                            /* valid Res resets the retry counter */
         if (sess.charging_complete) {              /* stop requested -> 10->11 */
             sess.state = DIN_ST_POWERDELIVERY_STOP;
-            send_req(DIN_EV_POWERDELIVERY_REQ, now);   /* PowerDelivery-stop */
+            send_powerdelivery(1u, now);           /* PowerDelivery-stop (ChargeProgress=1) */
         }
         /* else stay in state 10 (charging loop); re-send driven by the poll cadence. */
         return EXI_OK;
     }
 
-    case EXI_EV_DC_EVSE_CHARGE_PARAM:              /* CPD Res payload (charge parameter) */
-        r = read_rc(body, len, &rc);
-        if (r) return r;
-        if (!rc_ok(rc)) { post_fault(DIN_FAULT_RESPONSE); shutdown_seq(now); return EXI_OK; }
-        sess.chgparam_ok = 1;
-        sess.ts_40 = now; sess.ts_14 = now;        /* engagement-phase timer anchors [? re-arm site] */
-        sess.state = DIN_ST_CABLECHECK_RES;        /* 6->7 */
-        send_req(DIN_EV_CABLECHECK_REQ, now);
-        return EXI_OK;
-
-    default:
-        /* SessionSetupRes / ServiceDiscoveryRes / PowerDeliveryRes / WeldingDetectionRes: full
-         * field lists partial (E §3); read the ResponseCode (first 5-bit field) to advance. */
-        r = read_rc(body, len, &rc);
+    case DIN_RES_WELDING: {                        /* WeldingDetectionRes ev4f -> 12->13 */
+        din_dc_evse_status_t st;
+        r = din_welding_res_decode_exi(body, len, din70121_meas_mut(), &rc, &st);
         if (r) return r;
         if (!rc_ok(rc)) { post_fault(DIN_FAULT_RESPONSE); shutdown_seq(now); return EXI_OK; }
         sess.retry = 0;
-        switch (sess.state) {
-        case DIN_ST_SESSIONSETUP_RES:              /* 2->3 */
-            sess.state = DIN_ST_SERVICEDISCOVERY_RES;
-            send_req(DIN_EV_SERVICEDISCOVERY_REQ, now);
-            break;
-        case DIN_ST_SERVICEDISCOVERY_RES:          /* 3->6 (DIN skips PaymentSelection/ContractAuth 4/5 [?]) */
-            sess.state = DIN_ST_CPD_RES;
-            send_req(DIN_EV_CPD_REQ, now);
-            break;
-        case DIN_ST_POWERDELIVERY_START:           /* 9->10 */
-            sess.ev_contactor = 1;
-            sess.state = DIN_ST_CURRENTDEMAND_RES;
-            sess.ts_cd = now;
-            sess.tick_counter = 0;
-            send_req(DIN_EV_CURRENTDEMAND_REQ, now);
-            break;
-        case DIN_ST_POWERDELIVERY_STOP:            /* 11->12 */
-            sess.state = DIN_ST_WELDING_RES;
-            send_req(DIN_EV_WELDING_REQ, now);
-            break;
-        case DIN_ST_WELDING_RES:                   /* 12->13 */
-            sess.state = DIN_ST_SESSIONSTOP_RES;
-            send_req(DIN_EV_SESSIONSTOP_REQ, now);
-            break;
-        default:
-            return EXI_ERR_EVENT;
-        }
+        sess.state = DIN_ST_SESSIONSTOP_RES;       /* 12->13 */
+        send_req(DIN_REQ_SESSIONSTOP, now);
         return EXI_OK;
+    }
+
+    default:
+        return EXI_ERR_EVENT;
     }
 }
 
@@ -306,7 +357,7 @@ void din_session_stop(uint32_t now)
     sess.charging_complete = 1;
     if (sess.state == DIN_ST_CURRENTDEMAND_RES) {
         sess.state = DIN_ST_POWERDELIVERY_STOP;
-        send_req(DIN_EV_POWERDELIVERY_REQ, now);
+        send_powerdelivery(1u, now);               /* PowerDelivery-stop (ChargeProgress=1) */
     }
 }
 

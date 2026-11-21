@@ -321,6 +321,31 @@ def main():
     step_imms = func_imms("din_session_step")
     check(20 in step_imms, "din_session_step carries retry cap 20 (cmp #0x14)")
 
+    # --- B2 DIN document model (analyze101/102): single root 0x4D + DIN header + 6-bit choice/subev.
+    # The framing helpers + all 9 Req encoders (default TX hook) + the 5 new Res decoders (session RX
+    # dispatch) are reached from ccs2_rx_exi / din_session_rx / din_session_step, so they are retained
+    # in the autonomous image. din_dc_charge_param_decode is -O2-inlined (.part.0) into the CPD Res
+    # decoder — verified via the host round-trip (test_din70121), not a standalone symbol here.
+    for want in ("exi_din_encode_doc_start", "exi_din_decode_doc_start", "exi_din_encode_doc_end",
+                 "din_dc_ev_status_encode", "din_session_set_evccid",
+                 "din_sessionsetup_req_encode", "din_servicediscovery_req_encode",
+                 "din_cpd_req_encode", "din_cablecheck_req_encode", "din_precharge_req_encode",
+                 "din_powerdelivery_req_encode", "din_welding_req_encode", "din_sessionstop_req_encode",
+                 "din_sessionsetup_res_decode_exi", "din_servicediscovery_res_decode_exi",
+                 "din_cpd_res_decode_exi", "din_powerdelivery_res_decode_exi",
+                 "din_welding_res_decode_exi"):
+        check(want in syms, "wired B2 DIN codec/framing symbol present: " + want)
+    # ccs2_rx_exi strips the DIN document framing: it compares the decoded root against 0x4D (77)
+    # and calls exi_din_decode_doc_start. exi_din_decode_doc_start enforces the body-dispatcher subev
+    # bound 36 (cmp #0x24) + the DIN header gid 0x6d choice 2.
+    rx_imms = func_imms("ccs2_rx_exi")
+    check(0x4D in rx_imms, "ccs2_rx_exi carries DIN root 0x4D (77) compare")
+    doc_imms = func_imms("exi_din_decode_doc_start")
+    # sub >= 36 is emitted as cmp #35; bhi (>35) or cmp #36; bcs (>=36) — accept either encoding.
+    check(35 in doc_imms or 36 in doc_imms,
+          "exi_din_decode_doc_start carries subev bound 36 (cmp #0x23 bhi / #0x24 bcs)")
+    check(2 in doc_imms, "exi_din_decode_doc_start carries DIN header gid 0x6d choice 2")
+
     # LIBRARY PIVOT: the IPv6 EtherType + next-header demux is now done by lwIP (ethernet_input
     # 0x0809D914 / ip6_input 0x0809B88E), not the retired hand-rolled v2g_net_rx_ethernet demux
     # (which now just forwards the frame to v2g_stack_rx_ethernet -> ethernet_input). Verify the

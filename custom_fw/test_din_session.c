@@ -58,11 +58,68 @@ static void wr_pvt(exi_stream_t *s, int8_t mult, uint8_t unit, uint16_t value)
     exi_pvt_t p = { .mult = mult, .unit = unit, .unit_present = 1, .value = value };
     exi_write_pvt(s, &p);
 }
-/* RC-only body (SessionSetup/ServiceDiscovery/CPD/PowerDelivery/Welding Res first field). */
+/* RC-only body (ServiceDiscoveryRes reads RC first; the other Res have leading gates / fields). */
 static uint16_t mk_rc(uint8_t *buf, uint8_t rc)
 {
     exi_stream_t s; exi_encode_init(&s, buf, 64, 0);
     exi_write_bits(&s, 5, rc);
+    return (uint16_t)exi_encode_finish(&s);
+}
+/* SessionSetupRes ev41: gate gate RC(5) gate EVSEID(octet) + opt EVSETimeStamp choice(2)=1 absent. */
+static uint16_t mk_sessionsetup(uint8_t *buf, uint8_t rc)
+{
+    exi_stream_t s; exi_encode_init(&s, buf, 64, 0);
+    exi_write_gate(&s); exi_write_gate(&s);
+    exi_write_bits(&s, 5, rc);
+    exi_write_gate(&s);
+    uint8_t id[2] = { 0x41, 0x42 };
+    exi_write_octet(&s, id, 2);          /* EVSEID */
+    exi_write_bits(&s, 2, 1);            /* EVSETimeStamp absent */
+    return (uint16_t)exi_encode_finish(&s);
+}
+/* CPDRes ev0c: RC(5) + processing(1) + sched-choice(2)=1 + AC/DC-choice(2)=1 + DCparam ev15. */
+static uint16_t mk_cpd(uint8_t *buf, uint8_t rc, uint8_t proc)
+{
+    exi_stream_t s; exi_encode_init(&s, buf, 128, 0);
+    exi_write_bits(&s, 5, rc);
+    exi_write_bits(&s, 1, proc);         /* EVSEProcessing */
+    exi_write_bits(&s, 2, 1);            /* sched choice DIN=1 (empty) */
+    exi_write_bits(&s, 2, 1);            /* AC/DC param choice DIN=1 (DCparam) */
+    wr_dc_evse_status(&s, 1, 1, 0, 0);   /* DC_EVSEStatus */
+    wr_pvt(&s, 0, 1, 200);               /* maxCurrent (required) */
+    exi_write_bits(&s, 2, 1);            /* maxPower absent */
+    wr_pvt(&s, 0, 3, 500);               /* maxVoltage (required) */
+    wr_pvt(&s, 0, 1, 0);                 /* minCurrent (required) */
+    wr_pvt(&s, 0, 3, 0);                 /* minVoltage (required) */
+    exi_write_bits(&s, 2, 1);            /* opt @+0x38 absent */
+    wr_pvt(&s, 0, 1, 250);               /* peak current (required) */
+    exi_write_bits(&s, 2, 1);            /* energy absent */
+    return (uint16_t)exi_encode_finish(&s);
+}
+/* PowerDeliveryRes ev2e: gate gate RC(5) gate EVSEStatus-choice(2)=1 + DC_EVSEStatus + gate. */
+static uint16_t mk_powerdelivery(uint8_t *buf, uint8_t rc)
+{
+    exi_stream_t s; exi_encode_init(&s, buf, 64, 0);
+    exi_write_gate(&s); exi_write_gate(&s);
+    exi_write_bits(&s, 5, rc);
+    exi_write_gate(&s);
+    exi_write_bits(&s, 2, 1);            /* EVSEStatus choice DIN=1 */
+    wr_dc_evse_status(&s, 1, 1, 0, 0);
+    exi_write_gate(&s);                  /* trailing gate */
+    return (uint16_t)exi_encode_finish(&s);
+}
+/* WeldingDetectionRes ev4f: gate gate RC(5) gate gate DC_EVSEStatus gate PVT gate. */
+static uint16_t mk_welding(uint8_t *buf, uint8_t rc, uint16_t volt)
+{
+    exi_stream_t s; exi_encode_init(&s, buf, 64, 0);
+    exi_write_gate(&s); exi_write_gate(&s);
+    exi_write_bits(&s, 5, rc);
+    exi_write_gate(&s);
+    exi_write_gate(&s);                  /* state0xe gate */
+    wr_dc_evse_status(&s, 1, 1, 0, 0);
+    exi_write_gate(&s);                  /* state0xf gate */
+    wr_pvt(&s, 0, 3, volt);              /* EVSEPresentVoltage */
+    exi_write_gate(&s);                  /* trailing gate */
     return (uint16_t)exi_encode_finish(&s);
 }
 static uint16_t mk_cablecheck(uint8_t *buf, uint8_t rc, uint8_t iso, uint8_t proc)
@@ -112,6 +169,32 @@ static void reset(uint32_t now)
     din_session_start(now);
 }
 
+/* RX convenience wrappers: synthesize the Res body + dispatch on the DIN_RES_* subev. */
+static void rx_setup(uint8_t *b, uint8_t rc, uint32_t now)
+{ uint16_t n = mk_sessionsetup(b, rc); din_session_rx(DIN_RES_SESSIONSETUP, b, n, now); }
+static void rx_sd(uint8_t *b, uint8_t rc, uint32_t now)
+{ uint16_t n = mk_rc(b, rc); din_session_rx(DIN_RES_SERVICEDISCOVERY, b, n, now); }
+static void rx_cpd(uint8_t *b, uint8_t rc, uint32_t now)
+{ uint16_t n = mk_cpd(b, rc, 0); din_session_rx(DIN_RES_CPD, b, n, now); }
+static void rx_pd(uint8_t *b, uint8_t rc, uint32_t now)
+{ uint16_t n = mk_powerdelivery(b, rc); din_session_rx(DIN_RES_POWERDELIVERY, b, n, now); }
+static void rx_weld(uint8_t *b, uint8_t rc, uint32_t now)
+{ uint16_t n = mk_welding(b, rc, 400); din_session_rx(DIN_RES_WELDING, b, n, now); }
+static void rx_cablecheck(uint8_t *b, uint8_t rc, uint8_t iso, uint8_t proc, uint32_t now)
+{ uint16_t n = mk_cablecheck(b, rc, iso, proc); din_session_rx(DIN_RES_CABLECHECK, b, n, now); }
+static void rx_precharge(uint8_t *b, uint8_t rc, uint16_t volt, uint32_t now)
+{ uint16_t n = mk_precharge(b, rc, volt); din_session_rx(DIN_RES_PRECHARGE, b, n, now); }
+static void rx_cd(uint8_t *b, uint8_t rc, uint16_t pv, uint16_t pi, uint32_t now)
+{ uint16_t n = mk_cd_res(b, rc, pv, pi); din_session_rx(DIN_RES_CURRENTDEMAND, b, n, now); }
+static void rx_stop(uint8_t *b, uint32_t now)
+{ uint16_t n = mk_sessionstop(b); din_session_rx(DIN_RES_SESSIONSTOP, b, n, now); }
+/* Walk the handshake up to state 10 (CurrentDemand) for the cadence/loop tests. */
+static void walk_to_10(uint8_t *b, uint32_t now)
+{
+    rx_setup(b, 0, now); rx_sd(b, 0, now); rx_cpd(b, 0, now);
+    rx_cablecheck(b, 0, 1, 0, now); rx_precharge(b, 0, 400, now); rx_pd(b, 0, now);
+}
+
 static void test_init_start(void)
 {
     din70121_init(); din_session_init(); din_session_set_tx(spy_tx);
@@ -130,29 +213,31 @@ static void test_init_start(void)
 
 static void test_sequence_walk(void)
 {
-    uint8_t b[128]; uint16_t n; uint32_t now = 1000;
+    uint8_t b[128]; uint32_t now = 1000;
     reset(now);
     const din_session_t *s = din_session_get();
 
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);          /* SessionSetupRes (ev0 [?]) */
+    rx_setup(b, 0, now);                                       /* SessionSetupRes ev41 */
     CK(s->state == DIN_ST_SERVICEDISCOVERY_RES, "2->3 on SessionSetupRes OK");
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);          /* ServiceDiscoveryRes */
+    rx_sd(b, 0, now);                                          /* ServiceDiscoveryRes ev3d */
     CK(s->state == DIN_ST_CPD_RES, "3->6 on ServiceDiscoveryRes (DIN skips 4/5)");
-    n = mk_rc(b, 0); din_session_rx(EXI_EV_DC_EVSE_CHARGE_PARAM, b, n, now);  /* CPD Res */
+    rx_cpd(b, 0, now);                                         /* CPDRes ev0c */
     CK(s->state == DIN_ST_CABLECHECK_RES && s->chgparam_ok == 1, "6->7 on CPD Res + chgparam_ok");
-    n = mk_cablecheck(b, 0, 1, 0); din_session_rx(EXI_EV_CABLECHECK_RES, b, n, now);
+    CK(din70121_meas()->evse_max_current == 200 && din70121_meas()->evse_max_voltage == 500,
+       "CPDRes DCparam limits applied to meas (maxI=200, maxV=500)");
+    rx_cablecheck(b, 0, 1, 0, now);
     CK(s->state == DIN_ST_PRECHARGE_RES && s->cablecheck_fin == 1 && s->precharge_flag == 1,
        "7->8 on CableCheck isolation==1 + cablecheck_fin + precharge_flag");
     CK(s->din_isolation == 1 && s->phase_status == 3,
        "CableCheckRes: din_isolation=1 (session) + phase_status=3 (analyze103)");
-    n = mk_precharge(b, 0, 400); din_session_rx(EXI_EV_PRECHARGE_RES, b, n, now);
+    rx_precharge(b, 0, 400, now);
     CK(s->state == DIN_ST_POWERDELIVERY_START && s->precharge_relay == 1,
        "8->9 on PreChargeRes + precharge_relay");
     CK(s->phase_status == 4, "PreChargeRes: phase_status=4 (engagement prerequisite, analyze103)");
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);          /* PowerDeliveryRes (start) */
+    rx_pd(b, 0, now);                                          /* PowerDeliveryRes (start) */
     CK(s->state == DIN_ST_CURRENTDEMAND_RES && s->ev_contactor == 1,
        "9->10 on PowerDeliveryRes + ev_contactor");
-    n = mk_cd_res(b, 0, 400, 100); din_session_rx(EXI_EV_CURRENTDEMAND_RES, b, n, now);
+    rx_cd(b, 0, 400, 100, now);
     CK(s->state == DIN_ST_CURRENTDEMAND_RES, "stay 10 on CurrentDemandRes (charging loop)");
     CK(din70121_meas()->evse_present_voltage == 400 && din70121_meas()->evse_max_current == 200,
        "CurrentDemandRes meas decoded (presentV=400, maxI=200)");
@@ -160,11 +245,11 @@ static void test_sequence_walk(void)
     /* stop -> 10->11->12->13->0 */
     din_session_stop(now);
     CK(s->state == DIN_ST_POWERDELIVERY_STOP && s->charging_complete == 1, "stop -> 11 + complete");
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);          /* PowerDeliveryRes (stop) */
+    rx_pd(b, 0, now);                                          /* PowerDeliveryRes (stop) */
     CK(s->state == DIN_ST_WELDING_RES, "11->12 on PowerDeliveryRes(stop)");
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);          /* WeldingDetectionRes */
+    rx_weld(b, 0, now);                                        /* WeldingDetectionRes ev4f */
     CK(s->state == DIN_ST_SESSIONSTOP_RES, "12->13 on WeldingDetectionRes");
-    n = mk_sessionstop(b); din_session_rx(EXI_EV_SESSIONSTOP, b, n, now);
+    rx_stop(b, now);
     CK(s->state == DIN_ST_IDLE && s->session_active == 0, "13->0 on SessionStopRes (reset)");
     CK(s->cablecheck_fin == 0 && s->ev_contactor == 0, "reset clears handshake flags");
 }
@@ -181,8 +266,8 @@ static void test_resp_wait_retry(void)
     CK(tx_count == 1, "resp-wait timeout re-sends Req");
     CK(s->state == DIN_ST_SESSIONSETUP_RES, "resp-wait timeout stays in state");
     /* a valid Res resets retry */
-    uint8_t b[16]; uint16_t n = mk_rc(b, 0);
-    din_session_rx(0x00, b, n, now + 4002);
+    uint8_t b[64];
+    rx_setup(b, 0, now + 4002);
     CK(s->retry == 0, "valid Res resets retry counter");
 }
 
@@ -210,16 +295,11 @@ static void test_total_timeout(void)
 
 static void test_cd_cadence(void)
 {
-    uint8_t b[128]; uint16_t n; uint32_t now = 1000;
+    uint8_t b[128]; uint32_t now = 1000;
     reset(now);
     const din_session_t *s = din_session_get();
     /* walk to state 10 */
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);
-    n = mk_rc(b, 0); din_session_rx(EXI_EV_DC_EVSE_CHARGE_PARAM, b, n, now);
-    n = mk_cablecheck(b, 0, 1, 0); din_session_rx(EXI_EV_CABLECHECK_RES, b, n, now);
-    n = mk_precharge(b, 0, 400); din_session_rx(EXI_EV_PRECHARGE_RES, b, n, now);
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);
+    walk_to_10(b, now);
     CK(s->state == DIN_ST_CURRENTDEMAND_RES, "walked to state 10 for cadence test");
     din_session_set_fp(10);
     tx_count = 0;
@@ -234,58 +314,47 @@ static void test_cd_cadence(void)
 
 static void test_cablecheck_isolation(void)
 {
-    uint8_t b[64]; uint16_t n; uint32_t now = 1000;
+    uint8_t b[128]; uint32_t now = 1000;
     /* isolation == 0 -> retry (stay 7) */
     reset(now);
     const din_session_t *s = din_session_get();
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);
-    n = mk_rc(b, 0); din_session_rx(EXI_EV_DC_EVSE_CHARGE_PARAM, b, n, now);
-    n = mk_cablecheck(b, 0, 0, 0); din_session_rx(EXI_EV_CABLECHECK_RES, b, n, now);
+    rx_setup(b, 0, now); rx_sd(b, 0, now); rx_cpd(b, 0, now);
+    rx_cablecheck(b, 0, 0, 0, now);
     CK(s->state == DIN_ST_CABLECHECK_RES && s->cablecheck_fin == 0,
        "CableCheck isolation==0 -> retry stay 7");
     /* isolation >= 2 -> fault ISOLATION(16) + shutdown */
     reset(now);
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);
-    n = mk_rc(b, 0); din_session_rx(EXI_EV_DC_EVSE_CHARGE_PARAM, b, n, now);
-    n = mk_cablecheck(b, 0, 2, 0); din_session_rx(EXI_EV_CABLECHECK_RES, b, n, now);
+    rx_setup(b, 0, now); rx_sd(b, 0, now); rx_cpd(b, 0, now);
+    rx_cablecheck(b, 0, 2, 0, now);
     CK(s->fault_code == DIN_FAULT_ISOLATION, "CableCheck isolation>=2 -> fault code 16");
     CK(s->state == DIN_ST_POWERDELIVERY_STOP, "CableCheck fault -> shutdown");
     /* processing ongoing (proc==1) -> re-send stay 7 even with isolation valid */
     reset(now);
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);
-    n = mk_rc(b, 0); din_session_rx(EXI_EV_DC_EVSE_CHARGE_PARAM, b, n, now);
+    rx_setup(b, 0, now); rx_sd(b, 0, now); rx_cpd(b, 0, now);
     tx_count = 0;
-    n = mk_cablecheck(b, 0, 1, 1); din_session_rx(EXI_EV_CABLECHECK_RES, b, n, now);
+    rx_cablecheck(b, 0, 1, 1, now);
     CK(s->state == DIN_ST_CABLECHECK_RES && tx_count == 1,
        "CableCheck processing ongoing -> re-send stay 7");
 }
 
 static void test_failed_response(void)
 {
-    uint8_t b[64]; uint16_t n; uint32_t now = 1000;
+    uint8_t b[64]; uint32_t now = 1000;
     reset(now);
     const din_session_t *s = din_session_get();
     /* FAILED ResponseCode (rc=3 FAILED) on SessionSetupRes -> fault RESPONSE(40) + shutdown */
-    n = mk_rc(b, 3); din_session_rx(0x00, b, n, now);
+    rx_setup(b, 3, now);
     CK(s->fault_code == DIN_FAULT_RESPONSE, "FAILED ResponseCode -> fault code 40");
     CK(s->state == DIN_ST_POWERDELIVERY_STOP, "FAILED ResponseCode -> shutdown");
 }
 
 static void test_inert_no_fault_on_success(void)
 {
-    uint8_t b[128]; uint16_t n; uint32_t now = 1000;
+    uint8_t b[128]; uint32_t now = 1000;
     reset(now);
     const din_session_t *s = din_session_get();
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);
-    n = mk_rc(b, 0); din_session_rx(EXI_EV_DC_EVSE_CHARGE_PARAM, b, n, now);
-    n = mk_cablecheck(b, 0, 1, 0); din_session_rx(EXI_EV_CABLECHECK_RES, b, n, now);
-    n = mk_precharge(b, 0, 400); din_session_rx(EXI_EV_PRECHARGE_RES, b, n, now);
-    n = mk_rc(b, 0); din_session_rx(0x00, b, n, now);
-    n = mk_cd_res(b, 0, 400, 100); din_session_rx(EXI_EV_CURRENTDEMAND_RES, b, n, now);
+    walk_to_10(b, now);
+    rx_cd(b, 0, 400, 100, now);
     CK(s->fault_code == DIN_FAULT_NONE && s->fault_flag == 0,
        "successful sequence posts NO fault (inert, power drive gated)");
 }

@@ -296,41 +296,444 @@ int din_sessionstop_res_decode_exi(const uint8_t *body, uint16_t len)
     return choice ? EXI_ERR_EMPTY : EXI_OK;
 }
 
-/* CurrentDemandReq grammar encoder (D application field map 0x0802C2CE + exi primitives). Framing
- * (8-byte V2GTP reserved + leading 0x80 + 7-bit req_ev) then DC_EVStatus {EVReady, EVErrorCode} +
- * EVTargetCurrent PVT + EVTargetVoltage PVT + ChargingComplete bool. The full DIN Req optional
- * field set (EVMaximum* limits, BulkChargingComplete, RemainingTime*) is [?] (E §3 partial); the
- * recovered actuation fields (EVTargetCurrent/Voltage, DC_EVStatus) are emitted byte-faithfully.
- * INERT: produces the EXI image; the live TCP/TLS send is gated. Returns total length or error. */
-int din_cd_req_encode_exi(din_meas_t *m, uint8_t *buf, uint16_t cap, uint8_t req_ev)
+/* ---- B2 DIN document message codec (analyze101/102/103) ---- */
+
+/* PVT from a meas value + stored factor (mult = factor-3); DIN unit enum A=1 / V=3 [?]. */
+static void meas_to_pvt(const exi_pvt_t *unused, uint16_t val, int8_t factor, uint8_t unit,
+                        exi_pvt_t *p)
+{
+    (void)unused;
+    p->mult = (int8_t)(factor - 3);
+    p->unit = unit;
+    p->unit_present = 1;
+    p->value = val;
+}
+
+/* DC_EVStatus ev17 0x0806A936 encoder — recovered DEFAULT grammar (builder presence flags
+ * [body+8]/[body+0x10]=0; EVReady[body+0]=1; [body+0x11]=0; EVRESSSOC[body+0x12]=soc). Trace:
+ *   state 0xc1: gate0 gate0 EVReady(bool) gate0
+ *   state 0xc2: choice(2,2) gate0 4-bit([body+0x11]=0) gate0
+ *   state 0xc5: gate0 gate0 EVRESSSOC(7-bit, [body+0x12]) gate0
+ *   state 4   : terminal gate0
+ * 23 bits total. For EVReady=1/soc=0x46 the wire is 0x28 0x02 0x30. */
+int din_dc_ev_status_encode(exi_stream_t *s, uint8_t ev_ready, uint8_t soc)
+{
+    int r = exi_write_gate(s);                 /* 0xc1 g1 */
+    if (r) return r;
+    r = exi_write_gate(s);                     /* 0xc1 g2 */
+    if (r) return r;
+    r = exi_write_bool(s, ev_ready);           /* EVReady (0x08093982 bool encoder) */
+    if (r) return r;
+    r = exi_write_gate(s);                     /* 0xc1 g3 */
+    if (r) return r;
+    r = exi_write_bits(s, 2, 2);               /* 0xc2 choice 2 (EVErrorCode/EVRESSSOC default) */
+    if (r) return r;
+    r = exi_write_gate(s);                     /* 0xc2 g */
+    if (r) return r;
+    r = exi_write_bits(s, 4, 0);               /* 4-bit [body+0x11] = 0 */
+    if (r) return r;
+    r = exi_write_gate(s);                     /* 0xc2 g */
+    if (r) return r;
+    r = exi_write_gate(s);                     /* 0xc5 g1 */
+    if (r) return r;
+    r = exi_write_gate(s);                     /* 0xc5 g2 */
+    if (r) return r;
+    r = exi_write_bits(s, 7, soc & 0x7Fu);     /* EVRESSSOC 7-bit percent */
+    if (r) return r;
+    r = exi_write_gate(s);                     /* 0xc5 g3 */
+    if (r) return r;
+    return exi_write_gate(s);                  /* state 4 terminal gate */
+}
+
+/* Common Req document framing: reserve 8-byte V2GTP + leading 0x80 + root 0x4D + DIN header +
+ * 6-bit choice. Leaves the stream at the body start. */
+static int req_doc_begin(exi_stream_t *s, uint8_t *buf, uint16_t cap, uint8_t choice,
+                         const uint8_t *sid, uint16_t sid_len)
+{
+    exi_encode_init(s, buf, cap, EXI_V2GTP_HDR_LEN);
+    int r = exi_encode_header(s, EXI_DIN_ROOT);
+    if (r) return r;
+    return exi_din_encode_doc_start(s, choice, sid, sid_len);
+}
+static int req_doc_end(exi_stream_t *s)
+{
+    int r = exi_din_encode_doc_end(s);         /* EE gate */
+    if (r) return r;
+    return (int)exi_encode_finish(s);
+}
+
+/* SessionSetupReq ev40 0x0806ABEA (choice 0x1D): EVCCID hexBinary octet string (varlen-len +
+ * octets; stock EVCCID = 6 bytes from the unit MAC getter 0x080896C0). Leading gates [? exact
+ * ev40 prologue gate count partial]; modeled gate gate EVCCID gate. */
+int din_sessionsetup_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
+                                const uint8_t *evccid, uint16_t evccid_len)
 {
     exi_stream_t s;
-    exi_encode_init(&s, buf, cap, EXI_V2GTP_HDR_LEN);
-    int r = exi_encode_header(&s, req_ev);
-    if (r < 0) return r;
-    /* DC_EVStatus: EVReady (bool), EVErrorCode (2-bit enum: NO_ERROR=0). */
-    r = exi_write_bool(&s, m->ev_ready);
-    if (r < 0) return r;
-    r = exi_write_bits(&s, 2, m->ev_error_code & 3u);
-    if (r < 0) return r;
-    /* EVTargetCurrent PVT (meas factor -> signed mult = factor-3). */
+    int r = req_doc_begin(&s, buf, cap, DIN_REQ_SESSIONSETUP, sid, sid_len);
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    r = exi_write_octet(&s, evccid, evccid_len);   /* EVCCID (0x0809392A + 0x08093B5E) */
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    return req_doc_end(&s);
+}
+
+/* ServiceDiscoveryReq ev3c 0x0806B06A (choice 0x19): optional ServiceScope + ServiceCategory,
+ * both absent in the DIN default (gates [body+0x24]/bit16 clear). Emits the absent choice. */
+int din_servicediscovery_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len)
+{
+    exi_stream_t s;
+    int r = req_doc_begin(&s, buf, cap, DIN_REQ_SERVICEDISCOVERY, sid, sid_len);
+    if (r) return r;
+    r = exi_write_gate(&s);                    /* scope gate (absent) */
+    if (r) return r;
+    r = exi_write_bits(&s, 1, 0);              /* ServiceCategory bit16 gate (absent) */
+    if (r) return r;
+    return req_doc_end(&s);
+}
+
+/* CableCheckReq ev04 0x0806D698 (choice 0x01) / WeldingReq ev4e 0x0806AA92 (choice 0x21):
+ * gate + DC_EVStatus ev17 + gate (Group N: ev04/ev4e bl ev17; ev4e probe gate+ev17+gate). */
+static int dc_evstatus_req_encode(uint8_t *buf, uint16_t cap, uint8_t choice,
+                                  const uint8_t *sid, uint16_t sid_len, uint8_t ev_ready, uint8_t soc)
+{
+    exi_stream_t s;
+    int r = req_doc_begin(&s, buf, cap, choice, sid, sid_len);
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    r = din_dc_ev_status_encode(&s, ev_ready, soc);
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    return req_doc_end(&s);
+}
+int din_cablecheck_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
+                              uint8_t ev_ready, uint8_t soc)
+{
+    return dc_evstatus_req_encode(buf, cap, DIN_REQ_CABLECHECK, sid, sid_len, ev_ready, soc);
+}
+int din_welding_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
+                           uint8_t ev_ready, uint8_t soc)
+{
+    return dc_evstatus_req_encode(buf, cap, DIN_REQ_WELDING, sid, sid_len, ev_ready, soc);
+}
+
+/* PreChargeReq ev2f 0x0806B4DE (choice 0x15): DC_EVStatus + EVTargetCurrent PVT@0x14 +
+ * EVTargetVoltage PVT@0x1C (Group O). Inter-field gates [? exact gate count partial]. */
+int din_precharge_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
+                             const din_meas_t *m, uint8_t ev_ready, uint8_t soc)
+{
+    exi_stream_t s;
+    int r = req_doc_begin(&s, buf, cap, DIN_REQ_PRECHARGE, sid, sid_len);
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    r = din_dc_ev_status_encode(&s, ev_ready, soc);
+    if (r) return r;
     exi_pvt_t p;
-    p.mult = (int8_t)(m->ev_target_current_f - 3);
-    p.unit = 1;            /* DIN unit enum: A (ampere) [?] */
-    p.unit_present = 1;
-    p.value = m->ev_target_current;
-    r = exi_write_pvt(&s, &p);
-    if (r < 0) return r;
-    /* EVTargetVoltage PVT. */
-    p.mult = (int8_t)(m->ev_target_voltage_f - 3);
-    p.unit = 3;            /* DIN unit enum: V (volt) [?] */
-    p.unit_present = 1;
-    p.value = m->ev_target_voltage;
-    r = exi_write_pvt(&s, &p);
-    if (r < 0) return r;
-    /* ChargingComplete (bool) — terminates the demand loop when set. */
-    r = exi_write_bool(&s, 0);
-    if (r < 0) return r;
+    meas_to_pvt(0, m->ev_target_current, m->ev_target_current_f, 1, &p);
+    r = exi_write_pvt(&s, &p);                 /* EVTargetCurrent */
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    meas_to_pvt(0, m->ev_target_voltage, m->ev_target_voltage_f, 3, &p);
+    r = exi_write_pvt(&s, &p);                 /* EVTargetVoltage */
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    return req_doc_end(&s);
+}
+
+/* PowerDeliveryReq ev2d 0x0806B814 (choice 0x13): ChargeProgress (bool encoder 0x08093982:
+ * Start=0/Stop=1) + optional ChargingSessionDetails param (absent, gate [body+0xcc] clear). */
+int din_powerdelivery_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
+                                 uint8_t charge_progress)
+{
+    exi_stream_t s;
+    int r = req_doc_begin(&s, buf, cap, DIN_REQ_POWERDELIVERY, sid, sid_len);
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    r = exi_write_bool(&s, charge_progress);   /* ChargeProgress 0=Start 1=Stop */
+    if (r) return r;
+    r = exi_write_gate(&s);                    /* optional-param gate (absent) */
+    if (r) return r;
+    return req_doc_end(&s);
+}
+
+/* SessionStopReq ev42 0x0806AB0E (choice 0x1F): EMPTY body — writeBits(1,0) (Group J). */
+int din_sessionstop_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len)
+{
+    exi_stream_t s;
+    int r = req_doc_begin(&s, buf, cap, DIN_REQ_SESSIONSTOP, sid, sid_len);
+    if (r) return r;
+    r = exi_write_bits(&s, 1, 0);              /* empty choice 0 */
+    if (r) return r;
+    return req_doc_end(&s);
+}
+
+/* ChargeParameterDiscoveryReq ev0b 0x0806CEF0 (choice 0x07): EnergyTransferMode (3-bit) + AC/DC
+ * choice; DIN -> DC_EVChargeParameter ev13 0x0806CC3A (DC_EVStatus + maxCurrent/maxPower/maxVoltage
+ * PVTs). Mode DC=3 [? enum]; the DC param emits DC_EVStatus + the EVSE-requested max limits from
+ * meas. Optional fields gated-absent. [? exact ev0b/ev13 gate sequence partial]. */
+int din_cpd_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
+                       const din_meas_t *m, uint8_t ev_ready, uint8_t soc)
+{
+    exi_stream_t s;
+    int r = req_doc_begin(&s, buf, cap, DIN_REQ_CPD, sid, sid_len);
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    r = exi_write_bits(&s, 3, 3);              /* EnergyTransferMode = DC (3) [?] */
+    if (r) return r;
+    r = exi_write_bits(&s, 2, 1);              /* AC/DC choice 1 = DC */
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    r = din_dc_ev_status_encode(&s, ev_ready, soc);   /* DC_EVChargeParameter.DC_EVStatus */
+    if (r) return r;
+    exi_pvt_t p;
+    meas_to_pvt(0, m->evse_max_current, m->evse_max_current_f, 1, &p);
+    r = exi_write_pvt(&s, &p);                 /* EVMaximumCurrentLimit */
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    r = exi_write_bits(&s, 2, 1);              /* EVMaximumPowerLimit optional absent */
+    if (r) return r;
+    meas_to_pvt(0, m->evse_max_voltage, m->evse_max_voltage_f, 3, &p);
+    r = exi_write_pvt(&s, &p);                 /* EVMaximumVoltageLimit */
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    return req_doc_end(&s);
+}
+
+/* CurrentDemandReq ev11 0x0806BDDC (choice 0x0D) — full field list (analyze101 Group I):
+ * DC_EVStatus@0x00 + EVTargetCurrent PVT@0x14 + opt EVMaximumPowerLimit@0x1C (gate 0x24) /
+ * EVMaximumCurrentLimit@0x28 (gate 0x30) / EVMaximumVoltageLimit@0x34 (gate 0x3C) +
+ * BulkChargingComplete@0x40 (gate 0x44) + ChargingComplete@0x48 + opt RemainingTimeToFullSOC@0x4C
+ * (gate 0x54) / RemainingTimeToBulkSOC@0x58 (gate 0x60) + EVTargetVoltage PVT@0x64. The optional
+ * limits are gated-absent in the inert default; the recovered actuation fields (targets, bulk/
+ * charging complete) are emitted byte-faithfully (offsets corrected by analyze101). */
+int din_cd_req_encode_exi(din_meas_t *m, uint8_t *buf, uint16_t cap,
+                          const uint8_t *sid, uint16_t sid_len)
+{
+    exi_stream_t s;
+    int r = req_doc_begin(&s, buf, cap, DIN_REQ_CURRENTDEMAND, sid, sid_len);
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
+    r = din_dc_ev_status_encode(&s, m->ev_ready, 70);   /* DC_EVStatus @0x00 */
+    if (r) return r;
+    exi_pvt_t p;
+    meas_to_pvt(0, m->ev_target_current, m->ev_target_current_f, 1, &p);
+    r = exi_write_pvt(&s, &p);                 /* EVTargetCurrent PVT @0x14 */
+    if (r) return r;
+    r = exi_write_gate(&s);                    /* gate 0x24 (EVMaximumPowerLimit absent) */
+    if (r) return r;
+    r = exi_write_bits(&s, 2, 1);              /* opt EVMaximumPowerLimit absent */
+    if (r) return r;
+    r = exi_write_gate(&s);                    /* gate 0x30 (EVMaximumCurrentLimit absent) */
+    if (r) return r;
+    r = exi_write_bits(&s, 2, 1);              /* opt EVMaximumCurrentLimit absent */
+    if (r) return r;
+    r = exi_write_gate(&s);                    /* gate 0x3C (EVMaximumVoltageLimit absent) */
+    if (r) return r;
+    r = exi_write_bits(&s, 2, 1);              /* opt EVMaximumVoltageLimit absent */
+    if (r) return r;
+    r = exi_write_gate(&s);                    /* gate 0x44 */
+    if (r) return r;
+    r = exi_write_bool(&s, m->bulk_charging_complete);   /* BulkChargingComplete @0x40 */
+    if (r) return r;
+    r = exi_write_bool(&s, m->charging_complete);        /* ChargingComplete @0x48 */
+    if (r) return r;
+    r = exi_write_gate(&s);                    /* gate 0x54 (RemainingTimeToFullSOC absent) */
+    if (r) return r;
+    r = exi_write_bits(&s, 2, 1);
+    if (r) return r;
+    r = exi_write_gate(&s);                    /* gate 0x60 (RemainingTimeToBulkSOC absent) */
+    if (r) return r;
+    r = exi_write_bits(&s, 2, 1);
+    if (r) return r;
+    meas_to_pvt(0, m->ev_target_voltage, m->ev_target_voltage_f, 3, &p);
+    r = exi_write_pvt(&s, &p);                 /* EVTargetVoltage PVT @0x64 */
+    if (r) return r;
+    r = exi_write_gate(&s);
+    if (r) return r;
     m->first_demand_sent = 1u;
-    return (int)exi_encode_finish(&s);
+    return req_doc_end(&s);
+}
+
+/* CPD Res DC_EVSEChargeParameter ev15 0x080650D2 decoder (analyze102). DC_EVSEStatus + 8 PVTs
+ * (maxCurrent req, maxPower opt, maxVoltage req, minCurrent req, minVoltage req, opt, req, energy
+ * opt). Optional fields: 2-bit choice (0=present+flag, 1=skip). */
+int din_dc_charge_param_decode(exi_stream_t *s, din_dc_charge_param_t *out)
+{
+    int r = din_dc_evse_status_decode(s, &out->status);   /* DC_EVSEStatus @+0 */
+    if (r) return r;
+    r = exi_read_pvt(s, &out->max_current);               /* @+0xC required */
+    if (r) return r;
+    uint32_t choice;
+    r = exi_read_bits(s, 2, &choice);                     /* maxPower optional @+0x14 */
+    if (r) return r;
+    out->max_power_present = (choice == 0u);
+    if (choice == 0u) { r = exi_read_pvt(s, &out->max_power); if (r) return r; }
+    r = exi_read_pvt(s, &out->max_voltage);               /* @+0x20 required */
+    if (r) return r;
+    r = exi_read_pvt(s, &out->min_current);               /* @+0x28 required */
+    if (r) return r;
+    r = exi_read_pvt(s, &out->min_voltage);               /* @+0x30 required */
+    if (r) return r;
+    r = exi_read_bits(s, 2, &choice);                     /* opt @+0x38 */
+    if (r) return r;
+    out->opt_limit_present = (choice == 0u);
+    if (choice == 0u) { r = exi_read_pvt(s, &out->opt_limit); if (r) return r; }
+    r = exi_read_pvt(s, &out->peak_current);              /* @+0x44 required */
+    if (r) return r;
+    r = exi_read_bits(s, 2, &choice);                     /* energy optional @+0x4C */
+    if (r) return r;
+    out->energy_present = (choice == 0u);
+    if (choice == 0u) { r = exi_read_pvt(s, &out->energy); if (r) return r; }
+    return EXI_OK;
+}
+
+/* SessionSetupRes ev41 0x08062B1E (subev 0x1E): gate gate RC(5) gate EVSEID (varlen-len + octets,
+ * clamp 32) + optional EVSETimeStamp (2-bit choice 0=present -> 8-byte fixed 0x08093550). */
+int din_sessionsetup_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *response_code,
+                                    uint8_t *evseid, uint16_t *evseid_len)
+{
+    exi_stream_t s;
+    exi_decode_init(&s, body, len);
+    int r = exi_read_gate(&s, EXI_ERR_GATE);              /* lead gate1 */
+    if (r) return r;
+    r = exi_read_gate(&s, EXI_ERR_GATE);                  /* lead gate2 */
+    if (r) return r;
+    uint32_t rc;
+    r = exi_read_bits(&s, 5, &rc);                        /* ResponseCode */
+    if (r) return r;
+    *response_code = (uint8_t)rc;
+    r = exi_read_gate(&s, EXI_ERR_GATE);                  /* post-RC gate */
+    if (r) return r;
+    r = exi_read_octet(&s, evseid, 32, evseid_len);       /* EVSEID varlen-len + octets (cap 32) */
+    if (r) return r;
+    uint32_t choice;
+    r = exi_read_bits(&s, 2, &choice);                    /* EVSETimeStamp optional choice */
+    if (r) return r;
+    if (choice == 0u) {                                   /* present: 8-byte fixed timestamp */
+        for (int i = 0; i < 8; i++) {
+            uint32_t b; r = exi_read_bits(&s, 8, &b); if (r) return r;
+        }
+    }
+    return EXI_OK;
+}
+
+/* ServiceDiscoveryRes ev3d 0x08063370 (subev 0x1A): RC(5) + ChargeServiceList (count<=5) +
+ * ServiceList ev39 + optional EnergyTransferModeList (count<=8). The replica extracts RC for
+ * session advancement; the list sub-grammars are [? partial] — the raw body is preserved by the
+ * application writer (memcpy meas+0x37e0). Returns OK after RC (lists not consumed). */
+int din_servicediscovery_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *response_code)
+{
+    exi_stream_t s;
+    exi_decode_init(&s, body, len);
+    uint32_t rc;
+    int r = exi_read_bits(&s, 5, &rc);                    /* ResponseCode (first field) */
+    if (r) return r;
+    *response_code = (uint8_t)rc;
+    return EXI_OK;
+}
+
+/* CPDRes ev0c 0x08065BFC (subev 0x08): RC(5) + processing flag(1)@body+1 + sched-choice(2)
+ * (DIN=1 empty ev36) + AC/DC-param choice(2) (DIN=1 -> DCparam ev15). The handler case6 branches
+ * on body+1==1 (processing ongoing). */
+int din_cpd_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *response_code,
+                           uint8_t *processing, din_dc_charge_param_t *param)
+{
+    exi_stream_t s;
+    exi_decode_init(&s, body, len);
+    uint32_t rc;
+    int r = exi_read_bits(&s, 5, &rc);                    /* ResponseCode */
+    if (r) return r;
+    *response_code = (uint8_t)rc;
+    uint32_t proc;
+    r = exi_read_bits(&s, 1, &proc);                      /* state0x73 processing flag @body+1 */
+    if (r) return r;
+    *processing = (uint8_t)proc;
+    uint32_t choice;
+    r = exi_read_bits(&s, 2, &choice);                    /* state0x74 sched choice (DIN=1 empty) */
+    if (r) return r;
+    if (choice == 0u) {                                   /* AC sched ev35 [? DIN takes 1] */
+        return EXI_ERR_EVENT;
+    }
+    r = exi_read_bits(&s, 2, &choice);                    /* state0x75 AC/DC param choice */
+    if (r) return r;
+    if (choice != 1u) {                                   /* DIN=1 -> DCparam ev15 */
+        return EXI_ERR_EVENT;
+    }
+    return din_dc_charge_param_decode(&s, param);
+}
+
+/* PowerDeliveryRes ev2e 0x08063DBA (subev 0x14): gate gate RC(5) gate EVSEStatus-choice(2);
+ * DIN choice 1 -> DC_EVSEStatus@+0x20 (choice 0 AC, choice 2 empty). LINEAR. */
+int din_powerdelivery_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *response_code,
+                                     din_dc_evse_status_t *status)
+{
+    exi_stream_t s;
+    exi_decode_init(&s, body, len);
+    int r = exi_read_gate(&s, EXI_ERR_GATE);              /* lead gate1 */
+    if (r) return r;
+    r = exi_read_gate(&s, EXI_ERR_GATE);                  /* lead gate2 */
+    if (r) return r;
+    uint32_t rc;
+    r = exi_read_bits(&s, 5, &rc);                        /* ResponseCode */
+    if (r) return r;
+    *response_code = (uint8_t)rc;
+    r = exi_read_gate(&s, EXI_ERR_GATE);                  /* post-RC gate */
+    if (r) return r;
+    uint32_t choice;
+    r = exi_read_bits(&s, 2, &choice);                    /* EVSEStatus choice */
+    if (r) return r;
+    if (choice == 1u) {                                   /* DIN DC_EVSEStatus */
+        r = din_dc_evse_status_decode(&s, status);
+        if (r) return r;
+    }
+    r = exi_read_gate(&s, EXI_ERR_GATE);                  /* trailing gate */
+    if (r) return r;
+    return EXI_OK;
+}
+
+/* WeldingDetectionRes ev4f 0x08062754 (subev 0x22): gate gate RC(5) gate DC_EVSEStatus@+4 gate
+ * EVSEPresentVoltage PVT@+0x10 -> meas.evse_present_voltage (+factor) gate. */
+int din_welding_res_decode_exi(const uint8_t *body, uint16_t len, din_meas_t *m,
+                               uint8_t *response_code, din_dc_evse_status_t *status)
+{
+    exi_stream_t s;
+    exi_decode_init(&s, body, len);
+    int r = exi_read_gate(&s, EXI_ERR_GATE);              /* lead gate1 */
+    if (r) return r;
+    r = exi_read_gate(&s, EXI_ERR_GATE);                  /* lead gate2 */
+    if (r) return r;
+    uint32_t rc;
+    r = exi_read_bits(&s, 5, &rc);                        /* ResponseCode */
+    if (r) return r;
+    *response_code = (uint8_t)rc;
+    r = exi_read_gate(&s, EXI_ERR_GATE);                  /* post-RC gate */
+    if (r) return r;
+    r = exi_read_gate(&s, EXI_ERR_GATE);                  /* state0xe gate */
+    if (r) return r;
+    r = din_dc_evse_status_decode(&s, status);            /* DC_EVSEStatus @+4 */
+    if (r) return r;
+    r = exi_read_gate(&s, EXI_ERR_GATE);                  /* state0xf gate */
+    if (r) return r;
+    exi_pvt_t p;
+    r = exi_read_pvt(&s, &p);                             /* EVSEPresentVoltage PVT @+0x10 */
+    if (r) return r;
+    pvt_to_meas(&p, &m->evse_present_voltage, &m->evse_present_voltage_f);
+    r = exi_read_gate(&s, EXI_ERR_GATE);                  /* trailing gate */
+    if (r) return r;
+    return EXI_OK;
 }
