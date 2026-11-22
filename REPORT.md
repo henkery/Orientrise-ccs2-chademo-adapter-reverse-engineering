@@ -1896,6 +1896,77 @@ cave (§5.13i) dumped sector 5 → `acq/dump/app5.bin`; `analyze70` (§5.16) con
 the discarded prefix, the true base, and the corrected entry contract. **The prefix-decrypt question is
 closed** — the "protection" is the 2-byte XOR + header strip only (§6 confirmed).
 
+### 5.15b Boot recovery-entry trigger — the update-vs-launch fork  [C trace, `analyze107`/`107b`/`107c`]
+
+The boot-mode decision `f+0x8b2` is the **single gate** between recovery intake and app launch. The BL
+call graph (`analyze107c`, every BL site in sector 0) pins the topology exactly: the boot→app jump
+`f+0x119e` has **one** caller — `f+0x99a`, inside the decision's launch branch; the intake `f+0xe04` is
+reached **only** by the decision's tail-call `f+0x9a4`; the verifier `f+0x7b0` is called only at
+`f+0x950`/`f+0x960` (both in the decision); the update wrapper `f+0x9ae` is called only from startup
+`f+0x6a0` (`f+0x6a8`); the decision only from the wrapper (`f+0x9b4`).
+
+**Top-level flow.** reset `f+0x8` → `f+0x3C` → scatterload `f+0x44` + trampoline `f+0x430`
+(`movw/movt ip,0x200001B5; bx ip` → RAM-resident main) → startup `f+0x6A0` → **update wrapper `f+0x9ae`**:
+1. `bl f+0x1926` launch/update cluster — TIM init `f+0x18fc`/`f+0x18c8`/`f+0x18e2`, SPI4 init `f+0x1a08`,
+   config read `f+0x21d8`, IWDG reload `0x40003000←0xAAAA`, `cpsie if`.
+2. `bl f+0x8b2` boot-mode decision (below).
+3. `bl f+0x11b4` FLASH-option (RDP0 maintain) + `bl f+0x18b6` `NVIC_SystemReset` (AIRCR `0xE000ED0C←0x05FA0004`,
+   `dsb; b .`). Step 3 is reached **only if the decision returned via intake** — the launch branch jumps to
+   the app and never returns, so a normal boot does **not** reset here.
+
+**Decision `f+0x8b2` internals** (flags `@0x2000250C`: `flags[0]`=input channel, `flags[1]`=app-valid;
+`fp` = config base via `f+0x191e`=`0x08004000`):
+- serial init `f+0x1420` port 1 @ **230400** (`0x38400`).
+- **serial-sync poll** `f+0x8d4`: read `f+0x12e0`; **4 consecutive `0x55`/`0x75`** within 5 attempts
+  (100 ms delay `f+0x19d0` on empty reads) → `flags[0]=0` (serial recovery) → `f+0x950`.
+- else **USB-magic check** `f+0x914` (5 retries `f+0x924`): recv `f+0x103c` validates a USB packet descriptor
+  `@0x20002538` (`(word & ~0x7FFFF)==0x3A00000`, 3-bit len bits[18:16], low 3 bits==0 → returns 8) **and**
+  `buf[4]==0x55AAAA55` **and** `buf[8]==0x5AA5A55A` → `flags[0]=1` (USB recovery) → `f+0x950`.
+- `f+0x950`: `bl` verifier `f+0x7b0` → `flags[1]`; → `f+0x9a0` → intake.
+- **5 retries exhausted** `f+0x95e`: `flags[1]=0`; `bl` verifier; if **invalid** (`r0==0`) → `f+0x99e`
+  `flags[0]=0` → intake. If **valid**: `flags[1]=1`; require ID-block `@0x0800046C` bytes `[0x20]`,`[0x21]`,
+  `[0x22]` **≠ `'.'` (`0x2E`)** AND config halfword `[0x9c]==0` → **launch branch** `f+0x98e`: `flags[0]=1`,
+  `bl f+0x11b4` (RDP), `bl f+0x1108` (xPAI pending-command check), `bl f+0x119e` (**boot→app jump**, never
+  returns). Any `'.'` marker or `config[0x9c]!=0` → `f+0x99e` `flags[0]=0` → intake.
+
+**Verifier `f+0x7b0` — the app-validity gate.** config base `f+0x191e`=`0x08004000`; `length=config[0x90]`
+must be `≤0xE0404`; additive checksum `f+0x78e` sums `(length/2)` halfwords from app base `f+0x1922`=
+`0x08020000`, **plus** `config[0x00..0x94)` (74 halfwords), compared to `config[0x94]`; then
+`config[0x98]==0x55AA55AA`. Returns `0xFF` valid / `0` invalid. **Key:** the config checksum **covers the app
+image** — a MAINARM install must rebuild `config[0x90]`/`[0x94]` for the new app (`f+0x2490` config rebuild)
+or the verifier fails and boot falls into recovery intake. Beyond this additive sum + config magic the boot
+does **not** verify the app code (no signature/hash). Accessors: `f+0x1918`=app reset vector, `f+0x191e`=
+config base, `f+0x1922`=app base.
+
+**Intake `f+0xe04` — recovery receive + install.** builds a CRC16/CCITT table (poly `0x1021`) `@0x20002A6C`;
+prints device info `f+0x80e`; loops reading the channel selected by `flags[0]` (0=serial `f+0x12e0`,
+1=USB-magic `f+0x103c`, 2=USB `f+0x10ce`) feeding the **XMODEM-1K/CRC** receiver `f+0xc5e`; on complete
+(result>0) sends ACK(`6`) then the install dispatcher `f+0x2168` (SPI staging `0x100000`, XOR+CRC decode,
+component parse, MAINARM verbatim install + config rebuild); returns result → wrapper resets.
+
+**Boot recovery serial port = USART1 @ 230400 8N1.** RX is **DMA2_Stream5_Channel4**: DMA2 base
+`0x40026400`, Stream5 CR `0x40026488`=`0x08000501` (CHSEL bits[27:25]=4), PAR=`0x40011004`=USART1_DR,
+M0AR=ring `0x20002C6C` (2048 B, NDTR=`0x800`). Serial read `f+0x12e0` returns the byte or `0x100` (no data).
+
+**Recovery-entry triggers** (any one forces intake, independent of the installed app):
+1. **Serial sync** — ≥4 consecutive `0x55`/`0x75` on USART1@230400 during the decision window (checked first).
+2. **USB handshake magic** `0x55AAAA55`/`0x5AA5A55A` in the boot USB recv descriptor `@0x20002538`.
+3. **Invalid app/config** — verifier `f+0x7b0` returns 0.
+4. **ID-block `'.'` markers** `@0x0800046C+0x20/0x21/0x22`.
+5. **`config[0x9c]!=0`** — update-pending flag.
+
+**Launch** requires: no serial sync + no USB magic (5-retry timeout) + valid app/config + no `'.'` markers +
+`config[0x9c]==0`.
+
+**Reversibility consequence (custom→stock).** The normal USB mass-storage updater is **app-side** (§5.6) and
+absent in `custom_fw`, so revert cannot use it. The boot recovery anchor (sectors 0–4) is untouched by a
+MAINARM update, and its serial XMODEM-1K/CRC intake is triggered by the serial sync **before** any
+app-validity dependence — so streaming `0x55` on **USART1@230400 at reset** forces intake regardless of the
+installed app; transmitting `SERVICE.UPG` (stock) via XMODEM-1K/CRC re-installs the stock app verbatim +
+rebuilds config → reset → stock launches. **SWD re-flash (RDP0)** remains the guaranteed fallback. The earlier
+"recovery proven" was stock→stock via the app `usbdisk`; the **boot serial recovery path is the app-independent
+revert anchor**.
+
 ### 5.16 Running-app sector-5 dump RESOLVES the prefix question — verbatim install, no cipher  [C ground truth]
 
 `SERVICE_DUMP_APP5.UPG` (§5.13i) dumped the **running** app's sector 5 (`0x08020000..0x08040000`) →
@@ -3037,6 +3108,20 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   0x6c) and the TX document wrapper `0x08034C30` (copies the negotiated 8-byte SessionID into every post-setup
   document; SessionSetupReq uses a 1-byte placeholder). Run: `nix-shell -p python3 python3Packages.capstone
   --run 'python3 analyze106c.py'`.
+- `analyze107.py` — **boot recovery-entry trigger trace, pass 1 (§5.15b)**: annotated disasm of the boot-mode
+  decision `f+0x8b2`, update wrapper `f+0x9ae`, verifier `f+0x7b0`/`f+0x78e`, cmd handler `f+0x1108` +
+  boot→app jump `f+0x119e`, serial read `f+0x12e0`, launch cluster `f+0x1926`; per-function branch/call
+  extraction, the `0x08004000` config-block dump, and a magic/SRAM LDR-literal xref scan. Run:
+  `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze107.py acq/dump/boot.bin'`.
+- `analyze107b.py` — **boot recovery-entry trace, pass 2 (§5.15b)**: the top-level fork — boot main `f+0x430`
+  / startup `f+0x6A0`, decision continuation/intake `f+0xe04`, USB-magic recv `f+0x103c`/`f+0x10ce`,
+  FLASH-option `f+0x11b4`, reset `f+0x18b6` + cluster init, config reader `f+0x21d8`, accessors
+  `f+0x1918`/`f+0x191e`/`f+0x1922`. Run: `nix-shell -p python3 python3Packages.capstone --run
+  'python3 analyze107b.py acq/dump/boot.bin'`.
+- `analyze107c.py` — **boot BL call-graph xref scanner (§5.15b)**: scans every BL/B.W site in sector 0 and
+  reports callers of the recovery/launch key functions, proving the boot→app jump `f+0x119e` has a single
+  caller (the decision launch branch `f+0x99a`) and the intake `f+0xe04` is reached only by the decision
+  tail-call. Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze107c.py acq/dump/boot.bin'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
