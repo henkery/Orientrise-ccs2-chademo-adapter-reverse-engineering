@@ -29,11 +29,18 @@
  * + fault post). ccs2_step drives din_session_step and sources the EVSE handshake flags from it while
  * a session is active; decoded Res enter via ccs2_rx_exi. INERT: communication only, no power GPIO.
  *
- * STILL GATED / unresolved: the live UDP/TCP/IPv6 + mbedTLS transport (network reassembly that feeds
- * ccs2_rx_exi), the exact Req-side EXI grammars / root-event numbering [?], the DIN-vs-ISO
- * DC_EVSEStatus layout [?], and the exact EVSEIsolationStatus->level 3/4 mapping. The bench
- * flag-setters remain an alternate injection path when no autonomous session is active. The asserted
- * power-stage drive stays the last gated layer (charge_stm engagement).
+ * BUILT + INTEGRATED (B2, analyze101/102/103): the DIN application-message codec — single 7-bit root
+ * 0x4D + DIN header (gid 0x6c SessionID / 0x6d choice) + 6-bit choice/subev framing, the 9 Req
+ * encoders + 9 Res decoders, the merged DC_EVSEStatus grammar (2-bit E0 presence + mandatory u32
+ * NotificationMaxDelay), and the three-signal split (din_isolation session-only / phase_status engage
+ * ==4 / chademo_isolation_level CD ==3). The live UDP/TCP/IPv6 + mbedTLS carriage is built (v2g_net +
+ * v2g_stack + vendored lwIP/mbedTLS, host-tested); decoded Res enter via ccs2_rx_exi. The state-17
+ * engagement reference is the EVSE PresentVoltage (evse_present_voltage), NOT the H102 target
+ * (analyze104). The bench flag-setters remain an alternate injection path when no autonomous session
+ * is active. STILL OPEN: minor codec fidelity partials (Req gate sequences / ServiceDiscovery list
+ * sub-grammars / CDRes optional-choice chain / PVT unit enums / SID negotiation), charge-coordination
+ * (PreCharge<->car-contactor coupling, current ramp), and live SECC interop (bench, G9). The asserted
+ * power-stage drive stays the last gated layer (charge_stm engagement). See CCS2_GAPS.md.
  */
 #ifndef CCS2_H
 #define CCS2_H

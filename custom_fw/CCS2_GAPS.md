@@ -7,14 +7,19 @@ byte-exact C013 decoders (`analyze91`–`analyze100`, REPORT §5.9). No firmware
 
 **Bottom line.** The CCS2 stack is **structurally complete** end-to-end — PLC transport → SLAC → CP/PP →
 SDP/V2GTP → EXI bit-codec → DIN session SM → live lwIP/mbedTLS carriage → PnC CA store → controller glue —
-all **inert / communication-only** (no power-stage GPIO; disasm-verified `verify_ccs2.py`). The remaining
-functional work was concentrated in **one layer: the EXI application-message codec** — and that layer's RE is
-now **DONE**: G1–G5 are recovered byte-exact by `analyze101.py` (Req encoder, 157 checks), `analyze102.py`
-(Res field lists, 170 checks), `analyze103.py` (DC_EVSEStatus + isolation/phase mapping, 167 checks), REPORT
-§5.9 EXI application-message addendum. **What remains is the firmware integration** of those recovered
-grammars + the three-signal split into `exi.c`/`din70121.c`/`din_session.c`/`ccs2.c`/`charge_stm.c` (inert,
-host-tested), plus the minor G6–G8 fidelity items and the bench-only G9. The library network/crypto layers are
-**done** (vendored, byte-faithful config). The asserted power-stage drive is intentionally **GATED LAST**.
+all **inert / communication-only** (no power-stage GPIO; disasm-verified `verify_ccs2.py`). The critical-path
+EXI application-message codec is **RE-covered AND integrated**: G1–G5 recovered byte-exact by `analyze101.py`
+(Req encoder, 157 checks), `analyze102.py` (Res field lists, 170 checks), `analyze103.py` (DC_EVSEStatus +
+isolation/phase mapping, 167 checks), then **built into the firmware** (B2, commit `017577d`): single root
+`0x4D` framing + 9 Req encoders + 9 Res decoders + the three-signal split + session/ccs2 dispatch migration.
+A further correctness fix (`analyze104.py`, commit `c8fc16a`) corrected the **state-17 engagement reference**:
+`ress_vol` is the **EVSE PresentVoltage** (`meas+0x3D18/1A` scaled), NOT the H102 TargetBatteryVoltage — the
+old target reference made the engagement window unreachable during precharge (the C009 abort). **What remains:**
+(i) minor codec **fidelity partials** (G6–G8 + the B2 `[?]` gate-sequence / list-sub-grammar / optional-choice /
+unit-enum / SID-negotiation items, §2); (ii) **charge-coordination** functional gaps surfaced by the prior-art
+comparison (G10 PreCharge↔car-contactor coupling, G11 current ramp, §2); (iii) the bench-only **G9** live SECC
+interop capture; and (iv) the **GATED-LAST** asserted power-stage drive (§4). The library network/crypto layers
+are **done** (vendored, byte-faithful config). Full host suite **722 / 0**; `verify_ccs2.py` **222 / 0**.
 
 ---
 
@@ -29,25 +34,28 @@ host-tested), plus the minor G6–G8 fidelity items and the bench-only G9. The l
 | PP/CPD/BAT ADC3 analog front-end | `cp_adc.c` | `test_cp_adc` 42 | built (`analyze95` I) |
 | SDP discovery + security/protocol select | `sdp.c` | `test_sdp` 31 | built (`analyze92`/`94`) |
 | V2GTP framing (`01 FE type len`) | `v2gtp.c` | `test_v2gtp` 14 | built (`analyze92`) |
-| EXI bit-level codec (MSB-first/varlen/signed/PVT) | `exi.c` | `test_exi` 55 | built (`analyze93` E) |
-| DIN70121 meas struct + pow10 scale + field maps | `din70121.c` | `test_din70121` 36 | built (`analyze92`/`93`) |
-| DIN autonomous session SM (states/timers/retries) | `din_session.c` | `test_din_session` 39 | built (`analyze93` F) |
+| EXI bit-level codec (MSB-first/varlen/signed/PVT) + DIN-doc framing | `exi.c` | `test_exi` 85 | built (`analyze93` E / B2) |
+| DIN70121 meas + pow10 scale + B2 message codec (9 Req / 9 Res) | `din70121.c` | `test_din70121` 74 | built (`analyze92`/`93` / B2) |
+| DIN autonomous session SM (states/timers/retries) | `din_session.c` | `test_din_session` 42 | built (`analyze93` F / B2) |
 | Live transport glue (IPv6/UDP/TCP/deframe/TLS-decision/SM) | `v2g_net.c` | `test_v2g_net` 90 | built (`analyze94`) |
 | Live stack: lwIP netif + raw pcb + mbedTLS bio bridge | `v2g_stack.c` | `test_tls_mbedtls` 21 | built (vendored, `analyze97`) |
 | PnC CA cert store → `x509_crt_parse`/`conf_ca_chain` | `ca_store.c` | `test_ca_store` 45 | built (`analyze96`) |
 | HW-RNG `f_rng` (STM32 `0x50060800`, not ctr_drbg) | `hw_rng.c` | — | built (`analyze94`/`100`) |
-| Controller glue (`ccs2_evse`/`fill_current_ctrl`/`demand`) | `ccs2.c` | `test_ccs2` 21 | built (`analyze92`) |
+| Controller glue (`ccs2_evse`/`fill_current_ctrl`/`demand`/`evse_present_voltage`) | `ccs2.c` | `test_ccs2` 23 | built (`analyze92` / B2) |
 | Vendored mbedTLS 2.28.9 + lwIP 2.1.4 (byte-faithful config) | `third_party/`, `mbedtls_config.h`, `lwipopts.h` | `analyze97` 63 | built (`analyze97`–`100`) |
 
 CHAdeMO side (built earlier, inert): `can`/`chademo` (H100/101/102 RX, H108/109 TX), `charge_stm` (shadow,
 byte-exact state-17 guard), `current_ctrl` (shadow setpoint), `hv`/`adc`/`nv_cal`/`spi4` (factory-cal HV
-measurement), `rcc`/`gpio`/`tick`. Full host suite **641 checks / 0 failures**; built-image disasm
-`verify_ccs2.py` **201 checks** (last verified at the library-pivot milestone `91c938c`; no firmware code
-changed since).
+measurement), `rcc`/`gpio`/`tick`. Full host suite **722 checks / 0 failures** (16 tests); built-image disasm
+`verify_ccs2.py` **222 checks / 0** (last verified at the engagement-reference fix `c8fc16a`; ARM text 118508,
+`CUSTOM.UPG` 132102 B CRC OK). The B2 codec integration (`017577d`) + the engagement-reference fix (`c8fc16a`)
+landed after the library-pivot milestone `91c938c`.
 
 **Session sequence is wired end-to-end** (`din_session.c`): 1→2→3→6→7→8→9→10→11→12→13→0, timers
 4000/120000/150000/40000/14000 ms, retry cap 20, CD modulo cadence, FAILED→shutdown + fault post. The
-skeleton walks the whole DIN DC charge sequence; what is partial is the **EXI message content** it sends/receives.
+**EXI message content is now built** (B2): the 9 Req encoders + 9 Res decoders replace the former
+ResponseCode-only advancement and `[? body]` placeholders. What remains partial is codec **fidelity**
+(§2 G6–G8 + B2 `[?]` items) and **charge coordination** (§2 G10/G11), not the message skeleton.
 
 ---
 
@@ -56,7 +64,7 @@ skeleton walks the whole DIN DC charge sequence; what is partial is the **EXI me
 These are the items that must be recovered/implemented for the adapter to interoperate with a real CCS2 EVSE.
 All are **C013-decodable** (the stock encoder/decoder bytes exist) except where noted as bench-only.
 
-### G1 — Req-side EXI root-event numbering — **RESOLVED (RE, `analyze101`)**  *(was critical path)*
+### G1 — Req-side EXI root-event numbering — **RESOLVED + INTEGRATED (RE `analyze101`; B2 `017577d`)**  *(was critical path)*
 **Resolution:** DIN does **not** use per-message 7-bit root events. All nine Req (and Res) messages ride a
 **single 7-bit root event `0x4D` (77) + a 6-bit message-choice code** (encoder root `0x0806FA9C` → ev4d
 `0x080706F6` → ev03 dispatcher `0x0806D6D2`; choice/subev/production/builder table in REPORT §5.9 EXI addendum).
@@ -72,7 +80,7 @@ encoder root events are not**. Decode from the C013 EXI **encoder root `0x0806FA
 grammar table (TX leading-0x80 `0x08093C92`); the Req productions are the encode-side siblings of the
 recovered Res decoders. **Impact:** without correct Req events the SECC rejects every request.
 
-### G2 — Req-side EXI grammars / bodies — **RESOLVED (RE, `analyze101`)**  *(was critical path)*
+### G2 — Req-side EXI grammars / bodies — **RESOLVED + INTEGRATED (RE `analyze101`; B2 `017577d`)**  *(was critical path)*
 **Resolution:** all nine Req bodies recovered (REPORT §5.9 EXI addendum): SessionSetup = EVCCID hexBinary6;
 ServiceDiscovery = opt scope/category; CPD = 3-bit EnergyTransferMode + AC/DC choice (DC ev13 `0x0806CC3A`);
 CableCheck/Welding = DC_EVStatus ev17 `0x0806A936`; PreCharge = DC_EVStatus + 2 PVT; PowerDelivery DIN ev2d =
@@ -88,7 +96,7 @@ Even CurrentDemandReq's full field set is partial — `din70121.c:259` "EVMaximu
 RemainingTime* is `[?]` (E §3 partial)". Decode the encode-side productions from the same grammar table
 (application field maps already located, e.g. CurrentDemandReq `0x0802C2CE`). **Impact:** no valid Req bodies.
 
-### G3 — Res-side full field lists for handshake messages — **RESOLVED (RE, `analyze102`)**
+### G3 — Res-side full field lists for handshake messages — **RESOLVED + INTEGRATED (RE `analyze102`; B2 `017577d`)**
 **Resolution:** five Res grammars recovered (REPORT §5.9 EXI addendum): SessionSetupRes ev41 `0x08062B1E`
 (RC + EVSEID + opt timestamp); ServiceDiscoveryRes ev3d `0x08063370` (RC + ChargeServiceList + ServiceList +
 opt EnergyTransferModeList); CPDRes **ev0c `0x08065BFC`** (RC + 1-bit processing flag @body+1 + AC/DC choice →
@@ -106,7 +114,7 @@ e.g. CPD wrapper `0x080650AC`, DC_EVSEChargeParam `0x080650D2` — so the full f
 **Impact:** handshake Res payloads (charge params, service/payment options, EVSE processing state) are not
 extracted; the session advances blind on ResponseCode.
 
-### G4 — DIN-vs-ISO `DC_EVSEStatus` layout — **RESOLVED (RE, `analyze103`)**
+### G4 — DIN-vs-ISO `DC_EVSEStatus` layout — **RESOLVED + INTEGRATED (RE `analyze103`; B2 `017577d`)**
 **Resolution:** `0x0806259E` is a **single merged grammar with NO DIN/ISO flag**. Order =
 isolation_status(2) → status_code(4) → **NotificationMaxDelay(u32, MANDATORY — present in DIN)** →
 notification(2); isolation gated by a **2-bit** presence code E0 (0=present/1=absent/≥2=−110); 22 fixed bits
@@ -118,7 +126,7 @@ layout / exact gate sequence is `[?]` (E §5)"; `notification_max_delay = 0` ("I
 Decoder `0x0806259E` (ev `0x16`). **Impact:** EVSE notification/status-code attribution may be wrong; the
 isolation field (load-bearing) is extracted but its exact wire gate is unconfirmed.
 
-### G5 — `EVSEIsolationStatus` → charge-stm level 3/4 mapping — **RESOLVED (RE, `analyze103`; premise corrected)**
+### G5 — `EVSEIsolationStatus` → charge-stm level 3/4 mapping — **RESOLVED + INTEGRATED (RE `analyze103`; B1/B2; premise corrected)**
 **Resolution:** the premise "DIN wire isolation → internal level 3/4" is **FALSE** — there is no such
 conversion. **Three distinct signals:** (a) **DIN wire isolation** (session byte `0x2000C808`, 0..3) gates
 only the session CableCheck rule `0x080365A4` (==1 advance/==0 retry/≥2 fault16 — replica already correct);
@@ -133,6 +141,20 @@ The raw enum is `0 invalid / 1 valid / 2 warning / 3 fault` (`din70121.h`), but 
 requires `isolation == 4` (REPORT §5.17). The mapping from the DIN `EVSEIsolationStatus` wire value to the
 internal level 3/4 is **not recovered**. Decode the C013 `ccs2_evse`/charge-stm isolation path. **Impact:** the
 byte-exact state-17 engagement guard cannot pass on a live session until this mapping is correct.
+
+### G5b — state-17 engagement voltage reference (`ress_vol`) — **RESOLVED + FIXED (`analyze104`; `c8fc16a`)**
+A correctness bug found **beyond** the original audit (via the ccs32clara-chademo prior-art comparison): the
+replica used `ress_vol = veh->target_voltage` (H102 TargetBatteryVoltage, 410 V). **C013's actual reference is
+the EVSE PresentVoltage**, proven byte-exact: guard `0x0804AF08` compares `outvol=p[+0x16]` against `sl`;
+`sl = din_scale(meas+0x3D18 raw, meas+0x3D1A factor)` computed at `0x0804AADA–0x0804AAEE` (sp-slots set at
+`0x0804917C/74`); the dual log `0x0804AB40` (fmt `0x080AB80C`) prints `ress_vol`(sl) and
+`TargetBatteryVoltage`(`p+0x1da`) as **separate** values. During precharge the EVSE reports the *battery*
+voltage (~364 V on a ZE1), not the 410 V target — so the target reference put the window at [400,415],
+unreachable at ~364 V → state-17 stalls to its 424-tick timeout → 450 (the C009 abort). **Fix:** `charge_stm`
+now uses `in->evse_present_voltage`, wired `ccs2_evse()->evse_present_voltage = din_evse_present_voltage_v()`
+→ `main.c`; the pure guard math is unchanged. State-19 (`0x08044608`) uses `sl` as a dwell-timeout counter
+(target only logged) — its voltage compare is a noted replica simplification. ZE1 regression added
+(`test_charge_stm` 47→55). **Impact:** resolved — the engagement guard now references the correct voltage.
 
 ### G6 — CD secondary re-send interval set-site `[?]`
 `din_session.c:158` — "SECONDARY: ctx+0x44 interval gated ctx+0x46==1 (`@0x08039698`), parameterized." The
@@ -150,7 +172,33 @@ is unconfirmed. **Impact:** sequence correctness for DIN-only SECCs; low risk (D
   `0x24–0x25` readBits2) — "recovered wire order `[? exact grammar]`".
 - DIN PhysicalValueType **unit enum** A/V values (`din70121.c:276,283` — "A (ampere) `[?]", "V (volt) `[?]"`).
 - 150 s timeout clean compare site (`din_session.c:121` — "clean cmp not found `[?]`; outer guard").
-**Impact:** optional-field / unit fidelity; inert-safe until bench-validated.
+- B2 codec `[?]` fidelity items still marked in source: Req encoder **leading/inter-field gate sequences**
+  (SessionSetupReq ev40 prologue `din70121.c:366`, PreChargeReq inter-field `:427`, CPDReq ev0b/ev13 +
+  `EnergyTransferMode DC=3` enum `:482–492`); **ServiceDiscoveryRes list sub-grammars** (`:637`,
+  `din70121.h:237` — structurally consumed, not decoded); **PVT unit enum** A/V (`:301`, A=1/V=3 guessed);
+  CPDRes AC-sched choice (`:669`); per-builder **SessionID negotiation** (1-byte `0x00` placeholder,
+  `din_session.h:99`, `exi.h:70`).
+**Impact:** optional-field / unit / gate fidelity; inert-safe until bench-validated.
+
+### G10 — CCS PreCharge ↔ CHAdeMO car-contactor stall coupling `[?]`  *(charge coordination)*
+Surfaced by the ccs32clara-chademo prior-art comparison. The replica's `din_session` advances
+PreCharge→PowerDelivery **immediately on `rc_ok`** (decoupled from the car side). The known-working prior art
+**stalls `PreChargeReq`** until the CHAdeMO car contactors close (`chademoInterface_preChargeCompleted()` →
+`CarContactorsClosed`; `sendAgain=true` even when the CCS precharge voltage difference is small, ≤30 s). Without
+this coupling the EVSE can be told "precharge finished" before the car is ready to accept current. **To scope:**
+decode C013's PreChargeRes→PowerDelivery gating against the CHAdeMO contactor feedback (H102.VehicleStatus /
+`get_precharge_relay`) — does C013 stall the CCS PreCharge loop on the car contactor, and with what timeout?
+**Impact:** charge-coordination correctness; belongs to the session-coupling / gated power-drive layer.
+
+### G11 — output-current ramp + undersupply limit `[?]`  *(charge coordination)*
+`current_ctrl` replicates the C013 state-30 min/cap law with **no ramp limiter** (byte-exact — the state-30
+block `0x08044D42` has none). The prior art ramps the CHAdeMO current request **+4 A/100 ms up / −10 A/100 ms
+down** and limits undersupply. The C013 log shows periodic `setpara_maxevsecurrent`, suggesting ramping lives
+**elsewhere** (a periodic set-parameter path, not the state-30 law). **To scope:** decode C013's
+`setpara_maxevsecurrent` / current-setpoint slew path — where and how fast the commanded current ramps, and
+whether an undersupply/derate limit exists. **Impact:** smooth current delivery to the car; gated power-drive
+layer. (The voltage-estimation curve is **moot for the CCS2 engagement reference** — G5b proved C013 uses the
+measured EVSE present voltage — but the CHAdeMO-side precharge target may still need a battery estimate.)
 
 ### G9 — SECC-peer wire convention capture `[?]`  **(bench-only)**
 REPORT §5.9 line 964 — the actual SECC peer's wire behavior (real EVSE message ordering/option choices) needs a
@@ -180,25 +228,27 @@ laws (REPORT §5.17/§5.18/§5.20/§5.21/§5.5c). Not a gap to close now — the
 
 ## 5. Next-build-step scoping (recommendation)
 
-The critical-path **RE is DONE** — G1–G5 recovered byte-exact (`analyze101`/`analyze102`/`analyze103`, REPORT
-§5.9 EXI application-message addendum). What remains is the **inert firmware integration** of those recovered
-grammars + the three-signal split, then the minor fidelity items, then bench validation:
+The critical-path **RE + integration are DONE** — G1–G5 recovered byte-exact (`analyze101`/`102`/`103`) and
+**built** (B2 `017577d`); the engagement reference is corrected (G5b, `analyze104` / `c8fc16a`). The former
+steps 1–3 (Req encoders / Res field lists / DC_EVSEStatus + three-signal split) are **complete**. What remains,
+in priority order toward a *safe charge*:
 
-1. **Req-side encoder integration (G1/G2 — RE done)** — implement the corrected DIN framing (single root
-   `0x4D` + header gid 0x6c/0x6d + 6-bit choice) in `exi.c`, the 8 missing Req encoders + the full
-   CurrentDemandReq field set (corrected offsets) in `din70121.c`, and the corrected event/choice constants +
-   TX bodies in `din_session.c`.
-2. **Res-side full field lists (G3 — RE done)** — implement the 5 new Res decoders (SessionSetup/
-   ServiceDiscovery/CPD/PowerDelivery/Welding) with leading gates in `din70121.c`, the SessionStopRes ev43
-   dispatch, and explicit RX cases (states 2/3/6/9/11/12) in `din_session.c` replacing ResponseCode-only
-   advancement; CPD branches on the body+1 processing flag + applies DC limits.
-3. **DC_EVSEStatus + three-signal split (G4/G5 — RE done)** — rewrite `din_dc_evse_status_decode` (merged
-   grammar, 2-bit E0, mandatory u32 maxdelay); split `ccs2.c`/`charge_stm.c` single `isolation` into
-   `evse_phase_status` (engage ==4) / `chademo_isolation_level` (CD ==3) / `din_isolation` (session only);
-   PreChargeRes sets phase_status=4, CableCheckRes sets 3, error sets 7.
-4. **Minor fidelity (G6/G7/G8)** — CD secondary set-site, DIN 4/5 skip confirmation, optional-choice/unit enums.
-5. **Bench validation (G9)** — live SECC session capture (hardware: ESP32-S3 / Arduino Mega bench), then the
-   GATED power-stage drive **last**.
+1. **Charge-coordination RE + design (G10/G11)** — decode C013's PreChargeRes→PowerDelivery gating against the
+   CHAdeMO car-contactor feedback (does C013 stall the CCS PreCharge loop on `CarContactorsClosed`, with what
+   timeout?) and the `setpara_maxevsecurrent` / current-setpoint slew path (ramp rate + undersupply limit).
+   This is the highest-value remaining RE: it determines whether the session can hand off to a real charge
+   safely. Read-only decode first; any replica coupling/ramp change stays inert until bench-validated.
+2. **Codec fidelity partials (G6/G7/G8 + B2 `[?]`)** — Req gate sequences, ServiceDiscovery list sub-grammars,
+   CDRes optional-choice chain, PVT unit enums, SID negotiation, CD secondary set-site, DIN 4/5 skip, 150 s
+   compare site. Inert, C013-decodable, host-testable; can proceed in parallel with step 1. Polish, not a
+   live-session blocker.
+3. **Bench validation (G9)** — live SECC session capture (hardware: ESP32-S3 / Arduino Mega bench) to confirm
+   real EVSE message ordering/option choices + the live lwIP/mbedTLS TCP-connect/TLS-handshake on hardware.
+4. **GATED power-stage drive (LAST, §4)** — asserted contactor/relay GPIO sequencing + BCB PD11 + +24 V
+   power-fail queue, behind a compile-time safety flag, **after** the controller is bench-validated against the
+   decoded laws (REPORT §5.17/§5.18/§5.20/§5.21/§5.5c).
 
-Steps 1–3 are inert codec implementation + host tests + build/`verify_ccs2`/UPG re-wrap (no power drive);
-step 4 is minor fidelity; step 5 needs hardware. This keeps the asserted power-stage drive GATED LAST throughout.
+Steps 1–2 are read-only RE + inert implementation + host tests + build/`verify_ccs2`/UPG re-wrap (no power
+drive); step 3 needs hardware; step 4 is the final gated layer. This keeps the asserted power-stage drive
+GATED LAST throughout. **Critical path:** the codec is essentially complete; the path to "runs a safe charge"
+is coordination (1) → bench (3) → gated drive (4), with fidelity (2) as parallel polish.
