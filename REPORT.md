@@ -1919,9 +1919,11 @@ reached **only** by the decision's tail-call `f+0x9a4`; the verifier `f+0x7b0` i
 - serial init `f+0x1420` port 1 @ **230400** (`0x38400`).
 - **serial-sync poll** `f+0x8d4`: read `f+0x12e0`; **4 consecutive `0x55`/`0x75`** within 5 attempts
   (100 ms delay `f+0x19d0` on empty reads) → `flags[0]=0` (serial recovery) → `f+0x950`.
-- else **USB-magic check** `f+0x914` (5 retries `f+0x924`): recv `f+0x103c` validates a USB packet descriptor
-  `@0x20002538` (`(word & ~0x7FFFF)==0x3A00000`, 3-bit len bits[18:16], low 3 bits==0 → returns 8) **and**
-  `buf[4]==0x55AAAA55` **and** `buf[8]==0x5AA5A55A` → `flags[0]=1` (USB recovery) → `f+0x950`.
+- else **aux-serial magic check** `f+0x914` (5 retries `f+0x924`): recv `f+0x103c` validates a serial DMA
+  descriptor `@0x20002538` (`(word & ~0x7FFFF)==0x3A00000`, 3-bit len bits[18:16], low 3 bits==0 → returns 8)
+  **and** `buf[4]==0x55AAAA55` **and** `buf[8]==0x5AA5A55A` → `flags[0]=1` (aux-serial recovery) → `f+0x950`.
+  **The boot has NO USB** (`analyze108`: zero `0x50000000`/`0x40040000` LDR-literal xrefs, no USB strings) —
+  `f+0x103c`/`f+0x10ce` are aux **UART** channels, not USB; boot recovery is serial XMODEM only.
 - `f+0x950`: `bl` verifier `f+0x7b0` → `flags[1]`; → `f+0x9a0` → intake.
 - **5 retries exhausted** `f+0x95e`: `flags[1]=0`; `bl` verifier; if **invalid** (`r0==0`) → `f+0x99e`
   `flags[0]=0` → intake. If **valid**: `flags[1]=1`; require ID-block `@0x0800046C` bytes `[0x20]`,`[0x21]`,
@@ -1939,10 +1941,11 @@ does **not** verify the app code (no signature/hash). Accessors: `f+0x1918`=app 
 config base, `f+0x1922`=app base.
 
 **Intake `f+0xe04` — recovery receive + install.** builds a CRC16/CCITT table (poly `0x1021`) `@0x20002A6C`;
-prints device info `f+0x80e`; loops reading the channel selected by `flags[0]` (0=serial `f+0x12e0`,
-1=USB-magic `f+0x103c`, 2=USB `f+0x10ce`) feeding the **XMODEM-1K/CRC** receiver `f+0xc5e`; on complete
-(result>0) sends ACK(`6`) then the install dispatcher `f+0x2168` (SPI staging `0x100000`, XOR+CRC decode,
-component parse, MAINARM verbatim install + config rebuild); returns result → wrapper resets.
+prints device info `f+0x80e`; loops reading the channel selected by `flags[0]` (0=USART1 `f+0x12e0`,
+1=aux-serial `f+0x103c`, 2=aux-serial `f+0x10ce`) feeding the **XMODEM-1K/CRC** receiver `f+0xc5e`; on
+complete (result>0) sends ACK(`6`) then the install dispatcher `f+0x2168` (UPG staged at SPI physical
+`0x110000`, in-pool XOR+CRC decode `f+0x1eca`, component parse, MAINARM verbatim install + config rebuild);
+returns result → wrapper resets.
 
 **Boot recovery serial port = USART1 @ 230400 8N1.** RX is **DMA2_Stream5_Channel4**: DMA2 base
 `0x40026400`, Stream5 CR `0x40026488`=`0x08000501` (CHSEL bits[27:25]=4), PAR=`0x40011004`=USART1_DR,
@@ -1950,13 +1953,13 @@ M0AR=ring `0x20002C6C` (2048 B, NDTR=`0x800`). Serial read `f+0x12e0` returns th
 
 **Recovery-entry triggers** (any one forces intake, independent of the installed app):
 1. **Serial sync** — ≥4 consecutive `0x55`/`0x75` on USART1@230400 during the decision window (checked first).
-2. **USB handshake magic** `0x55AAAA55`/`0x5AA5A55A` in the boot USB recv descriptor `@0x20002538`.
+2. **Aux-serial handshake magic** `0x55AAAA55`/`0x5AA5A55A` in the boot aux-serial recv descriptor `@0x20002538`.
 3. **Invalid app/config** — verifier `f+0x7b0` returns 0.
 4. **ID-block `'.'` markers** `@0x0800046C+0x20/0x21/0x22`.
 5. **`config[0x9c]!=0`** — update-pending flag.
 
-**Launch** requires: no serial sync + no USB magic (5-retry timeout) + valid app/config + no `'.'` markers +
-`config[0x9c]==0`.
+**Launch** requires: no serial sync + no aux-serial magic (5-retry timeout) + valid app/config + no `'.'`
+markers + `config[0x9c]==0`.
 
 **Reversibility consequence (custom→stock).** The normal USB mass-storage updater is **app-side** (§5.6) and
 absent in `custom_fw`, so revert cannot use it. The boot recovery anchor (sectors 0–4) is untouched by a
@@ -1966,6 +1969,51 @@ installed app; transmitting `SERVICE.UPG` (stock) via XMODEM-1K/CRC re-installs 
 rebuilds config → reset → stock launches. **SWD re-flash (RDP0)** remains the guaranteed fallback. The earlier
 "recovery proven" was stock→stock via the app `usbdisk`; the **boot serial recovery path is the app-independent
 revert anchor**.
+
+### 5.15c Boot update-command (xPAI) + SPI staging layout + SPI-flash write protocol  [C trace, `analyze108`/`108b`/`108c`]
+
+The **app→boot update request** mechanism (used by the stock `usbdisk`, and the basis for a custom CDC
+revert channel): a 64-byte **"xPAI"** command descriptor at SPI logical offset 0 + the raw UPG staged in the
+external SPI-flash pool. On reset the decision launch branch calls `f+0x1108`, which validates the descriptor
+and installs the staged UPG. The boot itself has **no USB** (§5.15b) — a USB-CDC revert channel is an *app*
+feature that drives this SPI/xPAI path.
+
+**xPAI descriptor** (64 B = 16 LE words; SPI logical 0 = physical `0x100000`):
+- `word[0]`@+0x00 = `0x49415078` ("xPAI"); `word[1]`@+0x04 = `0xABCDEF12`.
+- `word[14]`@+0x38 = UPG payload length, bounds `0x72C ≤ len ≤ 0xE0404`.
+- **XOR of all 16 words == 0** ⇒ `word[15]`@+0x3C = XOR(`word[0..14]`) (checksum); other words 0.
+- `f+0x1108`: SPI-read 64 B @logical 0 (`f+0x1ace`) → check magic/len/XOR → **invalidate** (write
+  `word[0]=0xFFFFFFFF` @logical 0, `f+0x1b42`) → install dispatcher `f+0x2168(addr=0x10000, len)`.
+
+**SPI staging layout** (external 2 MB NOR, SPI4, CS=PE11):
+- `f+0x1ace` SPI-read maps logical addr → physical **addr+`0x100000`** (pool = physical `0x100000..0x200000`).
+- xPAI descriptor: logical 0 = physical `0x100000` (64 B).
+- UPG payload: logical `0x10000` = physical **`0x110000`** (raw obfuscated UPG; `f+0x1164` `lsls r0,r1,#4`,
+  `r1=0x1000` → `0x10000`).
+- **In-pool decode `f+0x1eca`**: read key-echo[0:2] (`key0=buf[0]`, `key1=buf[1]`); XOR-decode the 0x400-byte
+  header (`buf[i]^=key0`, odd `i` also `^=key1`); check **"XIE2"**@decoded[`0x3E8`] (`58 49 45 32`) +
+  CRC16/MODBUS residue 0 over [`0x3E8..0x3FE`) (`f+0x1cc8`, init `0xFFFF`, len `0x16`); total =
+  decoded[`0x3F0`]+`0x402`; decode the whole image in `0x1000` chunks, **writing decoded bytes back to the
+  pool** (`f+0x1b42`). Then component parse `f+0x206a`/`f+0x1d68` (TBB: MAINARM/BOOTARM/ROOTCERTS/PRIROOT) →
+  MAINARM verbatim install `f+0x2490` (src SPI[`0x400`]) + config rebuild.
+
+**SPI-flash write protocol** (standard 2 MB NOR; 256-byte pages, 4 KB sectors):
+- `f+0x1ca4(cmd)`: CS↓ + send cmd byte + CS↑ (WREN `0x06`, …).
+- `f+0x1aa4`: RDSR (`0x05`) → status (busy bit0); `f+0x1a5a` reads `0x05`+`0x35`.
+- `f+0x1bb2` **page program**: requires addr+len ≤ `0x100` (within page); WREN(`0x06`) → CS↓ + `0x02` +
+  addr[23:16/15:8/7:0] + data + CS↑ → poll busy (`f+0x1aa4` bit0).
+- `f+0x1c3e` **sector erase**: sector idx ≤ `0xFF`, physical=(idx<<12)+`0x100000`; WREN(`0x06`) → CS↓ + `0x20`
+  + addr + CS↑ → poll busy → IWDG reload (`f+0x18a2`).
+- `f+0x1b42` **high-level write**(addr,src,len): page/sector-aware (`0x100` pages, `0x1000` sectors), erases
+  sectors as needed (`f+0x1c3e`), programs pages (`f+0x1bb2`); logical addr < `0x100000`.
+- SPI4 init `f+0x1a08`: CR1=`0x304` then `0x344` (mode 0, master, BR=/2, 8-bit MSB, SSM+SSI, SPE), CR2=0;
+  CS=PE11 (GPIOE BSRR `0x08000000`=low / `0x800`=high) — matches the `custom_fw` `spi4.c` read front-end.
+
+**Revert-from-custom via this path (brick-safe):** stage the raw `SERVICE.UPG` @physical `0x110000`, write the
+xPAI descriptor @physical `0x100000` (len + XOR checksum), `NVIC_SystemReset`. The boot validates the xPAI XOR
+**and** the UPG XIE2/CRC before installing; a bad upload is rejected and the existing app still launches (no
+brick). `custom_fw` `spi4.c` is read-only today — implementing this requires adding the WREN/PP/SE/RDSR ops +
+the high-level write (mirroring `f+0x1b42`).
 
 ### 5.16 Running-app sector-5 dump RESOLVES the prefix question — verbatim install, no cipher  [C ground truth]
 
@@ -3122,6 +3170,16 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   reports callers of the recovery/launch key functions, proving the boot→app jump `f+0x119e` has a single
   caller (the decision launch branch `f+0x99a`) and the intake `f+0xe04` is reached only by the decision
   tail-call. Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze107c.py acq/dump/boot.bin'`.
+- `analyze108.py` — **boot USB-role + SPI-flash write probe (§5.15b/c)**: boot ASCII-string scan (USB/serial
+  keywords), `0x50000000`/`0x40040000`/SPI4 LDR-literal xrefs (proves the boot has **no USB**), and disasm of
+  the SPI read `f+0x1ace` / write `f+0x1b42` / page-program `f+0x1bb2` / sector-erase `f+0x1c3e` helpers. Run:
+  `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze108.py acq/dump/boot.bin'`.
+- `analyze108b.py` — **install-dispatcher staging probe (§5.15c)**: SPI4 init `f+0x1a08` + RDSR `f+0x1aa4`,
+  install dispatcher `f+0x2168` + config reader `f+0x21d8`, component parse `f+0x1d68` (TBB). Run:
+  `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze108b.py acq/dump/boot.bin'`.
+- `analyze108c.py` — **in-pool decode + MAINARM staging probe (§5.15c)**: decode `f+0x1eca` (XOR + XIE2/CRC,
+  logical `0x10000`→physical `0x110000`), component install `f+0x206a`, MAINARM install `f+0x2490`. Run:
+  `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze108c.py acq/dump/boot.bin'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
