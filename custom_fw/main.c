@@ -47,8 +47,10 @@
 #include "adc.h"
 #include "charge_stm.h"
 #include "current_ctrl.h"
+#include "current_ramp.h"
 #include "qca7005.h"
 #include "ccs2.h"
+#include "din70121.h"
 #include "cp.h"
 #include "cp_capture.h"
 #include "cp_adc.h"
@@ -99,6 +101,13 @@ volatile uint32_t stm_action   = 0;  /* intended (GATED, not executed) action   
 volatile uint32_t cc_setpoint = 0;   /* capped output-current setpoint (A)      */
 volatile uint32_t cc_cap      = 0;   /* EVSE max-current cap (A)                */
 volatile uint32_t cc_target_v = 0;   /* capped target battery voltage (V)       */
+
+/* Inert G11 periodic EVMaximumCurrentLimit ramp (SWD-readable; NO power drive — shadow limit,
+ * §5.17 / analyze105). The slow +20 A/min inrush layer, distinct from the per-tick cc_setpoint. */
+volatile uint32_t cc_ramp_setpoint = 0; /* ramped current-limit setpoint meas+0x28C (A), init 20 */
+volatile uint32_t cc_max_limit     = 0; /* EVMaximumCurrentLimit = min(ramped, EVSE max) (A)     */
+static uint16_t prev_stm_state = 0;  /* detect CurrentDemand entry -> ramp re-init 20 A          */
+static uint32_t cd_cycle_cnt   = 0;  /* p[+0x64] demand-cycle counter model (coarse gate >= 600) */
 
 /* CCS2 EVSE-side subsystem (SWD-readable; communication only, no power). Full stack now built:
  * QCA7005 PLC transport -> SLAC matching -> SDP discovery -> DIN70121 measurement/actuation,
@@ -167,6 +176,7 @@ void main(void)
     chademo_init();      /* zero the vehicle-data struct + watchdog timestamps       */
     charge_stm_init();   /* inert CHAdeMO charge state machine (shadow, §5.17)       */
     current_ctrl_init(); /* inert H102 output-current control law (shadow, §5.21 E)  */
+    current_ramp_init(); /* inert G11 periodic EVMaximumCurrentLimit ramp (shadow, §5.17) */
     tick_init();         /* 100 Hz SysTick OS tick + 100 kHz TIM2 timebase   */
     enable_irq();        /* boot jumped with interrupts masked (cpsid i)     */
 
@@ -280,11 +290,37 @@ void main(void)
             ci.target_voltage    = veh->target_voltage;    /* H102 byte1-2 */
             ccs2_fill_current_ctrl(&ci);   /* EVSE max/avail current + factors + voltage limit */
             current_ctrl_step(&ci);
+
+            /* Inert G11 periodic EVMaximumCurrentLimit ramp (§5.17, analyze105, 0x0804BB54): the
+             * slow +20 A/min inrush layer, distinct from the per-tick current_ctrl min/cap law
+             * above. Ramps the requested limit (stock meas+0x28C) tracking the EVSE present
+             * current (= current_ctrl avail), clamped to the EVSE max (= cap). SHADOW — drives no
+             * power stage; with the EVSE measurements stubbed 0 the ceiling is 0, so it never
+             * steps and max_limit stays 0 (no current limit asserted). Re-init 20 A on state-30
+             * entry (stock 0x0804B010/B3C2); phase_cnt is the genuine p[+0x4] ticks-in-state. */
+            if (prev_stm_state != STM_CURRENTDEMAND) {
+                current_ramp_init();
+                cd_cycle_cnt = 0;
+            }
+            current_ramp_inputs_t ri;
+            ri.target    = current_ctrl_scale(ci.evse_avail_raw, ci.evse_avail_factor); /* avail */
+            ri.ceiling   = current_ctrl_get()->cap;                                     /* cap   */
+            ri.phase_cnt = (uint16_t)charge_stm_phase_cnt();   /* p[+0x4] ticks-in-state         */
+            ri.p64       = cd_cycle_cnt;                       /* p[+0x64] demand-cycle model    */
+            current_ramp_step(&ri);
+            cd_cycle_cnt++;
+            /* Surface the ramped setpoint into the actuation context (stock meas+0x28C); the
+             * CurrentDemandReq encoder advertises min(this, EVSE max) = cc_max_limit. */
+            din70121_meas_mut()->ev_max_current_limit = current_ramp_get()->setpoint;
         }
         const current_ctrl_t *cc = current_ctrl_get();
         cc_setpoint = cc->setpoint;
         cc_cap      = cc->cap;
         cc_target_v = cc->target_v;
+        const current_ramp_t *cr = current_ramp_get();
+        cc_ramp_setpoint = cr->setpoint;
+        cc_max_limit     = cr->max_limit;
+        prev_stm_state   = (uint16_t)stm_state;
 
         /* CCS2 CurrentDemand actuation (§5.9 / §5.21 F): encode the setpoint (cc_setpoint A /
          * cc_target_v V) into a DIN CurrentDemandReq EXI image — the asserted current drive is

@@ -19,12 +19,12 @@ old target reference made the engagement window unreachable during precharge (th
 **G10** PreCharge↔car-contactor coupling lives in the CHAdeMO charge stm (states 15/16 wait VehicleStatus bit3 +
 current-request>0, 8s/4s; 18/19 inner precharge relay PB10) and is **already replicated** in `charge_stm`;
 **G11** current ramp is a slow **+20 A/minute** ramp on the requested EVMaximumCurrentLimit (`meas+0x28C`,
-`0x0804BB54`), distinct from the instantaneous per-tick min/cap law — its **inert build step remains**. **What
-remains:** (i) minor codec **fidelity partials** (G6–G8 + the B2 `[?]` gate-sequence / list-sub-grammar /
-optional-choice / unit-enum / SID-negotiation items, §2); (ii) the **G11 inert current-ramp** build step (§2);
-(iii) the bench-only **G9** live SECC interop capture; and (iv) the **GATED-LAST** asserted power-stage drive
+`0x0804BB54`), distinct from the instantaneous per-tick min/cap law — now **BUILT** as the inert shadow
+`current_ramp.c` (byte-exact, host-tested). **What remains:** (i) minor codec **fidelity partials** (G6–G8 +
+the B2 `[?]` gate-sequence / list-sub-grammar / optional-choice / unit-enum / SID-negotiation items, §2);
+(ii) the bench-only **G9** live SECC interop capture; and (iii) the **GATED-LAST** asserted power-stage drive
 (§4). The library network/crypto layers are **done** (vendored, byte-faithful config). Full host suite
-**722 / 0**; `verify_ccs2.py` **222 / 0**.
+**760 / 0**; `verify_ccs2.py` **222 / 0**.
 
 ---
 
@@ -50,17 +50,18 @@ optional-choice / unit-enum / SID-negotiation items, §2); (ii) the **G11 inert 
 | Vendored mbedTLS 2.28.9 + lwIP 2.1.4 (byte-faithful config) | `third_party/`, `mbedtls_config.h`, `lwipopts.h` | `analyze97` 63 | built (`analyze97`–`100`) |
 
 CHAdeMO side (built earlier, inert): `can`/`chademo` (H100/101/102 RX, H108/109 TX), `charge_stm` (shadow,
-byte-exact state-17 guard), `current_ctrl` (shadow setpoint), `hv`/`adc`/`nv_cal`/`spi4` (factory-cal HV
-measurement), `rcc`/`gpio`/`tick`. Full host suite **722 checks / 0 failures** (16 tests); built-image disasm
-`verify_ccs2.py` **222 checks / 0** (last verified at the engagement-reference fix `c8fc16a`; ARM text 118508,
-`CUSTOM.UPG` 132102 B CRC OK). The B2 codec integration (`017577d`) + the engagement-reference fix (`c8fc16a`)
-landed after the library-pivot milestone `91c938c`.
+byte-exact state-17 guard), `current_ctrl` (shadow setpoint), `current_ramp` (shadow +20 A/min
+EVMaximumCurrentLimit ramp, G11), `hv`/`adc`/`nv_cal`/`spi4` (factory-cal HV measurement), `rcc`/`gpio`/`tick`.
+Full host suite **760 checks / 0 failures** (17 tests); built-image disasm `verify_ccs2.py` **222 checks / 0**
+(ARM text 118836, `CUSTOM.UPG` 132102 B CRC OK). The B2 codec integration (`017577d`) + the engagement-reference
+fix (`c8fc16a`) + the coordination decode (`5d9ecc4`) landed after the library-pivot milestone `91c938c`.
 
 **Session sequence is wired end-to-end** (`din_session.c`): 1→2→3→6→7→8→9→10→11→12→13→0, timers
 4000/120000/150000/40000/14000 ms, retry cap 20, CD modulo cadence, FAILED→shutdown + fault post. The
 **EXI message content is now built** (B2): the 9 Req encoders + 9 Res decoders replace the former
-ResponseCode-only advancement and `[? body]` placeholders. What remains partial is codec **fidelity**
-(§2 G6–G8 + B2 `[?]` items) and **charge coordination** (§2 G10/G11), not the message skeleton.
+ResponseCode-only advancement and `[? body]` placeholders. **Charge coordination is complete** (G10 already
+faithful in `charge_stm`; G11 ramp built in `current_ramp`). What remains partial is codec **fidelity**
+(§2 G6–G8 + B2 `[?]` items), not the message skeleton.
 
 ---
 
@@ -210,11 +211,11 @@ on the car contactor. **The replica `charge_stm` ALREADY models this** (state 15
 no new coupling code needed; the sequence + timeouts are confirmed faithful (the asserted PB10/d2 GPIO drive
 remains the gated layer, §4).
 
-### G11 — output-current ramp + undersupply limit — **RESOLVED** (RE `analyze105`); inert build step remains
+### G11 — output-current ramp + undersupply limit — **RESOLVED + BUILT** (`analyze105` → `current_ramp.c`)
 Decoded byte-exact (`analyze105.py`). C013 has **two distinct current paths**:
 1. **Per-tick CurrentDemand setpoint** (`0x08044D42`, replica `current_ctrl`): `min(request, avail)` capped by
    EVSE max — instantaneous, **no ramp** (byte-exact, already replicated).
-2. **Periodic EVMaximumCurrentLimit ramp** (`0x0804BB54`) — the **unmodeled** layer:
+2. **Periodic EVMaximumCurrentLimit ramp** (`0x0804BB54`) — **replicated** in `current_ramp.c` (inert shadow):
    - **Ramp ceiling** `[0x200007AC]` = `din_scale(EVSE max current, meas+0x3D20/22)` (`0x0804B726–0x0804B73A`).
    - **Ramped setpoint** `meas+0x28C` (`0x200077FC`), **init 20 A** at state-17 (`0x0804ABCA movs #0x14`).
    - Check every 10 ticks (`phase_cnt%10`); the **+20 A (`0x14`) step** is gated on **`phase_cnt%6000==0`**
@@ -227,12 +228,16 @@ Decoded byte-exact (`analyze105.py`). C013 has **two distinct current paths**:
      (`0x0804EA94–9C`: `ldrh [r6,#0x28c] ; cmp r0,r5 ; bhi keep ; mov r5,r0`).
 
 **Conclusion:** C013 ramps the **requested EVMaximumCurrentLimit** up **+20 A per minute** (slow inrush limit),
-never above the EVSE-reported max, init 20 A. This is **NOT** the prior-art +4 A/100 ms fast ramp. **Remaining
-inert build step:** add the slow +20 A/60 s ramp to the demand current limit (`ccs2_demand` /
-`current_ctrl` EVMaximumCurrentLimit), clamped to EVSE max — communication-side, **no GPIO**, host-testable.
-**Impact:** smooth current delivery; the ramp is inert-safe to implement now, the asserted power drive stays
-gated (§4). (The voltage-estimation curve is **moot for the CCS2 engagement reference** — G5b proved C013 uses
-the measured EVSE present voltage.)
+never above the EVSE-reported max, init 20 A. This is **NOT** the prior-art +4 A/100 ms fast ramp.
+**BUILT** (`current_ramp.c`, `test_current_ramp` 38 checks): byte-exact `0x0804BB54` step law — init 20 A,
+`phase_cnt%10` gate, FINE +20 A/`phase_cnt%6000` (±5 A deadband) / COARSE +20 A/10 ticks (±25 A deadband,
+`p[+0x64]>=600`), 32-bit unsigned deadband math (the coarse +25 bound is `(setpoint−25)+50`, wrapping
+consistently at the 20 A init), ceiling clamp, `EVMaximumCurrentLimit=min(ramped, ceiling)`. Wired inertly in
+`main` CurrentDemand (target=`current_ctrl` avail, ceiling=cap, `phase_cnt`=p[+0x4] via `charge_stm_phase_cnt`);
+re-init 20 A on state-30 entry; published `cc_ramp_setpoint`/`cc_max_limit` (SWD) + `meas+0x28C`. With EVSE
+stubs 0 the ceiling is 0 → no step, `max_limit` 0 (no limit asserted). Communication-side, **no GPIO**; the
+asserted power drive stays gated (§4). (The voltage-estimation curve is **moot for the CCS2 engagement
+reference** — G5b proved C013 uses the measured EVSE present voltage.)
 
 ### G9 — SECC-peer wire convention capture `[?]`  **(bench-only)**
 REPORT §5.9 line 964 — the actual SECC peer's wire behavior (real EVSE message ordering/option choices) needs a
@@ -263,27 +268,23 @@ laws (REPORT §5.17/§5.18/§5.20/§5.21/§5.5c). Not a gap to close now — the
 ## 5. Next-build-step scoping (recommendation)
 
 The critical-path **RE + integration are DONE** — G1–G5 recovered byte-exact (`analyze101`/`102`/`103`) and
-**built** (B2 `017577d`); the engagement reference is corrected (G5b, `analyze104` / `c8fc16a`); and the
-**charge-coordination RE is resolved** (`analyze105`): G10 car-contactor coupling is already replicated in
-`charge_stm`, G11 current ramp decoded (+20 A/minute on the requested EVMaximumCurrentLimit). The former
-steps 1–3 (Req encoders / Res field lists / DC_EVSEStatus + three-signal split) and the coordination decode are
+**built** (B2 `017577d`); the engagement reference is corrected (G5b, `analyze104` / `c8fc16a`); and
+**charge coordination is complete** (`analyze105`): G10 car-contactor coupling is already replicated in
+`charge_stm`, and the G11 +20 A/minute EVMaximumCurrentLimit ramp is **built** as the inert shadow
+`current_ramp.c` (byte-exact `0x0804BB54`, `test_current_ramp` 38). The former steps 1–3 (Req encoders / Res
+field lists / DC_EVSEStatus + three-signal split), the coordination decode, and the inert ramp build are
 **complete**. What remains, in priority order toward a *safe charge*:
 
-1. **G11 inert current-ramp build step** — add the slow **+20 A/60 s** ramp on the demand EVMaximumCurrentLimit
-   (`meas+0x28C` equivalent in `current_ctrl`/`ccs2_demand`), init 20 A, clamped to `din_scale(EVSE max)`, ±5 A
-   up / ±25 A down deadband (C013 `0x0804BB54`). Communication-side, **no GPIO**, host-testable. G10 needs no
-   new code (already faithful). This is the last charge-coordination implementation gap.
-2. **Codec fidelity partials (G6/G7/G8 + B2 `[?]`)** — Req gate sequences, ServiceDiscovery list sub-grammars,
+1. **Codec fidelity partials (G6/G7/G8 + B2 `[?]`)** — Req gate sequences, ServiceDiscovery list sub-grammars,
    CDRes optional-choice chain, PVT unit enums, SID negotiation, CD secondary set-site, DIN 4/5 skip, 150 s
-   compare site. Inert, C013-decodable, host-testable; can proceed in parallel with step 1. Polish, not a
-   live-session blocker.
-3. **Bench validation (G9)** — live SECC session capture (hardware: ESP32-S3 / Arduino Mega bench) to confirm
+   compare site. Inert, C013-decodable, host-testable. Polish, not a live-session blocker.
+2. **Bench validation (G9)** — live SECC session capture (hardware: ESP32-S3 / Arduino Mega bench) to confirm
    real EVSE message ordering/option choices + the live lwIP/mbedTLS TCP-connect/TLS-handshake on hardware.
-4. **GATED power-stage drive (LAST, §4)** — asserted contactor/relay GPIO sequencing (incl. the decoded PB10
+3. **GATED power-stage drive (LAST, §4)** — asserted contactor/relay GPIO sequencing (incl. the decoded PB10
    inner precharge-relay drive + d2) + BCB PD11 + +24 V power-fail queue, behind a compile-time safety flag,
    **after** the controller is bench-validated against the decoded laws (REPORT §5.17/§5.18/§5.20/§5.21/§5.5c).
 
-Steps 1–2 are inert implementation + host tests + build/`verify_ccs2`/UPG re-wrap (no power drive); step 3 needs
-hardware; step 4 is the final gated layer. This keeps the asserted power-stage drive GATED LAST throughout.
-**Critical path:** the codec + coordination RE are complete; the path to "runs a safe charge" is the inert ramp
-(1) → bench (3) → gated drive (4), with fidelity (2) as parallel polish.
+Step 1 is inert implementation + host tests + build/`verify_ccs2`/UPG re-wrap (no power drive); step 2 needs
+hardware; step 3 is the final gated layer. This keeps the asserted power-stage drive GATED LAST throughout.
+**Critical path:** the codec + coordination RE and the inert ramp are complete; the path to "runs a safe
+charge" is bench (2) → gated drive (3), with fidelity (1) as parallel polish.

@@ -90,6 +90,8 @@ typedef struct {
     uint8_t  bulk_charging_complete; /* +0x3CB7 -> CDReq EXI[0x40] (analyze101)      */
     uint8_t  charging_complete;      /* +0x3CB8 -> CDReq EXI[0x48] (analyze101)      */
     uint8_t  first_demand_sent;      /* +0x243 */
+    uint16_t ev_max_current_limit;   /* +0x28C ramped EVMaximumCurrentLimit setpoint (A), G11
+                                      * (current_ramp; advertised limit = min(this, EVSE max)) */
 } din_meas_t;
 
 /* ---- PhysicalValueType scaling (byte-exact, shared with current_ctrl) ---- */

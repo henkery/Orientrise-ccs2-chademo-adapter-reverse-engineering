@@ -47,6 +47,7 @@ uint16_t charge_stm_state(void)         { return stm.state; }
 uint8_t  charge_stm_interlock(void)     { return stm.interlock; }
 uint8_t  charge_stm_engage_result(void) { return stm.engage_ok; }
 uint8_t  charge_stm_action(void)        { return stm.action; }
+uint32_t charge_stm_phase_cnt(void)     { return stm.phase_cnt; }
 
 static void goto_state(uint16_t s, uint32_t tick, uint8_t action)
 {

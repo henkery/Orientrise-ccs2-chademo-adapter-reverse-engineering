@@ -1992,8 +1992,15 @@ ceiling with a **±5 A deadband** around the request (`0x0804BB76–82`), down-p
 `p[+0x64] >= 600` (`0x0804BBBC`). The **CurrentDemandReq EVMaximumCurrentLimit = `min(ramped meas+0x28C,
 din_scale(EVSE max))`** (`0x0804EA94–9C`: `ldrh [r6,#0x28c] ; cmp r0,r5 ; bhi keep ; mov r5,r0`). Net: C013
 ramps the *requested* max current up **+20 A/minute**, never above the EVSE-reported max — **not** the prior-art
-+4 A/100 ms fast ramp. The remaining inert build step is to add this slow ramp to the demand current limit
-(communication-side, no GPIO); the per-tick min/cap law is already faithful.
++4 A/100 ms fast ramp. Both paths only **add** +20 A (`adds #0x14 ; uxth ; strh`, shared clamp `cmp r1,r0 ; blo
+skip ; strh r0`): the coarse "down-path" ±25 A deadband is a catch-up gate, **not** a decrease. The deadband
+compares are 32-bit **unsigned** on the zero-extended halfword setpoint (`subs/adds #5` fine; `sub.w #0x19` then
+`adds #0x32` coarse, so the +25 bound is `(setpoint−25)+50`, wrapping consistently at the 20 A init). This ramp
+is replicated byte-exact in `custom_fw/src/current_ramp.c` (inert shadow, `test_current_ramp` 38 checks; wired in
+`main` CurrentDemand with target = EVSE present current = `current_ctrl` avail, ceiling = EVSE max = cap,
+`phase_cnt` = p[+0x4]; re-init 20 A on state-30 entry; `EVMaximumCurrentLimit=min(ramped,ceiling)` surfaced to
+`meas+0x28C`). The per-tick min/cap law (`current_ctrl`) is already faithful. Communication-side, no GPIO; the
+asserted power-stage drive stays gated.
 
 #### Power-stage drive + HV ADC front-end (C013, `analyze81`)  [C]
 

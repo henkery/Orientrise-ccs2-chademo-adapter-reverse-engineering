@@ -81,6 +81,19 @@ This foundation is **safe-by-construction** (contactors open, no HV):
   `CurrentDemandRes` is decoded they hold 0, so `avail==0` and the `min(request,0)==0` zero-skip **holds the
   setpoint at 0** — no current is ever commanded. It only runs in state-30 (CurrentDemand). Host-unit-tested
   (`test_current_ctrl.c`, 46 checks). Setpoint/cap/target are SWD-readable (`cc_*`).
+- **Inert G11 EVMaximumCurrentLimit ramp**: `current_ramp_step` runs the C013 state-30 **periodic** current-limit
+  ramp (§5.17 G11, `analyze105`, byte-exact `0x0804BB54–0x0804BBE8`) as a **shadow limit** — the slow inrush layer
+  distinct from the per-tick `current_ctrl` min/cap law above. It ramps the **requested** `EVMaximumCurrentLimit`
+  (stock `meas+0x28C`) up **+20 A/minute** tracking the EVSE present current (= `current_ctrl` avail), clamped to
+  the EVSE max (= cap): init **20 A**, `phase_cnt%10` gate, **FINE** +20 A on `phase_cnt%6000==0` (6000 ticks =
+  60 s = 1 min @100 Hz) within a **±5 A** deadband, **COARSE** +20 A/10 ticks within a **±25 A** deadband gated
+  `p[+0x64]>=600`; 32-bit unsigned deadband math (the coarse +25 bound is `(setpoint−25)+50`, wrapping at the
+  20 A init), ceiling clamp, and `EVMaximumCurrentLimit = min(ramped, ceiling)` (`0x0804EA94`). Both paths only
+  **add** +20 A — **not** the prior-art +4 A/100 ms fast ramp. It **drives no power stage**. Wired in `main`
+  CurrentDemand (re-init 20 A on state-30 entry; `phase_cnt` = the genuine `p[+0x4]` via `charge_stm_phase_cnt()`);
+  with the EVSE measurements stubbed 0 the ceiling is 0, so it **never steps** and `max_limit` stays 0 — no limit
+  asserted. Host-unit-tested (`test_current_ramp.c`, 38 checks). Ramped setpoint + advertised limit are
+  SWD-readable (`cc_ramp_setpoint`/`cc_max_limit`) and surfaced into `meas+0x28C`.
 - **CCS2 QCA7005 PLC transport**: `qca7005_init` brings up the QCA7005 HomePlug GreenPHY PLC modem over
   SPI1 (§5.9 transport addendum, `analyze91`) — PA5/6/7 AF5, CS=PA4, reset=PC5, IRQ=PC4 polled, `CR1=0x0357`
   (Mode 3 /8 master), the SPI register protocol (`0xC000|addr` read / `0x4000|addr` write), reg-init
@@ -118,7 +131,7 @@ This foundation is **safe-by-construction** (contactors open, no HV):
   transport is ESTABLISHED (gated TCP connect/TLS handshake), so nothing is commanded in normal operation.
   Host-unit-tested (`test_{v2gtp,slac,cp,cp_capture,cp_adc,sdp,din70121,ccs2,exi,din_session,v2g_net,ca_store}.c`,
   14/54/32/42/42/31/74/23/85/42/90/45 checks; `test_tls_mbedtls` 21 validates the real-library TLS handshake;
-  full host suite 722). `ccs2_st`/`ccs2_link`/`ccs2_secc`/`ccs2_proto` +
+  full host suite 760). `ccs2_st`/`ccs2_link`/`ccs2_secc`/`ccs2_proto` +
   `din_st_state`/`din_st_fault`/`din_st_retry`/`din_st_active` + `v2g_net_st`/`v2g_net_mode`/`v2g_net_rx`/
   `v2g_net_tx` are SWD-readable.
 - **IWDG**: the loop feeds the watchdog key (`0x40003000`) — harmless whether or not the IWDG is
@@ -225,6 +238,8 @@ then `#define MBEDTLS_SSL_SRV_C` for the harness server — the firmware config 
 | `test_charge_stm.c` | host unit test (gcc, no hardware): engagement-guard window/thresholds + unsigned wrap, sequence walk/stall/engagement, interlocks, C009-mismatch never-engages, ZE1 present-voltage-reference regression (ress_vol = EVSE PresentVoltage, not H102 target) — 55 checks |
 | `src/current_ctrl.c/.h` | **inert** H102 output-current control law (shadow setpoint): state-30 `setpoint=min(request,EVSE avail)` capped by EVSE max, `target_v=min(target,limit)`, byte-exact `/1000` scale + converter `0x0804E786`=pow10 TABLE[code] (corrects analyze89; delegates to `din_pow10`/`din_scale`), zero-skip keep-previous; drives no power stage; EVSE measurements from `ccs2_fill_current_ctrl()` (§5.21 E, `analyze89`/`analyze92`) |
 | `test_current_ctrl.c` | host unit test (gcc, no hardware): pow10 converter/scale, min/cap law, target-voltage limit, zero-skip, EVSE-stub safety (setpoint held 0) — 46 checks |
+| `src/current_ramp.c/.h` | **inert** G11 periodic EVMaximumCurrentLimit ramp (shadow limit): byte-exact `0x0804BB54–0x0804BBE8` — init 20 A, `phase_cnt%10` gate, FINE +20 A/`%6000` (±5 A deadband) / COARSE +20 A/10 ticks (±25 A deadband, `p[+0x64]>=600`), 32-bit unsigned deadband math + ceiling clamp, `EVMaximumCurrentLimit=min(ramped,ceiling)`; target=EVSE present current (avail), ceiling=EVSE max (cap); drives no power stage; wired in `main` CurrentDemand, re-init 20 A on state-30 entry (§5.17 G11, `analyze105`) |
+| `test_current_ramp.c` | host unit test (gcc, no hardware): 20 A init, `%10`/`%6000` gates, FINE ±5 + COARSE ±25 deadbands, `p64>=600` gate, unsigned −25 wrap, ceiling clamp, `min(ramped,ceiling)`, EVSE-stub safety (no step, limit 0) — 38 checks |
 | `src/qca7005.c/.h` | QCA7005 PLC SPI1 host driver + MME/Ethernet transport: `CR1=0x0357` (Mode 3/master//8/8bit/MSB/SSM), CS=PA4, reset=PC5, IRQ=PC4 polled; reg read `0xC000\|addr` / write `0x4000\|addr`; reg-init (sig `0xAA55` + `0x1200=0xC5B`/`0xC00=0x447`/`0xD00=0x41`); `0xAA`/`0x55`-framed buffer TX/RX; MAC-read MME `0xA000`/`0xA001`; 4096 B RX ring + per-frame callback; communication only, no power GPIO (§5.9, `analyze91`) |
 | `test_qca7005.c` | host unit test (gcc, no hardware): MAC-read REQ build, MAC-read CNF validation, RX packet-header parse math — 26 checks |
 | `src/v2gtp.c/.h` | V2GTP framing: encode/parse `01 FE type BE len BE`; types `0x8001` EXI / `0x9000` SDP-req / `0x9001` SDP-res (§5.9, `analyze92`) |
@@ -250,7 +265,7 @@ then `#define MBEDTLS_SSL_SRV_C` for the harness server — the firmware config 
 | `test_tls_mbedtls.c` + `test_mbedtls_config.h` | host integration test (gcc, no hardware; **real** mbedTLS client/server memory-bio handshake): negotiates 0xC023, VERIFY_REQUIRED enforced (empty-CA→−0x2700/0x08), 0xC025 alt, encrypted app-data round-trip — 21 checks; `test_mbedtls_config.h` = host-only wrapper (`#include "mbedtls_config.h"` + `MBEDTLS_SSL_SRV_C` for the harness server; firmware config stays client-only) |
 | `src/ca_store.c/.h` | **PnC CA cert store** (`analyze96`, communication only): ext-SPI master hdr@`0x1F8000` (magic `0xCEA155E1`/version1/size/byte-sum) validate + data@`0x1F8010` read via `spi4_read` → compact NULL-term Root(0x8101) ptr-array of {der_len,DER} entry+4 pointers (808 B entries, der_len≤800); `ca_store_root_count` feeds the SDP No-TLS gate; ext-SPI→RAM directly (no internal A/B management), no power GPIO (§5.9) |
 | `test_ca_store.c` | host unit test (gcc, no hardware; `spi4_read` stubbed, RAM flash image): header validate, byte-sum, entry/contract validators, compact ptr-array populate (slots 0/2/4→3 roots, NULL-term, {len,DER} deref), `ca_store_init` (hdr+cksum+populate, root_count gate, bad-cksum/magic/version rejected) — 45 checks |
-| `test_v2gtp.c` / `test_slac.c` / `test_cp.c` / `test_sdp.c` / `test_din70121.c` / `test_ccs2.c` / `test_exi.c` / `test_din_session.c` | host unit tests (gcc, no hardware; QCA7005 stubbed where needed): V2GTP framing 14, SLAC sequence walk 54, CP/PP scaling/state/plug 32, SDP security/req/res/protocol 31, DIN pow10/CD-res/CD-req/DC_EVSEStatus-grammar + B2 DIN-document codec round-trips 74, CCS2 integration 23, EXI primitives/PVT/framing + DIN-doc framing 85, session sequence/timers/retry/cadence/faults 42 checks (full host suite **722** with `test_v2g_net` 90 + `test_ca_store` 45 + `test_cp_capture` 42 + `test_cp_adc` 42 + `test_charge_stm` 55 + `test_current_ctrl` 46 + `test_qca7005` 26 + `test_tls_mbedtls` 21) |
+| `test_v2gtp.c` / `test_slac.c` / `test_cp.c` / `test_sdp.c` / `test_din70121.c` / `test_ccs2.c` / `test_exi.c` / `test_din_session.c` | host unit tests (gcc, no hardware; QCA7005 stubbed where needed): V2GTP framing 14, SLAC sequence walk 54, CP/PP scaling/state/plug 32, SDP security/req/res/protocol 31, DIN pow10/CD-res/CD-req/DC_EVSEStatus-grammar + B2 DIN-document codec round-trips 74, CCS2 integration 23, EXI primitives/PVT/framing + DIN-doc framing 85, session sequence/timers/retry/cadence/faults 42 checks (full host suite **760** with `test_v2g_net` 90 + `test_ca_store` 45 + `test_cp_capture` 42 + `test_cp_adc` 42 + `test_charge_stm` 55 + `test_current_ctrl` 46 + `test_current_ramp` 38 + `test_qca7005` 26 + `test_tls_mbedtls` 21) |
 | `main.c` | rcc→gpio_safe→hv→ca_store_init→cp_capture_init→cp_adc_init→can→chademo→charge_stm→current_ctrl→tick→`cpsie i`→qca7005_init→hw_rng_init→`v2g_stack_set_rng(hw_rng_f_rng)`→ccs2_init→`v2g_net_set_local_mac` [EUI-64 from PIB MAC], then 100 Hz loop (feed IWDG + `heartbeat` + publish `hv_*` + RX parse + cp_step [real CP/PP front-end: cp_capture duty/period + cp_adc PP/CPD raw + PD11/D_LINK; publish `cp_cap_*`/`cp_plug`/`cp_state`/`cp_pp_mv`/`cp_cpd_mv`/`cp_bat_mv`/`cp_pp_raw`/`cp_cpd_raw`/`cp_d_link`/`cp_pd11`] + ccs2_step [drives din_session_step + v2g_net_step] + `charge_stm_step` with EVSE inputs from `ccs2_evse()` [publish `stm_*`] + `current_ctrl_step` in state-30 from `ccs2_fill_current_ctrl()` [publish `cc_*`] + `ccs2_demand` inert CD-req image + `v2g_net_tcp_send` [inert, only when ESTABLISHED; publish `ccs2_cd_req*`] + periodic TX + can_service + `qca7005_service`→ccs2_rx [publish `ccs2_*`] + `din_session_get` [publish `din_st_*`] + `v2g_net_get` [publish `v2g_net_st/mode/rx/tx`] + `v2g_stack_poll` [lwIP nd6_tmr + TCP timers driven inside v2g_net_step] + `ca_store_get/root_count` [publish `ca_root_count/ca_store_present`]); no asserted power drive |
 | `build.sh` | builds via `nix-shell -p gcc-arm-embedded python3` → `app.elf`/`app.bin`, verifies vectors, pads to sector 5 |
 | `verify_pad.py` | checks `vector[0]==0x20030000`, `vector[1]` is an in-app Thumb address; pads `app.bin` → `app_padded.bin` (128 KB, `0xFF` tail) |
@@ -322,8 +337,8 @@ gcc -O2 -Wall -Wextra -Isrc -o test_ca_store  test_ca_store.c  src/ca_store.c   
 ```
 
 Expected: `14 / 54 / 32 / 42 / 42 / 31 / 74 / 85 / 42 / 23 / 90 / 45 checks, 0 failures` respectively (this
-block **574**; the full host suite is **722** with `test_charge_stm` 55 + `test_current_ctrl` 46 +
-`test_qca7005` 26 + `test_tls_mbedtls` 21).
+block **574**; the full host suite is **760** with `test_charge_stm` 55 + `test_current_ctrl` 46 +
+`test_current_ramp` 38 + `test_qca7005` 26 + `test_tls_mbedtls` 21).
 `test_slac.c` and `test_ccs2.c` provide their own `qca7005_frame_send`/`qca7005_mac` stubs (do **not** link
 `src/qca7005.c` into those — it collides with the stubs); `test_ccs2.c` also stubs `tick_get`. `test_din70121.c`/
 `test_ccs2.c`/`test_current_ctrl.c` link `src/exi.c` (the din70121 grammar codec references the EXI primitives);

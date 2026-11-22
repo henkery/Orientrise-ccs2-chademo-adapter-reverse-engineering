@@ -113,6 +113,7 @@ uint16_t charge_stm_state(void);
 uint8_t  charge_stm_interlock(void);   /* active interlock bitmask (STM_IL_*) */
 uint8_t  charge_stm_engage_result(void); /* last state-17 guard result (0/1) */
 uint8_t  charge_stm_action(void);      /* intended (GATED, not executed) power action STM_ACT_* */
+uint32_t charge_stm_phase_cnt(void);   /* p[+0x4] ticks-in-current-state (100 Hz), reset on transition */
 
 /* Pure, host-testable C013 state-17 engagement guard (0x0804AF08–0x0804AF30, analyze80/analyze103):
  *   flag==1 && phase_status==4 && (outvol+10 >= ress_vol) && (outvol-5 <= ress_vol) && cnt>=250.
