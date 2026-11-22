@@ -200,3 +200,36 @@ int spi4_write(uint32_t addr, const uint8_t *src, uint32_t len)
     }
     return 0;
 }
+
+int spi4_erase_range(uint32_t addr, uint32_t len)
+{
+    if (addr < SPI_POOL_BASE || addr + len > SPI_FLASH_SIZE)
+        return -1;
+    if (len == 0)
+        return 0;
+    uint32_t base = addr & ~0xFFFu;
+    uint32_t end  = addr + len;
+    while (base < end) {
+        if (spi4_sector_erase(base) != 0)
+            return -1;
+        base += 0x1000u;
+    }
+    return 0;
+}
+
+int spi4_program(uint32_t addr, const uint8_t *src, uint32_t len)
+{
+    if (addr < SPI_POOL_BASE || addr + len > SPI_FLASH_SIZE)
+        return -1;
+    uint32_t page_left = 0x100u - (addr & 0xFFu);
+    while (len > 0) {
+        uint32_t pl = (len > page_left) ? page_left : len;
+        if (spi4_page_program(addr, src, pl) != 0)
+            return -1;
+        addr += pl;
+        src  += pl;
+        len  -= pl;
+        page_left = 0x100u;
+    }
+    return 0;
+}

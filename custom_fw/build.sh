@@ -18,10 +18,11 @@ if [ -z "${CUSTOM_FW_BUILD_NIX:-}" ]; then
   exec nix-shell -p gcc-arm-embedded python3 --run "bash '$0'"
 fi
 
-CFLAGS=(-mcpu=cortex-m4 -mthumb -O2 -ffreestanding -nostdlib -fno-builtin
+CFLAGS=(-mcpu=cortex-m4 -mthumb -ffreestanding -nostdlib -fno-builtin
   -fno-tree-loop-distribute-patterns -ffunction-sections -fdata-sections -w
   -DMBEDTLS_CONFIG_FILE='"mbedtls_config.h"'
-  -Isrc -Ithird_party/mbedtls/include -Ithird_party/lwip/src/include)
+  -Isrc -Isrc/usb -Ithird_party/tinyusb/src
+  -Ithird_party/mbedtls/include -Ithird_party/lwip/src/include)
 
 # Recovered glue + safe-bootstrap app modules (nd6.c retired -> lwIP nd6; tcp/tls/crypto/ecc/x509
 # retired -> lwIP TCP + mbedTLS). v2g_stack/hw_rng/libc_shim are the new library-integration layer.
@@ -30,7 +31,17 @@ APP=(startup.s main.c
   src/hv.c src/charge_stm.c src/current_ctrl.c src/current_ramp.c src/qca7005.c src/v2gtp.c src/slac.c src/cp.c
   src/cp_capture.c src/cp_adc.c src/sdp.c src/din70121.c src/exi.c src/din_session.c
   src/v2g_net.c src/v2g_stack.c src/hw_rng.c src/libc_shim.c src/ca_store.c src/ccs2.c
-  src/revert.c src/revert_stage.c)
+  src/revert.c src/revert_stage.c
+  src/usb/cdc_proto.c src/usb/usb_hw.c src/usb/usb_cdc.c src/usb/usb_descriptors.c)
+
+# TinyUSB (vendored MIT subset, master 490eb4e): device CDC on the Synopsys dwc2 OTG_FS port. Config
+# in src/usb/tusb_config.h; freestanding CMSIS shim src/usb/stm32f4xx.h. --gc-sections drops unused.
+TUSB=(third_party/tinyusb/src/tusb.c
+  third_party/tinyusb/src/common/tusb_fifo.c
+  third_party/tinyusb/src/device/usbd.c
+  third_party/tinyusb/src/class/cdc/cdc_device.c
+  third_party/tinyusb/src/portable/synopsys/dwc2/dcd_dwc2.c
+  third_party/tinyusb/src/portable/synopsys/dwc2/dwc2_common.c)
 
 # lwIP 2.1.x subset: NO_SYS=1 raw API, IPv6 + TCP + UDP + ICMPv6 + ND6 + frag/reass + ethernet.
 LWIP=(third_party/lwip/src/core/init.c third_party/lwip/src/core/def.c
@@ -45,9 +56,27 @@ LWIP=(third_party/lwip/src/core/init.c third_party/lwip/src/core/def.c
   third_party/lwip/src/core/ipv6/ethip6.c third_party/lwip/src/core/ipv6/ip6_addr.c
   third_party/lwip/src/core/ipv6/inet6.c third_party/lwip/src/netif/ethernet.c)
 
-# mbedTLS 2.28: compile all library sources; the minimal config + --gc-sections drop unused modules.
-arm-none-eabi-gcc "${CFLAGS[@]}" -T linker.ld "${APP[@]}" \
-  third_party/mbedtls/library/*.c "${LWIP[@]}" -o app.elf -lgcc \
+# Two optimization groups (size budget: app.bin must fit sector 5 = 128 KB, verify_pad.py):
+#  - Custom modules at -O2: verify_ccs2.py asserts their constant codegen (cp_capture/cp_adc TIM4/
+#    ADC3 immediates + the x6600//32760 multiply-magic, din70121 pow10 table) — keep that codegen.
+#  - Vendored libraries (TinyUSB + lwIP + mbedTLS) at -Os: verify_ccs2.py checks their PRESENCE only,
+#    so size-optimize them to recover the ~17 KB the CDC stack adds. --gc-sections drops unused.
+OBJDIR=build/obj
+rm -rf "$OBJDIR"; mkdir -p "$OBJDIR"
+OBJS=()
+compile() {                       # $1 = -O level; rest = sources
+  local opt="$1"; shift
+  local src obj
+  for src in "$@"; do
+    obj="$OBJDIR/$(printf '%s' "$src" | tr '/' '_').o"
+    arm-none-eabi-gcc "${CFLAGS[@]}" "$opt" -c "$src" -o "$obj"
+    OBJS+=("$obj")
+  done
+}
+compile -O2 "${APP[@]}"
+compile -Os "${TUSB[@]}" "${LWIP[@]}" third_party/mbedtls/library/*.c
+
+arm-none-eabi-gcc "${CFLAGS[@]}" -T linker.ld "${OBJS[@]}" -o app.elf -lgcc \
   -Wl,-Map=app.map -Wl,--gc-sections -Wl,--build-id=none
 arm-none-eabi-objcopy -O binary app.elf app.bin
 echo "--- size ---"

@@ -59,6 +59,8 @@
 #include "v2g_stack.h"
 #include "hw_rng.h"
 #include "ca_store.h"
+#include "usb/usb_hw.h"
+#include "usb/usb_cdc.h"
 
 #define IWDG_KR   (*(volatile uint32_t *)0x40003000u)
 #define IWDG_FEED 0x0000AAAAu
@@ -193,10 +195,18 @@ void main(void)
      * (netif_create_ip6_linklocal_address 0x08090D68 / ethernetif_init from_mac=1). */
     if (qca7005_mac()) v2g_net_set_local_mac(qca7005_mac());
 
+    /* USB device-CDC revert console (§5.15c): OTG_FS device mode + TinyUSB CDC. Communication only —
+     * drives no power pin. Receives a stock SERVICE.UPG, streams it to the SPI update pool + writes
+     * the boot xPAI command so a reset reverts to stock (brick-safe). The port also charges the
+     * internal battery (device/sink VBUS role); no VBUS-sense pin (PA9/PA10 = USART1). */
+    usb_hw_init();
+    usb_cdc_init();
+
     uint32_t next = tick_get();
     for (;;) {
         IWDG_KR = IWDG_FEED;   /* keep watchdog happy; no-op if disabled */
         heartbeat++;           /* 100 Hz proof-of-life counter           */
+        usb_cdc_task();        /* TinyUSB device stack + CDC revert console (§5.15c) */
 
         /* --- periodic 100 Hz control step --- */
         uint32_t now = tick_get();

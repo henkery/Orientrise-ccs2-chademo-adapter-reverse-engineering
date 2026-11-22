@@ -134,6 +134,17 @@ This foundation is **safe-by-construction** (contactors open, no HV):
   full host suite 817). `ccs2_st`/`ccs2_link`/`ccs2_secc`/`ccs2_proto` +
   `din_st_state`/`din_st_fault`/`din_st_retry`/`din_st_active` + `v2g_net_st`/`v2g_net_mode`/`v2g_net_rx`/
   `v2g_net_tx` are SWD-readable.
+- **USB device-CDC revert console**: `usb_hw_init` brings up the STM32F4 **OTG_FS** peripheral in
+  **device mode** (RCC_AHB2ENR.OTGFSEN, PA11/PA12 AF10, IRQ67) with the vendored **TinyUSB** CDC stack;
+  `usb_cdc_task` services a serial console that receives a stock `SERVICE.UPG` and **reverts to stock**
+  (REPORT §5.15c). The boot has **no USB** (§5.15b), so this is an *app-side* channel: it streams the UPG
+  to the SPI update pool (`revert_stage`), writes the boot's **xPAI** update command, and resets — the
+  boot then validates + installs stock verbatim (§5.16). **Brick-safe**: the xPAI descriptor is committed
+  only after the full UPG is staged + header-validated, and the boot re-checks the xPAI XOR + UPG
+  XIE2/CRC before installing; a bad upload leaves the existing app launchable. This is **communication
+  only** — it drives no power pin (only OTG_FS + SPI4 update pool). The USB port also charges the internal
+  battery (device/sink VBUS role); there is no VBUS-sense pin (PA9/PA10 = USART1), so the dwc2 driver
+  forces B-valid + NOVBUSSENS. Host-unit-tested (`test_revert.c` 43 checks, `test_cdc_proto.c` 240 checks).
 - **IWDG**: the loop feeds the watchdog key (`0x40003000`) — harmless whether or not the IWDG is
   enabled (keeps the app alive if the boot left it running; no-op otherwise).
 - A RAM `heartbeat` counter increments each 10 ms tick so you can confirm "the custom app is
@@ -219,18 +230,81 @@ then `#define MBEDTLS_SSL_SRV_C` for the harness server — the firmware config 
 **Still GATED:** the asserted power-stage drive (contactor/relay GPIO sequencing) stays the last gated layer
 (§5.21/§7). The library network/crypto layers are present and inert-validated, not gated-to-implement.
 
+## USB device-CDC revert console (vendored TinyUSB)
+
+The boot has **no USB** (REPORT §5.15b — its only update intake is serial XMODEM + the SPI-flash xPAI
+command), and `CUSTOM.UPG` removes the stock `usbdisk` USB updater. So reverting to stock from the custom
+app needs an **app-side** channel. This layer adds a **USB device-CDC serial console** (the user-chosen
+"USB device CDC via TinyUSB" + "revert-from-custom aid") that drives the boot's SPI/xPAI update path
+(§5.15c). The USB port also charges the internal battery (device/sink VBUS role), so device mode is
+hardware-feasible; `rcc.c` already provides the 48 MHz USB clock (PLLQ=7).
+
+**Revert mechanism (§5.15c, byte-derived `analyze108/108b/108c`).** Stage the raw obfuscated `SERVICE.UPG`
+to the SPI update pool + write the boot's 64-byte **xPAI** descriptor, then reset:
+- xPAI descriptor @ SPI physical `0x100000` (boot logical 0): `word[0]=0x49415078` ("xPAI"),
+  `word[1]=0xABCDEF12`, `word[14]=`UPG length (bounds `0x72C..0xE0404`), `word[15]=XOR(words[0..14])`
+  (XOR of all 16 words == 0). Boot `f+0x1108` validates this.
+- UPG payload @ SPI physical `0x110000` (boot logical `0x10000`). Boot `f+0x1eca` XOR-decodes (key-echo
+  `upg[0]/upg[1]`), checks `"XIE2"`@decoded`[0x3E8]` + CRC16/MODBUS residue 0 over `[0x3E8..0x3FE)`, and the
+  length bound `f+0x1f76` `(len-2) > (length_field+0x402)`. With `length_field=filesize-0x404`, the xPAI
+  length must be **`filesize+2`** (the minimal value passing the strict bound) — `revert_xpai_len_for`.
+- The boot then installs stock MAINARM verbatim (§5.16) + rebuilds config. **Brick-safe**: the boot
+  validates the xPAI XOR + UPG XIE2/CRC *before* installing; a bad upload is rejected, existing app launches.
+
+**Streaming (595 KB > RAM).** A stock `SERVICE.UPG` is ~595 KB, larger than the F4 RAM (192 KB + 64 KB CCM),
+so it is **never buffered whole**. `revert_stage` streams it: `begin` erases the pool range once →
+`write` programs 256-byte pages sequentially as CDC bytes arrive → `finish` reads back the 0x402-byte
+header, validates it (boot-mirror), builds + writes the xPAI descriptor **LAST**, read-back verifies it →
+`revert_trigger_reset` (AIRCR SYSRESETREQ, `f+0x18b6`). The descriptor is committed only after the full UPG
+is staged + validated, so a partial upload never leaves a valid update command. `spi4.c` gained the write
+path (WREN/PP/SE/RDSR mirroring `f+0x1ca4/f+0x1bb2/f+0x1c3e/f+0x1aa4` + the `f+0x1b42` page/sector chunking),
+**pool-only `[0x100000,0x200000)`** so the lower-1 MB factory NV cal is never erased/programmed.
+
+**Console protocol** (`cdc_proto`, host-tested; lines CR/LF-terminated, then raw bytes for an upload):
+`PING`→`PONG`, `STATUS`→`MODE CMD|UPLOAD`, `HELP`, `ABORT` (abort an upload), and `REVERT <n>`→`READY` then
+the host streams exactly `<n>` raw UPG bytes; on the last byte the device validates + commits → `OK
+reverting` + reset (or `ERR ...` back to CMD). The framing parser is pure/host-testable; the hardware glue
+(`usb_cdc`) buffers upload pages + drives `revert_stage` + sends TX responses.
+
+**TinyUSB vendoring + freestanding port.** `third_party/tinyusb/` vendors the MIT-licensed device-CDC subset
+(master `490eb4e`): `tusb.c` + `common/tusb_fifo` + `device/usbd` + `class/cdc/cdc_device` +
+`portable/synopsys/dwc2/{dcd_dwc2,dwc2_common}` + `osal_none`. Config `src/usb/tusb_config.h`
+(`OPT_MCU_STM32F4`, `OPT_OS_NONE`, device mode, CDC=1, dwc2 slave/no-DMA, `CFG_TUD_VBUS_DETECT_HW=0`). The
+dwc2 STM32 port includes CMSIS `stm32f4xx.h`; since custom_fw is bare-metal, `src/usb/stm32f4xx.h` is a
+**minimal shim** providing only `USB_OTG_FS_PERIPH_BASE`/`OTG_FS_IRQn`/`NVIC_EnableIRQ`/`SystemCoreClock`/
+`__NOP` (the `RCC_AHB1LPENR` branches are `#if defined`-guarded and compile out). `usb_hw.c` enables
+OTGFSEN + PA11/PA12 AF10 + `tud_init`, and `OTG_FS_IRQHandler` (IRQ67, wired in `startup.s`) →
+`tud_int_handler`. `usb_descriptors.c` supplies the CDC-ACM device/config/string descriptors.
+
+**Size budget.** `app.bin` must fit sector 5 (128 KB, `verify_pad.py`). The CDC stack adds ~17 KB, so
+`build.sh` compiles in two groups: **custom modules at `-O2`** (preserving the codegen `verify_ccs2.py`
+asserts — `cp_capture`/`cp_adc` immediates + multiply-magic, `din70121` pow10 table) and **vendored
+libraries (TinyUSB + lwIP + mbedTLS) at `-Os`** (verify checks their presence only). Result: app.bin
+~120 KB < 128 KB; `verify_ccs2.py` 222/0; host suite adds `test_revert` (43) + `test_cdc_proto` (240).
+
 ## Files
 
 | file | purpose |
 |---|---|
 | `linker.ld` | GNU ld script: FLASH `0x08020000` 640K (app sectors 5–9), RAM `0x20000000` 192K, CCM `0x10000000` 64K, `_estack=0x20030000` (§5.19) |
-| `startup.s` | vector table + self-bootstrapping `Reset_Handler`: MSP from `vector[0]`, `VTOR=0x08020000`, copy `.data`, zero `.bss`+CCM, call `main`; weak core + CAN1 (IRQ19–22) + TIM4 (IRQ30) + DMA2_Stream0 (IRQ56) + DMA2_Stream1 (IRQ57) handler aliases (the boot writes no MSP/VTOR, §5.15/§5.16) |
+| `startup.s` | vector table + self-bootstrapping `Reset_Handler`: MSP from `vector[0]`, `VTOR=0x08020000`, copy `.data`, zero `.bss`+CCM, call `main`; weak core + CAN1 (IRQ19–22) + TIM4 (IRQ30) + DMA2_Stream0 (IRQ56) + DMA2_Stream1 (IRQ57) + OTG_FS (IRQ67) handler aliases (the boot writes no MSP/VTOR, §5.15/§5.16) |
 | `src/rcc.c/.h` | `rcc_init`: restore SYSCLK 168 MHz (HSE→PLL, APB1 42 / APB2 84 MHz, FLASH 5WS, PWR VOS scale1 — §5.8.1) |
 | `src/gpio.c/.h` | `gpio_safe_init`: drive all power pins to SAFE/de-asserted levels, glitch-free (BSRR pre-load then MODER→output — §5.5c, `analyze86`); pin map + active levels |
 | `src/tick.c/.h` | `tick_init`: 100 Hz SysTick OS tick (`SysTick_Handler`) + 100 kHz TIM2 counter; `tick_get`/`tick_micros`/`tick_delay_ms` (§5.20) |
 | `src/can.c/.h` | bxCAN CAN1 transport: 500k (BTR `0x00270006`), MCR `0x4D`, PD0/PD1 AF9, bank-0 mask filter accept `0x100..0x103`, FIFO0-pending RX ISR (`CAN1_RX0_IRQHandler`)→ring, polled TX, bus-off recovery (§5.8.2) |
 | `src/chademo.c/.h` | CHAdeMO message layer: RX H100/H101/H102 parse (byte→field per `analyze87`), periodic H108/H109 standby TX (H108 byte1-2 = measured `outvol`, 450-clamped), per-message + whole-bus watchdog timestamps (§5.18) |
-| `src/spi4.c/.h` | SPI4 external-flash read transport: `CR1=0x344` (mode0/master//2/8bit/MSB), CS=PE11, SCK/MISO/MOSI=PE12/13/14 AF5; READ `0x03` + 24-bit addr (§5.21, `analyze88`) |
+| `src/spi4.c/.h` | SPI4 external-flash transport: `CR1=0x344` (mode0/master//2/8bit/MSB), CS=PE11, SCK/MISO/MOSI=PE12/13/14 AF5; READ `0x03` + 24-bit addr (§5.21, `analyze88`). **Write path** (§5.15c): WREN/PP/SE/RDSR (`f+0x1ca4/f+0x1bb2/f+0x1c3e/f+0x1aa4`) + `spi4_write` page/sector chunking (`f+0x1b42`) + streaming `spi4_erase_range`/`spi4_program`; **pool-only `[0x100000,0x200000)`** (NV cal below untouched), IWDG-fed erase |
+| `src/revert.c/.h` | **pure host-testable** revert core (§5.15c): `revert_xpai_build/validate` (boot `f+0x1108` — magic `0x49415078`+`0xABCDEF12`, len bounds `0x72C..0xE0404`, XOR-of-16-words), `revert_upg_check` (boot `f+0x1eca` — key-echo, XOR-decode header, `XIE2`@`0x3E8`, CRC16/MODBUS residue, length bound `f+0x1f76`), `revert_crc16_modbus` (`f+0x1cc8`), `revert_xpai_len_for` (filesize+2) |
+| `test_revert.c` | host unit test (gcc, no hardware): CRC16/MODBUS check value + residue, xPAI build/validate round-trip + each corruption rejection, length convention vs boot bound, UPG header check on a synthetic image **and the real `SERVICE.UPG`** — 43 checks |
+| `src/revert_stage.c/.h` | **streaming** hardware staging (§5.15c): `begin` (erase pool range once) → `write` (sequential page program) → `finish` (read back 0x402 header + validate + write xPAI descriptor **LAST** + read-back verify) → `revert_trigger_reset` (AIRCR `f+0x18b6`). UPG ~595 KB > RAM, never buffered whole; brick-safe descriptor-last ordering |
+| `src/usb/cdc_proto.c/.h` | **pure host-testable** CDC console framing parser: CMD mode (CR/LF line → `PING`/`STATUS`/`HELP`/`ABORT`/`REVERT <n>`) + UPLOAD mode (exact `<n>` raw-byte passthrough, final-byte `last` flag); case-insensitive commands, u32 arg validation, line-overflow handling |
+| `test_cdc_proto.c` | host unit test (gcc, no hardware): command parsing + REVERT arg validation, CMD→UPLOAD transition + byte counting + `last`, ABORT, CR/LF/CRLF, partial lines, overflow recovery — 240 checks |
+| `src/usb/usb_hw.c/.h` | STM32F4 OTG_FS device bring-up: RCC_AHB2ENR.OTGFSEN + PA11/PA12 AF10 + `tud_init(0)`; `SystemCoreClock=168 MHz`; `OTG_FS_IRQHandler` (IRQ67) → `tud_int_handler`. No VBUS-sense (PA9/PA10=USART1) → dwc2 forces B-valid + NOVBUSSENS |
+| `src/usb/usb_cdc.c/.h` | CDC console glue: `tud_task` + RX→`cdc_proto` events; buffers upload pages → `revert_stream_write`; on final byte `revert_stream_finish` + reset; TX responses (`READY`/`PONG`/`OK reverting`/`ERR ...`) |
+| `src/usb/usb_descriptors.c` | TinyUSB descriptor callbacks: CDC-ACM device/config (IAD, comm intf0 + data intf1, notif IN1 / data OUT2+IN2) / string descriptors |
+| `src/usb/tusb_config.h` | TinyUSB config: `OPT_MCU_STM32F4`, `OPT_OS_NONE`, device mode, CDC=1, dwc2 slave/no-DMA, `CFG_TUD_VBUS_DETECT_HW=0` |
+| `src/usb/stm32f4xx.h` | **minimal freestanding CMSIS shim** for the dwc2 STM32 port only (`USB_OTG_FS_PERIPH_BASE`/`OTG_FS_IRQn`/`NVIC_EnableIRQ`/`SystemCoreClock`/`__NOP`); not a general CMSIS header |
+| `third_party/tinyusb/` | vendored MIT TinyUSB device-CDC subset (master `490eb4e`): `tusb`+`tusb_fifo`+`usbd`+`cdc_device`+`dwc2/{dcd_dwc2,dwc2_common}`+`osal_none` |
 | `src/nv_cal.c/.h` | read + validate the stock factory HV cal record from SPI4 offset `0xFE000` (magic `0x41444A67`, 16-word additive checksum); exposes `raw_hi/raw_lo/eng_hi/eng_lo` (§5.21) |
 | `src/adc.c/.h` | HV ADC front-end: ADC1 8×ch8 (PB0) + ADC2 8×ch9 (PB1) regular-simultaneous (`CCR=0x2A006`), DMA2 stream0 circular (`CR=0x5518`), TIM8 125 kHz trigger; `DMA2_Stream0_IRQHandler` (IRQ56) accumulates the PB0−PB1 differential over 3125 events → `live_raw` (§5.21) |
 | `src/hv.c/.h` | `hv_init` (spi4+nv_cal+adc); `get_hv` two-point interpolation `eng_lo+(live_raw−raw_lo)(eng_hi−eng_lo)/(raw_hi−raw_lo)`; `outvol=get_hv()/10` (§5.21) |

@@ -53,7 +53,11 @@ _vectors:
   .endr
   .word DMA2_Stream0_IRQHandler @ IRQ56 (HV ADC DMA accumulation, adc.c)
   .word DMA2_Stream1_IRQHandler @ IRQ57 (CP/PP ADC3 DMA accumulation, cp_adc.c)
-  .rept 33                     @ IRQ58..90
+  .rept 9                      @ IRQ58..66
+  .word Default_Handler
+  .endr
+  .word OTG_FS_IRQHandler      @ IRQ67 (USB device CDC revert console, usb_hw.c)
+  .rept 23                     @ IRQ68..90
   .word Default_Handler
   .endr
   .size _vectors, . - _vectors
@@ -148,5 +152,7 @@ Default_Handler:
   .thumb_set DMA2_Stream0_IRQHandler, Default_Handler
   .weak DMA2_Stream1_IRQHandler
   .thumb_set DMA2_Stream1_IRQHandler, Default_Handler
+  .weak OTG_FS_IRQHandler
+  .thumb_set OTG_FS_IRQHandler, Default_Handler
 
   .end

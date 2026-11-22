@@ -3,6 +3,7 @@ app.elf
 app.map
 app.bin
 app_padded.bin
+build/
 # host unit-test binaries (regenerate with the gcc commands in README.md)
 test_charge_stm
 test_current_ctrl
@@ -20,3 +21,6 @@ test_ca_store
 test_cp_capture
 test_cp_adc
 test_tls_mbedtls
+test_current_ramp
+test_revert
+test_cdc_proto

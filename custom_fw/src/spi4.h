@@ -25,4 +25,10 @@ int spi4_read(uint32_t addr, uint8_t *dst, uint32_t len);
  * fails. `addr`/`len` need not be page/sector aligned (the chunking handles partial pages/sectors). */
 int spi4_write(uint32_t addr, const uint8_t *src, uint32_t len);
 
+/* Streaming primitives (for the CDC revert upload, which cannot buffer a ~595 KB UPG in RAM):
+ * erase the whole range ONCE up front, then program pages sequentially as bytes arrive. Both are
+ * pool-only [0x100000,0x200000); return 0 on success, -1 on out-of-pool or program/erase failure. */
+int spi4_erase_range(uint32_t addr, uint32_t len);   /* erase every 4 KB sector covering [addr,addr+len) */
+int spi4_program(uint32_t addr, const uint8_t *src, uint32_t len); /* page-program (NO erase; assumes erased) */
+
 #endif /* SPI4_H */
