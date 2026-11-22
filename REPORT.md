@@ -1960,6 +1960,41 @@ plug_in / cablecheck_fin / chgparam_ok / ev_contactor / precharge_relay) are par
 the engagement guard cannot pass. State/interlock/engage/action are published as SWD-readable `stm_*`
 globals; `outvol` is the measured `get_hv()/10`.
 
+#### Charge-coordination provenance (C013, `analyze105`)  [G10/G11]
+
+`analyze105.py` decodes the two charge-coordination mechanisms byte-exact (the prior-art ccs32clara comparison
+had flagged both as open). **G10 — PreCharge↔car-contactor coupling lives in the CHAdeMO charge stm, not in a
+stall of the DIN EVSE-side `PreChargeReq` loop.** States 15/16 wait for the **car** contactor: `ldrb p[+0x1de] ;
+ubfx #3,#1` = **H102.VehicleStatus bit3 = EV contactor closed** (`0x0804A284` state-15, log `0x080AB1DC` "8s
+timeout after Switch(d2)=ON! but EV contactor is not closed"; `0x08043232/36` state-16, log `0x080A83F0` "4s
+timeout", counter `p[+0x1b8]` vs `0x7d`), plus a second gate **H102.ChargingCurrentRequest > 0 A** (log
+`0x080AB4A0`, "8s timeout … not more than 0A"). State 17 then waits for the CCS precharge voltage match (log
+`0x080AB894` "EVSE outvol[%lu],p->ress_vol[%lu] **wait until CCS precharge finished**", wait counter `p[+0x14]`
+vs `0xc8`). The adapter's **inner** precharge-relay feedback is a hardware GPIO distinct from the car contactor:
+**`get_precharge_relay` (`0x080525D8`→`0x080884B0`) = `GPIOB(0x40020400) IDR bit10` = PB10 input**;
+`set_precharge_relay` (`0x080524FC`) drives the relay to `r0&1`, polls PB10 until it matches, timeout `0x1F40` +
+retry counter `[0x200008A8]`, mismatch → terminate (states 18/19). So C013 sequences **car-contactor-close
+(15/16) → CCS-precharge voltage engagement (17) → inner precharge-relay close (18/19, PB10)**; the DIN EVSE
+session advances PreCharge→PowerDelivery on `rc_ok` (`phase_status=4`), the engagement *gate*, not a contactor
+stall of the Req loop. The `charge_stm` replica already models states 15/16/18 (`ev_contactor` /
+`current_request>0` / `precharge_relay`); the asserted PB10/d2 drive remains gated (§5.5c/§7).
+
+**G11 — two distinct current paths.** (1) The **per-tick** CurrentDemand setpoint (`0x08044D42`, §5.21 E) is
+`min(request, avail)` capped by EVSE max — instantaneous, no ramp (byte-exact, replicated in `current_ctrl`).
+(2) A **periodic EVMaximumCurrentLimit ramp** (`0x0804BB54`) is the separate, slow inrush-limiting layer: the
+ramped setpoint **`meas+0x28C` (`0x200077FC`)** is initialized to **20 A** at state-17 (`0x0804ABCA movs
+#0x14`); the check runs every 10 ticks (`phase_cnt%10`) but the **+20 A (`0x14`) step** is gated on
+**`phase_cnt%6000==0`** (`movw #0x1770`=6000, `0x0804BB84`) = **6000 ticks = 60 s = 1 minute** on the 100 Hz
+tick (§5.20) — matching log `0x080AC0F0` "CurrentDemand phase, every n minute adjusts current limintation …
+`pMsgPfm->setpara_maxevsecurrent`[%lu]" (loaded base `0x080AC080`+`0x70`). The ramp ceiling **`[0x200007AC]` =
+`din_scale(EVSE max current, meas+0x3D20/22)`** (`0x0804B726–0x0804B73A`); up-ramp adds 20 clamped to that
+ceiling with a **±5 A deadband** around the request (`0x0804BB76–82`), down-path uses a ±25 A deadband gated
+`p[+0x64] >= 600` (`0x0804BBBC`). The **CurrentDemandReq EVMaximumCurrentLimit = `min(ramped meas+0x28C,
+din_scale(EVSE max))`** (`0x0804EA94–9C`: `ldrh [r6,#0x28c] ; cmp r0,r5 ; bhi keep ; mov r5,r0`). Net: C013
+ramps the *requested* max current up **+20 A/minute**, never above the EVSE-reported max — **not** the prior-art
++4 A/100 ms fast ramp. The remaining inert build step is to add this slow ramp to the demand current limit
+(communication-side, no GPIO); the per-tick min/cap law is already faithful.
+
 #### Power-stage drive + HV ADC front-end (C013, `analyze81`)  [C]
 
 The state-machine actions drive the **same physical pins as C009** (§5.5c) — the board is hardware-
@@ -2891,6 +2926,23 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   ==3). **CORRECTIONS:** engagement "isolation==4" is phase-status==4 (DIN isolation ≤3 can never fire it —
   the charge-abort root cause); precharge_flag = meas+0x23F = `0x200077AF` (not evcc_sta+0x23F). **167 checks**.
   Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze103.py'`.
+- `analyze104.py` — **state-17 engagement-reference provenance decoder (§5.17 G5b)**: derives byte-exact that
+  the guard's `ress_vol` (r10) is the **EVSE PresentVoltage** = `din_scale(meas+0x3D18 raw, meas+0x3D1A factor)`
+  (`0x0804AADA–0x0804AAEE`: ldrb factor → pow10 `0x0804E786` → ldrh raw → muls → udiv /1000), **NOT** the H102
+  TargetBatteryVoltage (`p+0x1da`). The dual log `0x080AB80C` prints `ress_vol`(sl) and TargetBatteryVoltage as
+  separate values; the sp-slot setup `0x08049164–0x08049182` maps sp+0x1c/0x24 → meas+0x3D18/1A. During
+  precharge the EVSE reports the battery voltage, so a target reference makes the engagement window unreachable
+  (the charge-abort mechanism). Replica fix: `charge_stm` `ress_vol <- evse_present_voltage`.
+  Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze104.py'`.
+- `analyze105.py` — **charge-coordination decoder (§5.17 G10/G11 addendum)**: G10 PreCharge↔car-contactor
+  coupling — states 15/16 wait H102.VehicleStatus bit3 (`ldrb p[+0x1de] ; ubfx #3,#1`, `0x0804A284`/`0x08043232`,
+  8s/4s) + ChargingCurrentRequest>0A; `get_precharge_relay` (`0x080884B0`) = GPIOB(`0x40020400`) IDR bit10 = PB10
+  inner-relay feedback; `set_precharge_relay` (`0x080524FC`) drive+poll+timeout/retry. The coupling is in the
+  charge stm, not a DIN PreChargeReq stall (already replicated). G11 current ramp — periodic
+  EVMaximumCurrentLimit ramp (`0x0804BB54`): `meas+0x28C` init 20A, **+20A every 6000 ticks (=60s @100Hz)**,
+  clamped to `din_scale(EVSE max meas+0x3D20/22)`=`[0x200007AC]`, ±5A up / ±25A down deadband;
+  EVMaximumCurrentLimit = min(ramped, EVSE max) (`0x0804EA94`). Distinct from the instantaneous per-tick min/cap
+  law (§5.21 E). Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze105.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,
