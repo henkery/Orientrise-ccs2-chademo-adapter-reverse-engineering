@@ -78,6 +78,28 @@ void din_session_set_evccid(const uint8_t *id, uint16_t len)
     sess.evccid_len = len;
 }
 
+/* Adopt the negotiated SessionID (SessionSetupRes DIN header gid 0x6c). Post-setup Req builders
+ * copy it via default_tx (sess.sid); the stock TX wrapper 0x08034C30 copies the 8-byte SID into
+ * every post-setup document. Clamped to DIN_SID_MAX; a zero-length SID is ignored. */
+void din_session_set_sid(const uint8_t *sid, uint16_t len)
+{
+    if (!sid || len == 0u) return;
+    if (len > DIN_SID_MAX) len = DIN_SID_MAX;
+    for (uint16_t i = 0; i < len; i++) sess.sid[i] = sid[i];
+    sess.sid_len = len;
+}
+
+/* Arm the CurrentDemand SECONDARY re-send (analyze106 read-site 0x08039684-0x080396C6): the stock
+ * sets ctx+0x46=1 (arm flag) + ctx+0x44=interval (u16) + ctx+0x40=anchor; the poll fires ONE CD
+ * re-send when elapsed >= interval then CLEARS ctx+0x46 (one-shot, not periodic). Parameterized
+ * here like fp; a zero interval disarms. Inert communication-side cadence — no power GPIO. */
+void din_session_arm_cd_resend(uint16_t interval_ms, uint32_t now_ms)
+{
+    sess.cd_interval = interval_ms;
+    sess.ts_cd = now_ms;
+    sess.cd_resend_active = (interval_ms != 0u) ? 1u : 0u;
+}
+
 static void send_req(uint8_t ev, uint32_t now);
 
 /* PowerDelivery send helper: set ChargeProgress (0=Start / 1=Stop) then emit the Req choice. */
@@ -148,9 +170,12 @@ void din_session_step(uint32_t now)
     if (!sess.session_active || sess.state == DIN_ST_IDLE) return;
 
     /* Session-GLOBAL total timeouts: ctx+8=120s (f_24 compare 0x08038458/0x0803874E, gate
-     * ctx+0x2A ~ session_active) and ctx+C=150s (clean cmp not found [?]; outer guard, never
-     * fires before 120s). The 40s/14s timers are engagement-phase (f_27, below) — they must NOT
-     * preempt the per-message resp-wait/retry loop in the early handshake states (F §2.2/2.3). */
+     * ctx+0x2A ~ session_active) and ctx+C=150s. analyze106b scanned the poll region
+     * 0x08038000..0x0803A000 for a movw #0x249F0 (150000) immediate / ctx+C compare and found
+     * none — the 150s clean compare site is not a simple immediate in that region, so it is
+     * modeled as an OUTER GUARD that never fires before the 120s total. The 40s/14s timers are
+     * engagement-phase (f_27, below) — they must NOT preempt the per-message resp-wait/retry loop
+     * in the early handshake states (F §2.2/2.3). */
     if ((uint32_t)(now - sess.ts_total) > sess.t_total ||
         (uint32_t)(now - sess.ts_150)   > sess.t_150) {
         post_fault(DIN_FAULT_TIMEOUT);
@@ -185,15 +210,20 @@ void din_session_step(uint32_t now)
     }
 
     /* CurrentDemand re-send cadence (state 10). PRIMARY: meas[0xC] % fp == 0 (udiv/mls @0x080396F6).
-     * SECONDARY: ctx+0x44 interval gated ctx+0x46==1 (@0x08039698), parameterized. */
+     * SECONDARY (analyze106, read-site 0x08039684-0x080396C6): gated ctx+0x46==1 (arm flag);
+     * elapsed = now - ctx+0x40 (anchor); fires when elapsed >= ctx+0x44 (u16 interval); then it
+     * CLEARS ctx+0x46 (ONE-SHOT, not periodic), re-sends CD, re-arms ctx+4=4000 (resp-wait) +
+     * ctx+0x14=now (last_req) + state=10. send_req re-arms last_req; the arm flag is parameterized
+     * (cd_resend_active/cd_interval) and consumed once here. */
     if (sess.state == DIN_ST_CURRENTDEMAND_RES) {
         sess.tick_counter++;                      /* meas[0xC] u8 wraps 200 */
         if (sess.tick_counter >= 200u) sess.tick_counter = 0;
         if (sess.fp && (sess.tick_counter % sess.fp) == 0u)
             send_req(DIN_REQ_CURRENTDEMAND, now);
         if (sess.cd_resend_active && sess.cd_interval &&
-            (uint32_t)(now - sess.ts_cd) > sess.cd_interval) {
+            (uint32_t)(now - sess.ts_cd) >= sess.cd_interval) {
             send_req(DIN_REQ_CURRENTDEMAND, now);
+            sess.cd_resend_active = 0;            /* stock clears ctx+0x46 after firing (one-shot) */
             sess.ts_cd = now;
         }
     }

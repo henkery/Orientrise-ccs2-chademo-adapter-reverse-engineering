@@ -196,7 +196,8 @@ int din_dc_evse_status_decode(exi_stream_t *s, din_dc_evse_status_t *out)
 
 /* CurrentDemandRes 0x0806471E (ev0x12) — 10-field wire order (E §3, COMPLETE). Mandatory fields
  * byte-exact; the optional max-limit choice chain (state 0x23 readBits3 / 0x24-0x25 readBits2) is
- * modeled here with per-field 1-bit presence [? exact grammar-id transitions not fully recovered]. */
+ * RESOLVED by analyze106: a nested optional-element choice (Current->Voltage->Power order), NOT
+ * per-field presence bits. Present flags + the power limit are stored in din_meas_t. */
 int din_cd_res_decode_exi(const uint8_t *body, uint16_t len, din_meas_t *m, uint8_t *response_code)
 {
     exi_stream_t s;
@@ -221,28 +222,49 @@ int din_cd_res_decode_exi(const uint8_t *body, uint16_t len, din_meas_t *m, uint
     if (r) return r;
     r = exi_read_bool(&s, &m->power_limit_achieved);     /* 7 */
     if (r) return r;
-    uint8_t present;                            /* 8 EVSEMaximumVoltageLimit (opt) [?] */
-    r = exi_read_bool(&s, &present);
+    /* Optional max-limit choice chain (analyze106, ev12 states 0x23/0x24/0x25). A NESTED choice
+     * selects which of the remaining optional EVSEMaximum{Current,Voltage,Power}Limit PVTs comes
+     * next (fixed order Current->Voltage->Power) or terminates — NOT per-field 1-bit presence:
+     *   state 0x23 readBits(3): 0=CurrentLimit->0x24, 1=VoltageLimit->0x25, 2=PowerLimit->end,
+     *                           3=end (>=4 -> grammar error)
+     *   state 0x24 readBits(2): 0=VoltageLimit->0x25, 1=PowerLimit->end, 2=end (>=3 -> error)
+     *   state 0x25 readBits(2): 0=PowerLimit->end, 1=end (>=2 -> error)
+     * Each present field sets its flag (stock struct +0x34/+0x40/+0x4c = 1). */
+    m->evse_max_current_present = 0;
+    m->evse_max_voltage_present = 0;
+    m->evse_max_power_present = 0;
+    uint32_t ch;
+    r = exi_read_bits(&s, 3, &ch);              /* state 0x23: 3-bit choice */
     if (r) return r;
-    if (present) {
-        r = exi_read_pvt(&s, &p);
-        if (r) return r;
-        pvt_to_meas(&p, &m->evse_max_voltage, &m->evse_max_voltage_f);
-    }
-    r = exi_read_bool(&s, &present);            /* 9 EVSEMaximumCurrentLimit (opt) [?] */
-    if (r) return r;
-    if (present) {
-        r = exi_read_pvt(&s, &p);
-        if (r) return r;
-        pvt_to_meas(&p, &m->evse_max_current, &m->evse_max_current_f);
-    }
-    r = exi_read_bool(&s, &present);            /* 10 EVSEMaximumPowerLimit (opt) [?] */
-    if (r) return r;
-    if (present) {
-        exi_pvt_t pw;
-        r = exi_read_pvt(&s, &pw);
-        if (r) return r;
-        (void)pw;   /* power limit not stored in din_meas_t (no field); consumed for wire alignment */
+    if (ch > 3u) return EXI_ERR_EVENT;
+    int sel = (int)ch;                           /* 0=Current, 1=Voltage, 2=Power, 3=end */
+    while (sel < 3) {
+        exi_pvt_t lp;
+        if (sel == 0) {                          /* EVSEMaximumCurrentLimit PVT @+0x2c */
+            r = exi_read_pvt(&s, &lp);
+            if (r) return r;
+            pvt_to_meas(&lp, &m->evse_max_current, &m->evse_max_current_f);
+            m->evse_max_current_present = 1;
+            r = exi_read_bits(&s, 2, &ch);       /* state 0x24: 0=Voltage, 1=Power, 2=end */
+            if (r) return r;
+            if (ch > 2u) return EXI_ERR_EVENT;
+            sel = (ch == 0u) ? 1 : (ch == 1u) ? 2 : 3;
+        } else if (sel == 1) {                   /* EVSEMaximumVoltageLimit PVT @+0x38 */
+            r = exi_read_pvt(&s, &lp);
+            if (r) return r;
+            pvt_to_meas(&lp, &m->evse_max_voltage, &m->evse_max_voltage_f);
+            m->evse_max_voltage_present = 1;
+            r = exi_read_bits(&s, 2, &ch);       /* state 0x25: 0=Power, 1=end */
+            if (r) return r;
+            if (ch > 1u) return EXI_ERR_EVENT;
+            sel = (ch == 0u) ? 2 : 3;
+        } else {                                 /* sel==2: EVSEMaximumPowerLimit PVT @+0x44 */
+            r = exi_read_pvt(&s, &lp);
+            if (r) return r;
+            pvt_to_meas(&lp, &m->evse_max_power, &m->evse_max_power_f);
+            m->evse_max_power_present = 1;
+            sel = 3;                             /* -> state 4 (terminal EE gate) */
+        }
     }
     return EXI_OK;
 }
@@ -298,7 +320,11 @@ int din_sessionstop_res_decode_exi(const uint8_t *body, uint16_t len)
 
 /* ---- B2 DIN document message codec (analyze101/102/103) ---- */
 
-/* PVT from a meas value + stored factor (mult = factor-3); DIN unit enum A=1 / V=3 [?]. */
+/* PVT from a meas value + stored factor (mult = factor-3). The PVT wire mechanism is byte-exact
+ * (analyze106, encoder 0x0806A3AC): gate, gate, Multiplier(3-bit = mult+3), gate, Unit choice(2)
+ * [0=present -> gate, Unit(4-bit @struct+1), gate | 1=absent], gate, Value(signed), gate, EE gate.
+ * The Unit is a caller-set 4-bit schema enum (DIN unitType: A=1 / V=3, schema-derived); the
+ * replica emits it present (unit_present=1) for every measurement PVT. */
 static void meas_to_pvt(const exi_pvt_t *unused, uint16_t val, int8_t factor, uint8_t unit,
                         exi_pvt_t *p)
 {
@@ -363,8 +389,8 @@ static int req_doc_end(exi_stream_t *s)
 }
 
 /* SessionSetupReq ev40 0x0806ABEA (choice 0x1D): EVCCID hexBinary octet string (varlen-len +
- * octets; stock EVCCID = 6 bytes from the unit MAC getter 0x080896C0). Leading gates [? exact
- * ev40 prologue gate count partial]; modeled gate gate EVCCID gate. */
+ * octets; stock EVCCID = 6 bytes from the unit MAC getter 0x080896C0). Prologue CONFIRMED by
+ * analyze106: gate, gate, EVCCID(varlen-len + octets), gate, gate(EE) — four 1-bit gates. */
 int din_sessionsetup_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
                                 const uint8_t *evccid, uint16_t evccid_len)
 {
@@ -424,7 +450,9 @@ int din_welding_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint1
 }
 
 /* PreChargeReq ev2f 0x0806B4DE (choice 0x15): DC_EVStatus + EVTargetCurrent PVT@0x14 +
- * EVTargetVoltage PVT@0x1C (Group O). Inter-field gates [? exact gate count partial]. */
+ * EVTargetVoltage PVT@0x1C (Group O). Inter-field gates RESOLVED by analyze106: FOUR 1-bit gates
+ * bracket the body — gate, DC_EVStatus, gate, EVTargetCurrent, gate, EVTargetVoltage, gate(EE)
+ * (the gate between DC_EVStatus and EVTargetCurrent was previously missing). */
 int din_precharge_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
                              const din_meas_t *m, uint8_t ev_ready, uint8_t soc)
 {
@@ -434,6 +462,8 @@ int din_precharge_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uin
     r = exi_write_gate(&s);
     if (r) return r;
     r = din_dc_ev_status_encode(&s, ev_ready, soc);
+    if (r) return r;
+    r = exi_write_gate(&s);                    /* gate between DC_EVStatus and EVTargetCurrent */
     if (r) return r;
     exi_pvt_t p;
     meas_to_pvt(0, m->ev_target_current, m->ev_target_current_f, 1, &p);
@@ -477,23 +507,29 @@ int din_sessionstop_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, u
     return req_doc_end(&s);
 }
 
-/* ChargeParameterDiscoveryReq ev0b 0x0806CEF0 (choice 0x07): EnergyTransferMode (3-bit) + AC/DC
- * choice; DIN -> DC_EVChargeParameter ev13 0x0806CC3A (DC_EVStatus + maxCurrent/maxPower/maxVoltage
- * PVTs). Mode DC=3 [? enum]; the DC param emits DC_EVStatus + the EVSE-requested max limits from
- * meas. Optional fields gated-absent. [? exact ev0b/ev13 gate sequence partial]. */
+/* ChargeParameterDiscoveryReq ev0b 0x0806CEF0 (choice 0x07): prologue RESOLVED by analyze106 —
+ * gate, gate, EnergyTransferMode(3-bit), gate, AC/DC choice(2). DIN takes choice 1 ->
+ * DC_EVChargeParameter ev13 0x0806CC3A (choice 0 = AC param 0x0806CE20, choice 2 = 0x0806CC32).
+ * The ETM is a 3-bit caller-set enum (DC=3, schema-derived); the ev13 DC param body below emits
+ * DC_EVStatus + the EVSE-requested max limits from meas (a documented simplification of the full
+ * ev13 optional-field chain: maxPower is a 2-bit choice, not a gated-absent bit). */
 int din_cpd_req_encode(uint8_t *buf, uint16_t cap, const uint8_t *sid, uint16_t sid_len,
                        const din_meas_t *m, uint8_t ev_ready, uint8_t soc)
 {
     exi_stream_t s;
     int r = req_doc_begin(&s, buf, cap, DIN_REQ_CPD, sid, sid_len);
     if (r) return r;
-    r = exi_write_gate(&s);
+    r = exi_write_gate(&s);                    /* ev0b gate A */
     if (r) return r;
-    r = exi_write_bits(&s, 3, 3);              /* EnergyTransferMode = DC (3) [?] */
+    r = exi_write_gate(&s);                    /* ev0b gate B */
     if (r) return r;
-    r = exi_write_bits(&s, 2, 1);              /* AC/DC choice 1 = DC */
+    r = exi_write_bits(&s, 3, 3);              /* EnergyTransferMode = DC (3-bit, caller-set) */
     if (r) return r;
-    r = exi_write_gate(&s);
+    r = exi_write_gate(&s);                    /* ev0b gate C (before the AC/DC choice) */
+    if (r) return r;
+    r = exi_write_bits(&s, 2, 1);              /* AC/DC choice 1 = DC_EVChargeParameter ev13 */
+    if (r) return r;
+    r = exi_write_gate(&s);                    /* ev13 state 0x41 gate */
     if (r) return r;
     r = din_dc_ev_status_encode(&s, ev_ready, soc);   /* DC_EVChargeParameter.DC_EVStatus */
     if (r) return r;
@@ -632,10 +668,15 @@ int din_sessionsetup_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *
     return EXI_OK;
 }
 
-/* ServiceDiscoveryRes ev3d 0x08063370 (subev 0x1A): RC(5) + ChargeServiceList (count<=5) +
- * ServiceList ev39 + optional EnergyTransferModeList (count<=8). The replica extracts RC for
- * session advancement; the list sub-grammars are [? partial] — the raw body is preserved by the
- * application writer (memcpy meas+0x37e0). Returns OK after RC (lists not consumed). */
+/* ServiceDiscoveryRes ev3d 0x08063370 (subev 0x1A): list grammar RESOLVED by analyze106 —
+ *   state 0x8c: gate, gate, RC(5), gate
+ *   state 0x8d: gate, ChargeServiceList (0x0806327A, struct+2; count<=5)
+ *   state 0x8e: gate, ServiceList ev39 (0x0806316A, struct+0xc)
+ *   state 0x8f: choice(2) 0 = optional EnergyTransferModeList (0x0806A192, struct+0x64, count<=8,
+ *               present flag struct+0x308), 1 = absent -> state 4 terminal gate.
+ * The replica extracts RC for session advancement (3->6); the lists are not consumed (the EVCC
+ * does not act on them) and the raw body is preserved by the application writer (memcpy
+ * meas+0x37e0). Returns OK after RC. Full list consumption is deferred (unused by the session). */
 int din_servicediscovery_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *response_code)
 {
     exi_stream_t s;
@@ -648,8 +689,10 @@ int din_servicediscovery_res_decode_exi(const uint8_t *body, uint16_t len, uint8
 }
 
 /* CPDRes ev0c 0x08065BFC (subev 0x08): RC(5) + processing flag(1)@body+1 + sched-choice(2)
- * (DIN=1 empty ev36) + AC/DC-param choice(2) (DIN=1 -> DCparam ev15). The handler case6 branches
- * on body+1==1 (processing ongoing). */
+ * + AC/DC-param choice(2). RESOLVED by analyze106: state 0x74 sched-choice 0 = AC schedule ev35
+ * (0x08065B62), 1 = DIN empty schedule (0x08065368); state 0x75 AC/DC choice 1 = DCparam ev15
+ * (0x080650D2), 0 = 0x08065296, 2 = 0x080650AC. DIN takes choice 1 on both. The handler case6
+ * branches on body+1==1 (processing ongoing). */
 int din_cpd_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *response_code,
                            uint8_t *processing, din_dc_charge_param_t *param)
 {
@@ -666,7 +709,7 @@ int din_cpd_res_decode_exi(const uint8_t *body, uint16_t len, uint8_t *response_
     uint32_t choice;
     r = exi_read_bits(&s, 2, &choice);                    /* state0x74 sched choice (DIN=1 empty) */
     if (r) return r;
-    if (choice == 0u) {                                   /* AC sched ev35 [? DIN takes 1] */
+    if (choice == 0u) {                                   /* AC sched ev35 0x08065B62 (DIN takes 1) */
         return EXI_ERR_EVENT;
     }
     r = exi_read_bits(&s, 2, &choice);                    /* state0x75 AC/DC param choice */

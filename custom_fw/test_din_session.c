@@ -16,15 +16,52 @@ static int checks = 0, failures = 0;
 #define CK(c, m) do { checks++; if (!(c)) { failures++; printf("FAIL: %s\n", m); } \
                       else printf("ok: %s\n", m); } while (0)
 
-/* TX hook spy: count sends + record the last event. */
+/* TX hook spy: produce the real inert Req document (mirrors din_session.c default_tx, using the
+ * session's current SID/EVCCID), count sends, record the last event, and capture the first 64 bytes
+ * of the framed document for SID/framing inspection. Producing a real frame (rather than a stub
+ * length) lets the SID-negotiation test decode the wire SessionID the builder actually emitted. */
 static int tx_count;
 static uint8_t tx_last_ev;
+static uint8_t tx_frame[64];
 static int spy_tx(uint8_t ev, uint8_t *buf, uint16_t cap)
 {
-    (void)buf; (void)cap;
+    const din_session_t *s = din_session_get();
+    const uint8_t *sid = s->sid; uint16_t sid_len = s->sid_len;
+    int n;
+    switch (ev) {
+    case DIN_REQ_SESSIONSETUP:
+        n = din_sessionsetup_req_encode(buf, cap, sid, sid_len, s->evccid, s->evccid_len); break;
+    case DIN_REQ_SERVICEDISCOVERY:
+        n = din_servicediscovery_req_encode(buf, cap, sid, sid_len); break;
+    case DIN_REQ_CPD:
+        n = din_cpd_req_encode(buf, cap, sid, sid_len, din70121_meas(), 1u, 70u); break;
+    case DIN_REQ_CABLECHECK:
+        n = din_cablecheck_req_encode(buf, cap, sid, sid_len, 1u, 70u); break;
+    case DIN_REQ_PRECHARGE:
+        n = din_precharge_req_encode(buf, cap, sid, sid_len, din70121_meas(), 1u, 70u); break;
+    case DIN_REQ_POWERDELIVERY:
+        n = din_powerdelivery_req_encode(buf, cap, sid, sid_len, s->charge_progress); break;
+    case DIN_REQ_CURRENTDEMAND:
+        n = din_cd_req_encode_exi(din70121_meas_mut(), buf, cap, sid, sid_len); break;
+    case DIN_REQ_WELDING:
+        n = din_welding_req_encode(buf, cap, sid, sid_len, 1u, 70u); break;
+    case DIN_REQ_SESSIONSTOP:
+        n = din_sessionstop_req_encode(buf, cap, sid, sid_len); break;
+    default:
+        n = EXI_ERR_EVENT; break;
+    }
     tx_count++;
     tx_last_ev = ev;
-    return 10;   /* inert image length */
+    if (n > 0) { for (int i = 0; i < 64; i++) tx_frame[i] = buf[i]; }
+    return n;
+}
+/* Decode the captured Req framing -> message choice + SessionID (gid 0x6c). */
+static int tx_frame_sid(uint8_t *choice, uint8_t *sid, uint16_t *sid_len)
+{
+    exi_stream_t s; exi_decode_init(&s, tx_frame + EXI_V2GTP_HDR_LEN, 64 - EXI_V2GTP_HDR_LEN);
+    uint8_t root; int r = exi_decode_header(&s, &root); if (r) return r;
+    if (root != EXI_DIN_ROOT) return EXI_ERR_EVENT;
+    return exi_din_decode_doc_start(&s, choice, sid, sid_len);
 }
 
 /* ---- Res body synthesis (EXI grammar via exi primitives) ---- */
@@ -148,9 +185,13 @@ static uint16_t mk_cd_res(uint8_t *buf, uint8_t rc, uint16_t pv, uint16_t pi)
     exi_write_bool(&s, 0);         /* current limit achieved */
     exi_write_bool(&s, 0);         /* voltage limit achieved */
     exi_write_bool(&s, 0);         /* power limit achieved */
-    exi_write_bool(&s, 1); wr_pvt(&s, 0, 3, 500);   /* max voltage limit present */
-    exi_write_bool(&s, 1); wr_pvt(&s, 0, 1, 200);   /* max current limit present */
-    exi_write_bool(&s, 0);         /* max power limit absent */
+    /* Optional max-limit choice chain (analyze106): Current->Voltage->Power order. Select
+     * CurrentLimit (3-bit choice 0) then VoltageLimit (2-bit choice 0) then end (2-bit choice 1). */
+    exi_write_bits(&s, 3, 0);      /* state 0x23: EVSEMaximumCurrentLimit next */
+    wr_pvt(&s, 0, 1, 200);         /* EVSEMaximumCurrentLimit = 200 A */
+    exi_write_bits(&s, 2, 0);      /* state 0x24: EVSEMaximumVoltageLimit next */
+    wr_pvt(&s, 0, 3, 500);         /* EVSEMaximumVoltageLimit = 500 V */
+    exi_write_bits(&s, 2, 1);      /* state 0x25: end (PowerLimit absent) */
     return (uint16_t)exi_encode_finish(&s);
 }
 static uint16_t mk_sessionstop(uint8_t *buf)
@@ -359,6 +400,76 @@ static void test_inert_no_fault_on_success(void)
        "successful sequence posts NO fault (inert, power drive gated)");
 }
 
+/* SessionID negotiation (analyze106): SessionSetupReq uses the 1-byte 0x00 placeholder; the
+ * negotiated SID (SessionSetupRes DIN header gid 0x6c, adopted via din_session_set_sid by
+ * ccs2_rx_exi) is copied into every post-setup Req by default_tx (stock TX wrapper 0x08034C30). */
+static void test_sid_negotiation(void)
+{
+    uint8_t b[128]; uint32_t now = 1000;
+    reset(now);
+    const din_session_t *s = din_session_get();
+    uint8_t sid[DIN_SID_MAX], choice; uint16_t sid_len;
+    /* start emitted SessionSetupReq with the placeholder SID */
+    CK(tx_frame_sid(&choice, sid, &sid_len) == EXI_OK && choice == DIN_REQ_SESSIONSETUP &&
+       sid_len == 1 && sid[0] == 0x00, "SessionSetupReq uses 1-byte 0x00 SID placeholder");
+    /* adopt an 8-byte negotiated SID */
+    uint8_t neg[8] = { 0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04 };
+    din_session_set_sid(neg, 8);
+    CK(s->sid_len == 8 && s->sid[0] == 0xDE && s->sid[7] == 0x04,
+       "set_sid adopts the 8-byte negotiated SID");
+    /* SessionSetupRes OK -> emits ServiceDiscoveryReq carrying the negotiated SID */
+    rx_setup(b, 0, now);
+    CK(s->state == DIN_ST_SERVICEDISCOVERY_RES, "SessionSetupRes OK -> state 3");
+    CK(tx_frame_sid(&choice, sid, &sid_len) == EXI_OK && choice == DIN_REQ_SERVICEDISCOVERY &&
+       sid_len == 8 && sid[0] == 0xDE && sid[7] == 0x04,
+       "post-setup ServiceDiscoveryReq carries the negotiated 8-byte SID");
+    /* clamp len > DIN_SID_MAX to 8 */
+    uint8_t big[12] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
+    din_session_set_sid(big, 12);
+    CK(s->sid_len == DIN_SID_MAX && s->sid[7] == 8, "set_sid clamps len>DIN_SID_MAX to 8");
+    /* zero-length SID ignored (keeps previous) */
+    din_session_set_sid(neg, 0);
+    CK(s->sid_len == DIN_SID_MAX && s->sid[0] == 1, "set_sid ignores a zero-length SID");
+}
+
+/* G6 CurrentDemand SECONDARY re-send cadence (analyze106 read-site 0x08039684-0x080396C6):
+ * armed ctx+0x46=1 + interval ctx+0x44 + anchor ctx+0x40; fires ONE CD re-send when elapsed >=
+ * interval (>= compare) then CLEARS the arm flag (one-shot, not periodic). Primary modulo cadence
+ * disabled (fp=0) to isolate the secondary path. */
+static void test_cd_secondary_oneshot(void)
+{
+    uint8_t b[128]; uint32_t now = 1000;
+    reset(now);
+    const din_session_t *s = din_session_get();
+    walk_to_10(b, now);                       /* state 10; ts_cd anchored at PD entry (=now) */
+    CK(s->state == DIN_ST_CURRENTDEMAND_RES, "walked to state 10 for secondary cadence");
+    din_session_set_fp(0);                    /* disable primary modulo cadence */
+    tx_count = 0;
+    din_session_arm_cd_resend(500, now);      /* arm: interval 500 ms, anchor now */
+    CK(s->cd_resend_active == 1 && s->cd_interval == 500, "arm sets flag + interval");
+    /* elapsed 499 < 500 -> no fire, still armed */
+    din_session_step(now + 499u);
+    CK(tx_count == 0 && s->cd_resend_active == 1,
+       "secondary holds before interval (elapsed 499 < 500), still armed");
+    /* elapsed 500 >= 500 -> fire ONE CD re-send (>= boundary), then disarm */
+    din_session_step(now + 500u);
+    CK(tx_count == 1 && tx_last_ev == DIN_REQ_CURRENTDEMAND,
+       "secondary fires one CD re-send at elapsed>=interval (>= compare)");
+    CK(s->cd_resend_active == 0, "secondary one-shot: arm flag cleared after firing");
+    /* further steps do NOT re-fire (one-shot, not periodic) */
+    din_session_step(now + 1000u);
+    din_session_step(now + 1500u);
+    CK(tx_count == 1, "secondary does NOT re-fire (one-shot, not periodic)");
+    /* re-arm fires again then disarms */
+    din_session_arm_cd_resend(500, now + 1500u);
+    din_session_step(now + 2000u);
+    CK(tx_count == 2 && s->cd_resend_active == 0, "re-arm fires again then disarms");
+    /* interval 0 disarms */
+    din_session_arm_cd_resend(0, now + 2000u);
+    din_session_step(now + 3000u);
+    CK(s->cd_resend_active == 0 && tx_count == 2, "interval 0 disarms the secondary");
+}
+
 int main(void)
 {
     test_init_start();
@@ -370,6 +481,8 @@ int main(void)
     test_cablecheck_isolation();
     test_failed_response();
     test_inert_no_fault_on_success();
+    test_sid_negotiation();
+    test_cd_secondary_oneshot();
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

@@ -28,8 +28,8 @@ typedef enum {
     DIN_ST_PRE_SETUP,           /* 1 pre-setup -> SessionSetupReq                    */
     DIN_ST_SESSIONSETUP_RES,    /* 2 await SessionSetupRes                           */
     DIN_ST_SERVICEDISCOVERY_RES,/* 3 await ServiceDiscoveryRes                       */
-    DIN_ST_PAYMENT_SEL_RES,     /* 4 [?] ISO ServicePaymentSelection (DIN skips)     */
-    DIN_ST_CONTRACT_AUTH_RES,   /* 5 [?] ISO ContractAuthentication (DIN skips)      */
+    DIN_ST_PAYMENT_SEL_RES,     /* 4 ISO-only ServicePaymentSelection (DIN skips)    */
+    DIN_ST_CONTRACT_AUTH_RES,   /* 5 ISO-only ContractAuthentication (DIN skips)     */
     DIN_ST_CPD_RES,             /* 6 await ChargeParameterDiscoveryRes               */
     DIN_ST_CABLECHECK_RES,      /* 7 await CableCheckRes                             */
     DIN_ST_PRECHARGE_RES,       /* 8 await PreChargeRes                              */
@@ -114,6 +114,14 @@ void din_session_set_tx(din_session_tx_fn fn);
 void din_session_set_fp(uint16_t fp);          /* parameterize the runtime-negotiated divisor */
 /* Set the EVCCID hexBinary (unit MAC) emitted by SessionSetupReq; clamped to 6 bytes. */
 void din_session_set_evccid(const uint8_t *id, uint16_t len);
+/* Adopt the negotiated SessionID from a SessionSetupRes DIN header (gid 0x6c). Post-setup Req
+ * builders copy it (stock TX wrapper 0x08034C30 copies the 8-byte SID); SessionSetupReq itself
+ * uses the 1-byte 0x00 placeholder. Clamped to DIN_SID_MAX. Called by ccs2_rx_exi. */
+void din_session_set_sid(const uint8_t *sid, uint16_t len);
+/* Arm the CurrentDemand SECONDARY one-shot re-send (analyze106 ctx+0x46/0x44/0x40): fires one CD
+ * re-send when (now - anchor) >= interval_ms then disarms. interval_ms==0 disarms. Parameterized
+ * like fp; inert communication-side cadence (no power GPIO). */
+void din_session_arm_cd_resend(uint16_t interval_ms, uint32_t now_ms);
 /* Begin a session (SDP done): state 1 -> SessionSetupReq -> state 2. */
 void din_session_start(uint32_t now_ms);
 /* Poll task 0x08038192: timer/retry/re-send engine (never advances on success). Call each tick. */

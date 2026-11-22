@@ -1340,6 +1340,72 @@ isolation/phase signal mapping, **167 checks**).
   stock implementation as a byte-exact fidelity reference. The asserted power-stage drive stays GATED LAST
   (§5.21/§7).
 
+#### Codec fidelity partials (`analyze106.py` / `analyze106b.py` / `analyze106c.py`, byte-exact) — optional-choice chain + Req gate sequences + PVT unit mechanism + list sub-grammars + CD secondary cadence + SessionID negotiation
+
+The B2 skeleton (above) recovered the message field lists but left several optional-field / gate / unit /
+SID mechanisms partial (CCS2_GAPS G6/G7/G8 + the B2 `[?]` items). Three further decoders resolve them
+byte-exact; the replica is corrected + host-tested (`test_din70121` 117, `test_din_session` 56; full suite
+817/0, `verify_ccs2.py` 222/0). Mechanisms only — the wire **mechanism** is byte-proven; caller-set schema
+enum *constants* are noted as schema-derived where the app builder constant was not located.
+
+- **(CurrentDemandRes optional max-limit — a NESTED choice chain, NOT per-field presence)** ev12
+  `0x0806471E`, after the mandatory RC(5) + DC_EVSEStatus + PresentVoltage PVT(+0x10) + PresentCurrent
+  PVT(+0x18) + the three achieved bools (CurrentLimitAchieved+0x20 / VoltageLimitAchieved+0x24 /
+  PowerLimitAchieved+0x28), the optional EVSEMaximum{Current,Voltage,Power}Limit PVTs are selected by a
+  nested optional-element choice in fixed order **Current→Voltage→Power**: state `0x23` `readBits(3)`
+  (0=CurrentLimit PVT@+0x2c, flag+0x34=1 →`0x24`; 1=VoltageLimit@+0x38, flag+0x40=1 →`0x25`;
+  2=PowerLimit@+0x44, flag+0x4c=1 →state4; 3=end; ≥4→err); state `0x24` `readBits(2)` (0=Voltage, 1=Power,
+  2=end; ≥3→err); state `0x25` `readBits(2)` (0=Power, 1=end; ≥2→err); state4 = EE gate. The replica
+  `din_cd_res_decode_exi` walks this chain (state var `sel`), stores `evse_max_power`/`_f` + the three
+  `*_present` flags, and keeps the previous meas value when a field is absent. **CORRECTION:** the earlier
+  per-field 1-bit presence model was wrong — it is a single nested choice.
+- **(PhysicalValueType encoder mechanism `0x0806A3AC`)** gate, gate, Multiplier (3-bit = mult+3, signed
+  struct+0), gate, Unit choice(2) [0=present → gate, Unit (4-bit @struct+1), gate | 1=absent], gate, Value
+  (EXI signed @struct+4), gate, EE gate. The Unit is a **caller-set 4-bit schema enum** (DIN unitType
+  A=1 / V=3 are schema-derived; the exact builder constants were not located — documented, not byte-proven).
+  The replica `exi_read_pvt`/`exi_write_pvt` omit the internal gates (a self-consistent simplification,
+  host-round-tripped); `din_scale(raw,factor)=raw·10^(factor−3)`, stored factor = mult+3.
+- **(Req encoder prologues / inter-field gates)** SessionSetupReq ev40 `0x0806ABEA` **CONFIRMED**: gate,
+  gate, EVCCID (varlen-len + octets), gate, gate(EE) = 4 gates (replica already matched). PreChargeReq ev2f
+  `0x0806B4DE`: gate, DC_EVStatus(+0), gate, EVTargetCurrent PVT(+0x14), gate, EVTargetVoltage PVT(+0x1c),
+  gate(EE) = 4 gates — the gate **between DC_EVStatus and EVTargetCurrent was missing** in the replica and is
+  added. CPDReq ev0b `0x0806CEF0`: gate, gate, EnergyTransferMode (3-bit caller-set, DC=3 schema-derived),
+  gate, AC/DC choice(2) [0=AC param `0x0806CE20`@+0xc, 1=DC_EVChargeParameter ev13 `0x0806CC3A`@+0x34,
+  2=`0x0806CC32`@+4], gate(EE); DIN takes choice 1. ev13 SM `0x41`–`0x48`: gate, DC_EVStatus, gate,
+  maxCurrent PVT(+0x14), choice(2) maxPower… (the full optional chain is complex; the replica body is a
+  documented simplification). Host-tested via Req body walks (gate positions + PVT values + ETM/choice).
+- **(ServiceDiscoveryRes list sub-grammars)** ev3d `0x08063370`: state `0x8c` gate, gate, RC(5), gate →
+  `0x8d` gate, ChargeServiceList (`0x0806327A`, struct+2, count≤5) → `0x8e` gate, ServiceList ev39
+  (`0x0806316A`, struct+0xc) → `0x8f` choice(2) [0=opt EnergyTransferModeList (`0x0806A192`, struct+0x64,
+  count≤8, flag+0x308), 1=absent] → state4 gate. The replica reads RC (the lists are unused by the DIN DC
+  handshake; the raw body is preserved `memcpy meas+0x37e0`); full list **consumption is deferred** —
+  documented, not a live-session blocker.
+- **(CPDRes AC-sched + AC/DC choices — CONFIRMED)** ev0c `0x08065BFC`: state `0x72` gate, gate, RC(5), gate →
+  `0x73` gate, gate, processing(1)@+1, gate → `0x74` sched-choice(2) [0=AC sched ev35 `0x08065B62`, 1=DIN
+  empty `0x08065368`] → `0x75` AC/DC-choice(2) [0=`0x08065296`, 1=DCparam ev15 `0x080650D2`, 2=`0x080650AC`]
+  → state4 gate. DIN takes choice 1 on both; the replica is correct.
+- **(G6 — CurrentDemand SECONDARY re-send cadence, ONE-SHOT)** read-site `0x08039684`–`0x080396C6`: gate
+  ctx+0x46==1 (arm flag); now=gettick (`0x0808A236`); anchor ctx+0x40; skip if anchor≥now;
+  elapsed=now−anchor; interval ctx+0x44 (u16); fires when elapsed≥interval (`cmp r1,r0; bhi skip` — a **`>=`**
+  compare); then **CLEARS ctx+0x46** (one-shot, not periodic), re-sends CD (`bl 0x08034C30`), re-arms
+  ctx+4=4000 (resp-wait) + ctx+0x14=now (last_req) + state=10. The PRIMARY cadence is `meas[0xC]%fp`
+  (`0x080396F6`, udiv/mls, fp getter `0x08088B6C`). The replica `din_session_step` uses `>=` + clears
+  `cd_resend_active` after firing; the arm is parameterized (`din_session_arm_cd_resend`).
+- **(G7 — DIN skips states 4/5 — CONFIRMED)** the RX transition engine `0x080353B2` dispatch (`tbh
+  0x08035444`, gate `cmp #0xe`) advances ServiceDiscoveryRes **3→6** directly; ServicePaymentSelection (4) +
+  ContractAuthentication (5) are ISO-only and skipped by DIN (DIN DC is EIM, no PnC contract).
+- **(G8 — 150 s timeout = outer guard)** `analyze106b` scanned the poll region `0x08038000`–`0x0803A000` for
+  a `movw #0x249F0` (150000) immediate / ctx+C compare and found **none** — the clean 150 s compare is not a
+  simple immediate there. Modeled as an outer guard that never fires before the 120 s total (ctx+8, compare
+  `0x08038458`/`0x0803874E`, gate ctx+0x2A ~ session_active).
+- **(SessionID negotiation — HEADER-ONLY)** SessionSetupRes ev41 `0x08062B1E` body = RC(5) + EVSEID (varlen
+  clamp 0x20) + opt timestamp; the SessionID is carried in the **DIN header gid `0x6c`**, not the body. The
+  TX document wrapper `0x08034C30` copies the negotiated 8-byte SID (`r5+0x1f7`→`r4[0..7]`, len=8@r4+8) into
+  every post-setup document; SessionSetupReq uses a 1-byte `0x00` placeholder. The replica wires
+  `din_session_set_sid` (clamp `DIN_SID_MAX`, ignore zero-length) + `ccs2_rx_exi` adopts the SID from the
+  SessionSetupRes header **before** `din_session_rx` (so the ServiceDiscoveryReq it emits already carries the
+  negotiated SID); `default_tx` copies `sess.sid` into all nine Req builders.
+
 ### 5.10 USB log stick — firmware-match proof & device provenance  [C unless noted]
 
 **Files the device writes to the stick** (observed on the user's unit after boot + charging sessions,
@@ -2950,6 +3016,27 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
   clamped to `din_scale(EVSE max meas+0x3D20/22)`=`[0x200007AC]`, ±5A up / ±25A down deadband;
   EVMaximumCurrentLimit = min(ramped, EVSE max) (`0x0804EA94`). Distinct from the instantaneous per-tick min/cap
   law (§5.21 E). Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze105.py'`.
+- `analyze106.py` — **DIN codec-fidelity decoder (§5.9 EXI fidelity addendum; CCS2_GAPS G6/G7/G8 + B2 `[?]`)**:
+  disassembles the optional-field / gate-sequence / list / unit / SID mechanisms the B2 skeleton left partial.
+  CurrentDemandRes ev12 `0x0806471E` optional max-limit **nested choice chain** (state `0x23` readBits3 →
+  `0x24`/`0x25` readBits2; fixed Current→Voltage→Power order, per-field present flags struct+0x34/0x40/0x4c);
+  PhysicalValueType encoder `0x0806A3AC` (Multiplier 3-bit=mult+3, Unit 4-bit caller-set enum gated by a 2-bit
+  choice, signed Value, inter-field gates); SessionSetupReq ev40 `0x0806ABEA` / PreChargeReq ev2f `0x0806B4DE` /
+  CPDReq ev0b `0x0806CEF0` (+ DC_EVChargeParameter ev13 `0x0806CC3A`) prologues; ServiceDiscoveryRes ev3d
+  `0x08063370` ChargeServiceList/ServiceList/opt-EnergyTransferModeList sub-grammars; CPDRes ev0c `0x08065BFC`
+  AC-sched + AC/DC choices. Run: `nix-shell -p python3 python3Packages.capstone --run 'python3 analyze106.py'`.
+- `analyze106b.py` — **fixed-range raw walker + cadence/timeout scan (§5.9 EXI fidelity addendum)**: a
+  non-stopping disasm walk (multi-exit state machines) over the PVT encoder tail, CurrentDemandReq ev11
+  `0x0806BDDC`, the G6 CD secondary-cadence read-site `0x08039684`–`0x080396C6` (arm ctx+0x46, anchor ctx+0x40,
+  interval ctx+0x44, `>=` compare, one-shot clear), and the G7 RX dispatch head `0x080353B2`; scans the poll
+  region `0x08038000`–`0x0803A000` for a `movw #0x249F0` (150000) immediate / ctx+C compare (none found → the
+  150 s timeout is an outer guard, not a simple immediate). Run: `nix-shell -p python3 python3Packages.capstone
+  --run 'python3 analyze106b.py'`.
+- `analyze106c.py` — **SessionID-negotiation provenance (§5.9 EXI fidelity addendum)**: raw walk of
+  SessionSetupRes ev41 `0x08062B1E` (RC + EVSEID varlen clamp 0x20 + opt timestamp; SID is header-only gid
+  0x6c) and the TX document wrapper `0x08034C30` (copies the negotiated 8-byte SessionID into every post-setup
+  document; SessionSetupReq uses a 1-byte placeholder). Run: `nix-shell -p python3 python3Packages.capstone
+  --run 'python3 analyze106c.py'`.
 - `make_service_upg.py` — **service-UPG builder (§5.13e/f/i)**: implements the cracked format/integrity —
   derive key, XOR-decode, patch app / append cave, re-seal length + both MODBUS CRCs, re-XOR; preserves
   prefix/entry/first4 verbatim. `STOCK -o OUT` (byte-identical round-trip), `--patch OFF:HEX`,

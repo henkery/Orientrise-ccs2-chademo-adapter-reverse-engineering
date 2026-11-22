@@ -20,11 +20,16 @@ old target reference made the engagement window unreachable during precharge (th
 current-request>0, 8s/4s; 18/19 inner precharge relay PB10) and is **already replicated** in `charge_stm`;
 **G11** current ramp is a slow **+20 A/minute** ramp on the requested EVMaximumCurrentLimit (`meas+0x28C`,
 `0x0804BB54`), distinct from the instantaneous per-tick min/cap law — now **BUILT** as the inert shadow
-`current_ramp.c` (byte-exact, host-tested). **What remains:** (i) minor codec **fidelity partials** (G6–G8 +
-the B2 `[?]` gate-sequence / list-sub-grammar / optional-choice / unit-enum / SID-negotiation items, §2);
-(ii) the bench-only **G9** live SECC interop capture; and (iii) the **GATED-LAST** asserted power-stage drive
-(§4). The library network/crypto layers are **done** (vendored, byte-faithful config). Full host suite
-**760 / 0**; `verify_ccs2.py` **222 / 0**.
+`current_ramp.c` (byte-exact, host-tested). The codec **fidelity partials** (G6–G8 + the B2 `[?]`
+gate-sequence / list-sub-grammar / optional-choice / unit-enum / SID-negotiation items, §2) are now
+**RE-resolved + integrated** (`analyze106.py`/`106b`/`106c`): the CDRes optional max-limit **nested choice
+chain** (ev12 `0x0806471E` states `0x23`/`0x24`/`0x25`), the PreChargeReq missing inter-field gate, the CPDReq
+ev0b/ev13 prologue, the SessionSetupReq/CPDRes prologues (confirmed), the ServiceDiscoveryRes list grammar
+(documented), the G6 CD secondary **one-shot** cadence (read-site `0x08039684`), the G7 DIN 4/5 skip
+(confirmed), the G8 150 s outer-guard, the PVT unit mechanism, and **SessionID negotiation** (`set_sid` +
+`ccs2_rx_exi` adoption). **What remains:** (i) the bench-only **G9** live SECC interop capture; and (ii) the
+**GATED-LAST** asserted power-stage drive (§4). The library network/crypto layers are **done** (vendored,
+byte-faithful config). Full host suite **817 / 0**; `verify_ccs2.py` **222 / 0**.
 
 ---
 
@@ -40,8 +45,8 @@ the B2 `[?]` gate-sequence / list-sub-grammar / optional-choice / unit-enum / SI
 | SDP discovery + security/protocol select | `sdp.c` | `test_sdp` 31 | built (`analyze92`/`94`) |
 | V2GTP framing (`01 FE type len`) | `v2gtp.c` | `test_v2gtp` 14 | built (`analyze92`) |
 | EXI bit-level codec (MSB-first/varlen/signed/PVT) + DIN-doc framing | `exi.c` | `test_exi` 85 | built (`analyze93` E / B2) |
-| DIN70121 meas + pow10 scale + B2 message codec (9 Req / 9 Res) | `din70121.c` | `test_din70121` 74 | built (`analyze92`/`93` / B2) |
-| DIN autonomous session SM (states/timers/retries) | `din_session.c` | `test_din_session` 42 | built (`analyze93` F / B2) |
+| DIN70121 meas + pow10 scale + B2 message codec (9 Req / 9 Res) | `din70121.c` | `test_din70121` 117 | built (`analyze92`/`93` / B2 / `106`) |
+| DIN autonomous session SM (states/timers/retries) | `din_session.c` | `test_din_session` 56 | built (`analyze93` F / B2 / `106`) |
 | Live transport glue (IPv6/UDP/TCP/deframe/TLS-decision/SM) | `v2g_net.c` | `test_v2g_net` 90 | built (`analyze94`) |
 | Live stack: lwIP netif + raw pcb + mbedTLS bio bridge | `v2g_stack.c` | `test_tls_mbedtls` 21 | built (vendored, `analyze97`) |
 | PnC CA cert store → `x509_crt_parse`/`conf_ca_chain` | `ca_store.c` | `test_ca_store` 45 | built (`analyze96`) |
@@ -52,16 +57,18 @@ the B2 `[?]` gate-sequence / list-sub-grammar / optional-choice / unit-enum / SI
 CHAdeMO side (built earlier, inert): `can`/`chademo` (H100/101/102 RX, H108/109 TX), `charge_stm` (shadow,
 byte-exact state-17 guard), `current_ctrl` (shadow setpoint), `current_ramp` (shadow +20 A/min
 EVMaximumCurrentLimit ramp, G11), `hv`/`adc`/`nv_cal`/`spi4` (factory-cal HV measurement), `rcc`/`gpio`/`tick`.
-Full host suite **760 checks / 0 failures** (17 tests); built-image disasm `verify_ccs2.py` **222 checks / 0**
-(ARM text 118836, `CUSTOM.UPG` 132102 B CRC OK). The B2 codec integration (`017577d`) + the engagement-reference
-fix (`c8fc16a`) + the coordination decode (`5d9ecc4`) landed after the library-pivot milestone `91c938c`.
+Full host suite **817 checks / 0 failures** (17 tests); built-image disasm `verify_ccs2.py` **222 checks / 0**
+(ARM text 119012, `CUSTOM.UPG` 132102 B CRC OK). The B2 codec integration (`017577d`) + the engagement-reference
+fix (`c8fc16a`) + the coordination decode (`5d9ecc4`) + the codec-fidelity partials (`analyze106`) landed after
+the library-pivot milestone `91c938c`.
 
 **Session sequence is wired end-to-end** (`din_session.c`): 1→2→3→6→7→8→9→10→11→12→13→0, timers
 4000/120000/150000/40000/14000 ms, retry cap 20, CD modulo cadence, FAILED→shutdown + fault post. The
 **EXI message content is now built** (B2): the 9 Req encoders + 9 Res decoders replace the former
 ResponseCode-only advancement and `[? body]` placeholders. **Charge coordination is complete** (G10 already
-faithful in `charge_stm`; G11 ramp built in `current_ramp`). What remains partial is codec **fidelity**
-(§2 G6–G8 + B2 `[?]` items), not the message skeleton.
+faithful in `charge_stm`; G11 ramp built in `current_ramp`). **Codec fidelity is now resolved** (`analyze106`,
+§2 G6–G8 + B2 `[?]` items): the CDRes optional-choice chain, Req gate sequences, PVT unit mechanism, and
+SessionID negotiation are byte-exact + host-tested. What remains is bench interop (G9) + the gated power drive.
 
 ---
 
@@ -162,29 +169,68 @@ now uses `in->evse_present_voltage`, wired `ccs2_evse()->evse_present_voltage = 
 (target only logged) — its voltage compare is a noted replica simplification. ZE1 regression added
 (`test_charge_stm` 47→55). **Impact:** resolved — the engagement guard now references the correct voltage.
 
-### G6 — CD secondary re-send interval set-site `[?]`
-`din_session.c:158` — "SECONDARY: ctx+0x44 interval gated ctx+0x46==1 (`@0x08039698`), parameterized." The
-**set-site** (where ctx+0x44/0x46 are written) is `[?]`; currently defaulted (`din_session_set_fp`,
-`cd_interval`). Primary cadence `meas[0xC]%fp` IS recovered (`0x080396F6`, fp getter `0x08088B6C`).
-**Impact:** secondary CurrentDemand re-send timing is parameterized, not byte-faithful.
+### G6 — CD secondary re-send interval set-site — **RESOLVED + INTEGRATED (RE `analyze106`)**
+**Resolution:** the secondary cadence **read-site** is decoded byte-exact (`0x08039684`–`0x080396C6`): gate
+`ctx+0x46==1` (arm flag); `now=gettick` (`0x0808A236`); anchor `ctx+0x40`; skip if `anchor>=now`;
+`elapsed=now-anchor`; interval `ctx+0x44` (u16); fires when `elapsed>=interval` (`cmp r1,r0; bhi skip` — a
+**`>=`** compare); then **CLEARS `ctx+0x46`** (ONE-SHOT, not periodic), re-sends CD (`bl 0x08034C30`), re-arms
+`ctx+4=4000` (resp-wait) + `ctx+0x14=now` (last_req) + state=10. The replica `din_session_step` now uses `>=`
+and clears `cd_resend_active` after firing; the arm is parameterized via `din_session_arm_cd_resend(interval,
+now)` (sets `ctx+0x44`/`0x40`/`0x46`, mirroring the stock arm; interval 0 disarms). Primary cadence
+`meas[0xC]%fp` IS recovered (`0x080396F6`, fp getter `0x08088B6C`). Host-tested (`test_cd_secondary_oneshot`:
+`>=` boundary, one-shot disarm, no re-fire, re-arm, interval-0 disarm). **Impact:** resolved — the secondary
+re-send is byte-faithful (one-shot `>=` cadence); the arm interval remains a runtime parameter like `fp`.
 
-### G7 — DIN session skips states 4/5 `[?]`
-`din_session.c:273` — "3→6 (DIN skips PaymentSelection/ContractAuth 4/5 `[?]`)". The replica assumes DIN skips
-ISO ServicePaymentSelection (4) + ContractAuthentication (5). Whether DIN truly skips them (vs a DIN variant)
-is unconfirmed. **Impact:** sequence correctness for DIN-only SECCs; low risk (DIN DC is EIM, no PnC contract).
+### G7 — DIN session skips states 4/5 — **CONFIRMED (RE `analyze106`)**
+**Resolution:** the RX transition engine `0x080353B2` dispatch (`tbh 0x08035444`, gate `cmp #0xe`) confirms
+DIN advances **3→6** directly: ServicePaymentSelection (4) + ContractAuthentication (5) are **ISO-only** and
+skipped by the DIN ServiceDiscoveryRes path. The replica `din_session_rx` (3→6) + the `din_session.h` state
+comments ("ISO-only … DIN skips") are correct. **Impact:** resolved — sequence faithful for DIN-only SECCs
+(DIN DC is EIM, no PnC contract).
 
-### G8 — minor grammar partials `[?]`
-- CurrentDemandRes optional max-limit choice chain (`din70121.c:181,189,196`; state `0x23` readBits3 /
-  `0x24–0x25` readBits2) — "recovered wire order `[? exact grammar]`".
-- DIN PhysicalValueType **unit enum** A/V values (`din70121.c:276,283` — "A (ampere) `[?]", "V (volt) `[?]"`).
-- 150 s timeout clean compare site (`din_session.c:121` — "clean cmp not found `[?]`; outer guard").
-- B2 codec `[?]` fidelity items still marked in source: Req encoder **leading/inter-field gate sequences**
-  (SessionSetupReq ev40 prologue `din70121.c:366`, PreChargeReq inter-field `:427`, CPDReq ev0b/ev13 +
-  `EnergyTransferMode DC=3` enum `:482–492`); **ServiceDiscoveryRes list sub-grammars** (`:637`,
-  `din70121.h:237` — structurally consumed, not decoded); **PVT unit enum** A/V (`:301`, A=1/V=3 guessed);
-  CPDRes AC-sched choice (`:669`); per-builder **SessionID negotiation** (1-byte `0x00` placeholder,
-  `din_session.h:99`, `exi.h:70`).
-**Impact:** optional-field / unit / gate fidelity; inert-safe until bench-validated.
+### G8 — minor grammar partials — **RESOLVED + INTEGRATED (RE `analyze106`/`106b`/`106c`)**
+- **CurrentDemandRes optional max-limit choice chain** (ev12 `0x0806471E`) — decoded byte-exact: a **NESTED
+  optional-element choice** (NOT per-field presence bits), fixed order Current→Voltage→Power. State `0x23`
+  readBits(3): 0=EVSEMaximumCurrentLimit PVT(+0x2c,flag+0x34)→`0x24`, 1=VoltageLimit(+0x38,flag+0x40)→`0x25`,
+  2=PowerLimit(+0x44,flag+0x4c)→state4, 3=end (≥4→err). `0x24` readBits(2): 0=Voltage,1=Power,2=end (≥3→err).
+  `0x25` readBits(2): 0=Power,1=end (≥2→err). Replica `din_cd_res_decode_exi` rewritten with the choice chain +
+  `evse_max_{current,voltage,power}_present` flags + `evse_max_power`/`_f` storage. Host-tested
+  (`test_din70121`: all-absent/Current-only/Voltage-only/Power-only/all-three/Current+Power + invalid-choice
+  `EXI_ERR_EVENT`).
+- **DIN PhysicalValueType unit enum** A/V — the wire **mechanism** is byte-proven (encoder `0x0806A3AC`: gate,
+  gate, Multiplier(3-bit=mult+3), gate, Unit choice(2)[0=present→gate,Unit(4-bit),gate | 1=absent], gate,
+  Value(signed), gate, EE gate). Unit is a **caller-set 4-bit schema enum**; A=1/V=3 are schema-derived (the
+  exact constants were not located in the app builder — documented honestly, not byte-proven). The replica
+  `exi_read_pvt`/`exi_write_pvt` omit the internal gates (a self-consistent simplification, host-round-tripped).
+- **150 s timeout compare site** — `analyze106b` scanned the poll region `0x08038000`–`0x0803A000` for a
+  `movw #0x249F0` (150000) immediate / `ctx+C` compare and found **none**; the clean compare is not a simple
+  immediate there. Modeled as an **OUTER GUARD** that never fires before the 120 s total (`ctx+8`, compare
+  `0x08038458`/`0x0803874E`, gate `ctx+0x2A`). Documented in `din_session_step`.
+- **Req encoder gate sequences** — SessionSetupReq ev40 `0x0806ABEA` prologue **CONFIRMED** (gate, gate,
+  EVCCID varlen, gate, gate(EE) = 4 gates; replica already matched). **PreChargeReq ev2f `0x0806B4DE`**: the
+  gate between DC_EVStatus and EVTargetCurrent was **MISSING** — added (now 4 gates: gate, DC_EVStatus, gate,
+  EVTargetCurrent, gate, EVTargetVoltage, gate(EE)). **CPDReq ev0b `0x0806CEF0`** prologue decoded: gate, gate,
+  EnergyTransferMode(3-bit caller-set, DC=3 schema-derived), gate, AC/DC choice(2)[0=AC `0x0806CE20`,
+  1=DC_EVChargeParameter ev13 `0x0806CC3A`, 2=`0x0806CC32`], gate(EE); DIN takes choice 1. Replica prologue
+  corrected. Host-tested (`test_din70121` PreChargeReq/CPDReq body walks: gate positions + PVT values + ETM/choice).
+- **ServiceDiscoveryRes list sub-grammars** (ev3d `0x08063370`) — grammar decoded: state `0x8c` gate,gate,RC(5),
+  gate → `0x8d` gate,ChargeServiceList(`0x0806327A`,struct+2,count≤5) → `0x8e` gate,ServiceList ev39
+  (`0x0806316A`,struct+0xc) → `0x8f` choice(2)[0=opt EnergyTransferModeList(`0x0806A192`,struct+0x64,count≤8,
+  flag+0x308),1=absent]→state4 gate. Replica reads RC (lists unused; raw body preserved `memcpy meas+0x37e0`);
+  full list **consumption deferred** (not needed for the DIN DC handshake) — documented, not a blocker.
+- **CPDRes AC-sched choice** (ev0c `0x08065BFC`) — **CONFIRMED**: state `0x74` sched-choice(2)[0=AC sched ev35
+  `0x08065B62`, 1=DIN empty `0x08065368`], `0x75` AC/DC-choice(2)[0=`0x08065296`, 1=DCparam ev15 `0x080650D2`,
+  2=`0x080650AC`]; DIN takes choice 1 on both. Replica correct.
+- **SessionID negotiation** — SessionSetupRes ev41 `0x08062B1E` body = RC(5)+EVSEID(varlen clamp 0x20)+opt
+  timestamp; the SID is **HEADER-ONLY** (gid `0x6c`). The stock TX wrapper `0x08034C30` copies the 8-byte
+  negotiated SID (`r5+0x1f7`→`r4[0..7]`, len=8) into every post-setup document; SessionSetupReq uses a 1-byte
+  `0x00` placeholder. Replica wired: `din_session_set_sid` (clamp `DIN_SID_MAX`, ignore zero-len) + `ccs2_rx_exi`
+  adopts the SID from the SessionSetupRes header **before** `din_session_rx` (so the emitted ServiceDiscoveryReq
+  already carries it); `default_tx` copies `sess.sid` into all 9 Req builders. Host-tested
+  (`test_din_session.test_sid_negotiation`: placeholder, 8-byte adoption, post-setup carry, clamp, zero-len ignore).
+**Impact:** resolved — optional-field / unit / gate / SID fidelity is byte-exact (mechanism) + host-tested;
+the PVT unit enum constants + ETM DC=3 are schema-derived (documented), and ServiceDiscovery list consumption
+is deferred (unused by DIN DC). Inert-safe; bench interop (G9) remains.
 
 ### G10 — CCS PreCharge ↔ CHAdeMO car-contactor coupling — **RESOLVED** (RE `analyze105`)
 Decoded byte-exact (`analyze105.py`). The coupling lives in the **CHAdeMO charge stm**, NOT in a stall of the
@@ -268,23 +314,27 @@ laws (REPORT §5.17/§5.18/§5.20/§5.21/§5.5c). Not a gap to close now — the
 ## 5. Next-build-step scoping (recommendation)
 
 The critical-path **RE + integration are DONE** — G1–G5 recovered byte-exact (`analyze101`/`102`/`103`) and
-**built** (B2 `017577d`); the engagement reference is corrected (G5b, `analyze104` / `c8fc16a`); and
+**built** (B2 `017577d`); the engagement reference is corrected (G5b, `analyze104` / `c8fc16a`);
 **charge coordination is complete** (`analyze105`): G10 car-contactor coupling is already replicated in
 `charge_stm`, and the G11 +20 A/minute EVMaximumCurrentLimit ramp is **built** as the inert shadow
-`current_ramp.c` (byte-exact `0x0804BB54`, `test_current_ramp` 38). The former steps 1–3 (Req encoders / Res
-field lists / DC_EVSEStatus + three-signal split), the coordination decode, and the inert ramp build are
-**complete**. What remains, in priority order toward a *safe charge*:
+`current_ramp.c` (byte-exact `0x0804BB54`, `test_current_ramp` 38); and the **codec fidelity partials are
+complete** (`analyze106`/`106b`/`106c`): G6 CD secondary one-shot cadence, G7 DIN 4/5 skip, G8 CDRes
+optional-choice chain + Req gate sequences + PVT unit mechanism + 150 s outer-guard + ServiceDiscovery list
+grammar + CPDRes AC-sched choice + SessionID negotiation — all byte-exact (mechanism) + host-tested
+(`test_din70121` 117, `test_din_session` 56). The former steps 1–3 (Req encoders / Res field lists /
+DC_EVSEStatus + three-signal split), the coordination decode, the inert ramp build, and the fidelity partials
+are **complete**. What remains, in priority order toward a *safe charge*:
 
-1. **Codec fidelity partials (G6/G7/G8 + B2 `[?]`)** — Req gate sequences, ServiceDiscovery list sub-grammars,
-   CDRes optional-choice chain, PVT unit enums, SID negotiation, CD secondary set-site, DIN 4/5 skip, 150 s
-   compare site. Inert, C013-decodable, host-testable. Polish, not a live-session blocker.
-2. **Bench validation (G9)** — live SECC session capture (hardware: ESP32-S3 / Arduino Mega bench) to confirm
+1. **Bench validation (G9)** — live SECC session capture (hardware: ESP32-S3 / Arduino Mega bench) to confirm
    real EVSE message ordering/option choices + the live lwIP/mbedTLS TCP-connect/TLS-handshake on hardware.
-3. **GATED power-stage drive (LAST, §4)** — asserted contactor/relay GPIO sequencing (incl. the decoded PB10
+   The only remaining `[?]` items are bench-only (real SECC peer wire behavior) or documented simplifications
+   (PVT unit enum constants / ETM DC=3 schema-derived; ServiceDiscovery list consumption deferred — unused by
+   DIN DC; PVT internal gates omitted self-consistently).
+2. **GATED power-stage drive (LAST, §4)** — asserted contactor/relay GPIO sequencing (incl. the decoded PB10
    inner precharge-relay drive + d2) + BCB PD11 + +24 V power-fail queue, behind a compile-time safety flag,
    **after** the controller is bench-validated against the decoded laws (REPORT §5.17/§5.18/§5.20/§5.21/§5.5c).
 
-Step 1 is inert implementation + host tests + build/`verify_ccs2`/UPG re-wrap (no power drive); step 2 needs
-hardware; step 3 is the final gated layer. This keeps the asserted power-stage drive GATED LAST throughout.
-**Critical path:** the codec + coordination RE and the inert ramp are complete; the path to "runs a safe
-charge" is bench (2) → gated drive (3), with fidelity (1) as parallel polish.
+Step 1 needs hardware; step 2 is the final gated layer. This keeps the asserted power-stage drive GATED LAST
+throughout. **Critical path:** the codec (skeleton + fidelity), coordination RE, and inert ramp are complete;
+the path to "runs a safe charge" is bench (1) → gated drive (2). No inert communication-side RE/build work
+remains on the critical path.

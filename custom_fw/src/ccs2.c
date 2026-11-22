@@ -150,6 +150,10 @@ int ccs2_rx_exi(const uint8_t *frame, uint16_t len, uint32_t now_ms)
     uint8_t subev, sid[DIN_SID_MAX]; uint16_t sid_len;
     r = exi_din_decode_doc_start(&s, &subev, sid, &sid_len);   /* DIN header + 6-bit subev */
     if (r) return r;
+    /* SessionID negotiation (analyze106): the SessionSetupRes DIN header carries the EVSE-assigned
+     * SessionID; adopt it so post-setup Req builders copy it (stock TX wrapper 0x08034C30). Done
+     * before din_session_rx so the ServiceDiscoveryReq it emits already uses the negotiated SID. */
+    if (subev == DIN_RES_SESSIONSETUP) din_session_set_sid(sid, sid_len);
     /* body = remaining stream bytes after the framing (root + DIN header + subev consumed). */
     const uint8_t *body = frame + EXI_V2GTP_HDR_LEN + s.pos;
     uint16_t body_len = (uint16_t)(len - EXI_V2GTP_HDR_LEN - s.pos);

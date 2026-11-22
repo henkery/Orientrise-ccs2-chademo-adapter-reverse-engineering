@@ -92,6 +92,15 @@ typedef struct {
     uint8_t  first_demand_sent;      /* +0x243 */
     uint16_t ev_max_current_limit;   /* +0x28C ramped EVMaximumCurrentLimit setpoint (A), G11
                                       * (current_ramp; advertised limit = min(this, EVSE max)) */
+    /* CDRes optional max-limit choice chain (analyze106, ev12 0x0806471E states 0x23/24/25).
+     * The optional EVSEMaximumCurrent/Voltage/PowerLimit PVTs are selected by a nested choice
+     * (3-bit then 2-bit then 2-bit), NOT per-field presence bits; each present field sets its
+     * flag (stock struct +0x34/+0x40/+0x4c = 1). Power limit @+0x44 (no stock meas mirror). */
+    uint16_t evse_max_power;         /* EVSEMaximumPowerLimit PVT value (optional)            */
+    int8_t   evse_max_power_f;       /* factor = mult+3                                       */
+    uint8_t  evse_max_current_present; /* choice chain selected EVSEMaximumCurrentLimit       */
+    uint8_t  evse_max_voltage_present; /* choice chain selected EVSEMaximumVoltageLimit       */
+    uint8_t  evse_max_power_present;   /* choice chain selected EVSEMaximumPowerLimit         */
 } din_meas_t;
 
 /* ---- PhysicalValueType scaling (byte-exact, shared with current_ctrl) ---- */

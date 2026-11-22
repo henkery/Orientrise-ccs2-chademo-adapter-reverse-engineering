@@ -61,6 +61,38 @@ static void wr_pvt(exi_stream_t *s, int8_t mult, uint8_t unit, uint16_t value)
     exi_pvt_t p = { .mult = mult, .unit = unit, .unit_present = 1, .value = value };
     exi_write_pvt(s, &p);
 }
+/* CurrentDemandRes mandatory prefix (analyze106 ev12): RC(5) + DC_EVSEStatus + PresentVoltage PVT
+ * + PresentCurrent PVT + 3 limit-achieved bools. The optional max-limit choice chain follows. */
+static void cd_prefix(exi_stream_t *s)
+{
+    exi_write_bits(s, 5, 0);              /* ResponseCode = OK */
+    wr_evse_status(s, 1, 0, 0);           /* DC_EVSEStatus (isolation valid) */
+    wr_pvt(s, 0, 3, 400);                 /* EVSEPresentVoltage */
+    wr_pvt(s, 0, 1, 100);                 /* EVSEPresentCurrent */
+    exi_write_bool(s, 0);                 /* CurrentLimitAchieved */
+    exi_write_bool(s, 0);                 /* VoltageLimitAchieved */
+    exi_write_bool(s, 0);                 /* PowerLimitAchieved */
+}
+/* Consume the DC_EVStatus ev17 default grammar (23 bits, analyze101) from a Req body walk;
+ * recover EVReady + EVRESSSOC. Mirrors din_dc_ev_status_encode gate/field order. */
+static int rd_dc_ev_status(exi_stream_t *s, uint8_t *ready, uint8_t *soc)
+{
+    uint32_t v; int r;
+    r = exi_read_gate(s, EXI_ERR_GATE); if (r) return r;   /* 0xc1 g1 */
+    r = exi_read_gate(s, EXI_ERR_GATE); if (r) return r;   /* 0xc1 g2 */
+    r = exi_read_bool(s, ready); if (r) return r;          /* EVReady */
+    r = exi_read_gate(s, EXI_ERR_GATE); if (r) return r;   /* 0xc1 g3 */
+    r = exi_read_bits(s, 2, &v); if (r) return r;          /* 0xc2 choice 2 */
+    r = exi_read_gate(s, EXI_ERR_GATE); if (r) return r;
+    r = exi_read_bits(s, 4, &v); if (r) return r;          /* 4-bit [body+0x11]=0 */
+    r = exi_read_gate(s, EXI_ERR_GATE); if (r) return r;
+    r = exi_read_gate(s, EXI_ERR_GATE); if (r) return r;   /* 0xc5 g1 */
+    r = exi_read_gate(s, EXI_ERR_GATE); if (r) return r;   /* 0xc5 g2 */
+    r = exi_read_bits(s, 7, &v); if (r) return r;          /* EVRESSSOC 7-bit */
+    *soc = (uint8_t)v;
+    r = exi_read_gate(s, EXI_ERR_GATE); if (r) return r;   /* 0xc5 g3 */
+    return exi_read_gate(s, EXI_ERR_GATE);                 /* state 4 terminal gate */
+}
 /* Strip a Req document's framing -> root check + DIN header + 6-bit choice. */
 static int req_choice(const uint8_t *buf, uint16_t len, uint8_t *choice, uint8_t *sid, uint16_t *sid_len)
 {
@@ -310,6 +342,146 @@ int main(void)
     CHECK(din_welding_res_decode_exi(sb, sn, &wm, &rc, &st) == EXI_OK && rc == 0 &&
           wm.evse_present_voltage == 410 && wm.evse_present_voltage_f == 3,
           "WeldingRes RC=0 + presentV 410 f3");
+
+    /* --- G8: CurrentDemandRes optional max-limit choice chain (analyze106 ev12 0x23/0x24/0x25) ---
+     * Nested optional-element choice, fixed order Current->Voltage->Power, NOT per-field presence.
+     * state 0x23 readBits(3): 0=Current,1=Voltage,2=Power,3=end; 0x24 readBits(2): 0=Voltage,
+     * 1=Power,2=end; 0x25 readBits(2): 0=Power,1=end. Each present field sets its flag. */
+    uint8_t cb[128]; exi_stream_t cs; din_meas_t cm; uint8_t crc; uint16_t cn;
+
+    /* all-absent (choice 3): no flags, previous limits preserved */
+    exi_encode_init(&cs, cb, sizeof cb, 0); cd_prefix(&cs);
+    exi_write_bits(&cs, 3, 3);                 /* state 0x23: end */
+    cn = (uint16_t)exi_encode_finish(&cs);
+    memset(&cm, 0, sizeof cm);
+    cm.evse_max_current = 111; cm.evse_max_voltage = 222; cm.evse_max_power = 333;
+    CHECK(din_cd_res_decode_exi(cb, cn, &cm, &crc) == EXI_OK, "CDRes all-absent decode OK");
+    CHECK(cm.evse_max_current_present == 0 && cm.evse_max_voltage_present == 0 &&
+          cm.evse_max_power_present == 0, "CDRes all-absent: no present flags");
+    CHECK(cm.evse_max_current == 111 && cm.evse_max_voltage == 222 && cm.evse_max_power == 333,
+          "CDRes all-absent: keep previous limits");
+
+    /* Current-only (choice 0 -> state 0x24 choice 2 end) */
+    exi_encode_init(&cs, cb, sizeof cb, 0); cd_prefix(&cs);
+    exi_write_bits(&cs, 3, 0); wr_pvt(&cs, 0, 1, 200);   /* CurrentLimit 200 A */
+    exi_write_bits(&cs, 2, 2);                            /* state 0x24: end */
+    cn = (uint16_t)exi_encode_finish(&cs);
+    memset(&cm, 0, sizeof cm);
+    CHECK(din_cd_res_decode_exi(cb, cn, &cm, &crc) == EXI_OK, "CDRes Current-only decode OK");
+    CHECK(cm.evse_max_current_present == 1 && cm.evse_max_voltage_present == 0 &&
+          cm.evse_max_power_present == 0, "CDRes Current-only: only current flag");
+    CHECK(cm.evse_max_current == 200 && cm.evse_max_current_f == 3, "CDRes CurrentLimit 200 f3");
+
+    /* Voltage-only (choice 1 -> state 0x25 choice 1 end) */
+    exi_encode_init(&cs, cb, sizeof cb, 0); cd_prefix(&cs);
+    exi_write_bits(&cs, 3, 1); wr_pvt(&cs, 0, 3, 500);   /* VoltageLimit 500 V */
+    exi_write_bits(&cs, 2, 1);                            /* state 0x25: end */
+    cn = (uint16_t)exi_encode_finish(&cs);
+    memset(&cm, 0, sizeof cm);
+    CHECK(din_cd_res_decode_exi(cb, cn, &cm, &crc) == EXI_OK, "CDRes Voltage-only decode OK");
+    CHECK(cm.evse_max_voltage_present == 1 && cm.evse_max_current_present == 0 &&
+          cm.evse_max_power_present == 0, "CDRes Voltage-only: only voltage flag");
+    CHECK(cm.evse_max_voltage == 500 && cm.evse_max_voltage_f == 3, "CDRes VoltageLimit 500 f3");
+
+    /* Power-only (choice 2 -> terminal) */
+    exi_encode_init(&cs, cb, sizeof cb, 0); cd_prefix(&cs);
+    exi_write_bits(&cs, 3, 2); wr_pvt(&cs, 0, 3, 300);   /* PowerLimit 300 (mult 0) */
+    cn = (uint16_t)exi_encode_finish(&cs);
+    memset(&cm, 0, sizeof cm);
+    CHECK(din_cd_res_decode_exi(cb, cn, &cm, &crc) == EXI_OK, "CDRes Power-only decode OK");
+    CHECK(cm.evse_max_power_present == 1 && cm.evse_max_current_present == 0 &&
+          cm.evse_max_voltage_present == 0, "CDRes Power-only: only power flag");
+    CHECK(cm.evse_max_power == 300 && cm.evse_max_power_f == 3, "CDRes PowerLimit 300 f3 stored");
+
+    /* all-three (choice 0 -> 0x24 choice 0 -> 0x25 choice 0 -> terminal) */
+    exi_encode_init(&cs, cb, sizeof cb, 0); cd_prefix(&cs);
+    exi_write_bits(&cs, 3, 0); wr_pvt(&cs, 0, 1, 200);   /* CurrentLimit */
+    exi_write_bits(&cs, 2, 0); wr_pvt(&cs, 0, 3, 500);   /* VoltageLimit */
+    exi_write_bits(&cs, 2, 0); wr_pvt(&cs, 0, 3, 300);   /* PowerLimit */
+    cn = (uint16_t)exi_encode_finish(&cs);
+    memset(&cm, 0, sizeof cm);
+    CHECK(din_cd_res_decode_exi(cb, cn, &cm, &crc) == EXI_OK, "CDRes all-three decode OK");
+    CHECK(cm.evse_max_current_present == 1 && cm.evse_max_voltage_present == 1 &&
+          cm.evse_max_power_present == 1, "CDRes all-three: all flags set");
+    CHECK(cm.evse_max_current == 200 && cm.evse_max_voltage == 500 && cm.evse_max_power == 300,
+          "CDRes all-three: 200/500/300 in Current->Voltage->Power order");
+
+    /* Current+Power, skip Voltage (choice 0 -> 0x24 choice 1 -> terminal) */
+    exi_encode_init(&cs, cb, sizeof cb, 0); cd_prefix(&cs);
+    exi_write_bits(&cs, 3, 0); wr_pvt(&cs, 0, 1, 200);   /* CurrentLimit */
+    exi_write_bits(&cs, 2, 1); wr_pvt(&cs, 0, 3, 300);   /* PowerLimit (Voltage skipped) */
+    cn = (uint16_t)exi_encode_finish(&cs);
+    memset(&cm, 0, sizeof cm);
+    CHECK(din_cd_res_decode_exi(cb, cn, &cm, &crc) == EXI_OK, "CDRes Current+Power decode OK");
+    CHECK(cm.evse_max_current_present == 1 && cm.evse_max_power_present == 1 &&
+          cm.evse_max_voltage_present == 0, "CDRes Current+Power: voltage absent");
+
+    /* invalid choices -> EXI_ERR_EVENT (0x23 >3 / 0x24 >2 / 0x25 >1) */
+    exi_encode_init(&cs, cb, sizeof cb, 0); cd_prefix(&cs);
+    exi_write_bits(&cs, 3, 4);                 /* state 0x23: 4 > 3 */
+    cn = (uint16_t)exi_encode_finish(&cs);
+    memset(&cm, 0, sizeof cm);
+    CHECK(din_cd_res_decode_exi(cb, cn, &cm, &crc) == EXI_ERR_EVENT, "CDRes choice 4 (>3) -> ERR_EVENT");
+    exi_encode_init(&cs, cb, sizeof cb, 0); cd_prefix(&cs);
+    exi_write_bits(&cs, 3, 0); wr_pvt(&cs, 0, 1, 200);
+    exi_write_bits(&cs, 2, 3);                 /* state 0x24: 3 > 2 */
+    cn = (uint16_t)exi_encode_finish(&cs);
+    CHECK(din_cd_res_decode_exi(cb, cn, &cm, &crc) == EXI_ERR_EVENT, "CDRes 0x24 choice 3 (>2) -> ERR_EVENT");
+    exi_encode_init(&cs, cb, sizeof cb, 0); cd_prefix(&cs);
+    exi_write_bits(&cs, 3, 1); wr_pvt(&cs, 0, 3, 500);
+    exi_write_bits(&cs, 2, 2);                 /* state 0x25: 2 > 1 */
+    cn = (uint16_t)exi_encode_finish(&cs);
+    CHECK(din_cd_res_decode_exi(cb, cn, &cm, &crc) == EXI_ERR_EVENT, "CDRes 0x25 choice 2 (>1) -> ERR_EVENT");
+
+    /* --- analyze106: PreChargeReq body walk — FOUR gates (gate, DC_EVStatus, gate, targetI, gate,
+     * targetV, gate EE). The gate between DC_EVStatus and EVTargetCurrent was the missing one. --- */
+    din_set_ev_target(mm, 150, 420, (3u) | (3u << 3));
+    rn = din_precharge_req_encode(rb, sizeof rb, sid1, 1, mm, 1, 70);
+    CHECK(rn > (int)EXI_V2GTP_HDR_LEN, "PreChargeReq encode len>0");
+    exi_stream_t bs; uint8_t broot, bch, bsid[DIN_SID_MAX], rdy, soc; uint16_t bsid_len;
+    exi_pvt_t bp; uint32_t bv;
+    exi_decode_init(&bs, rb + EXI_V2GTP_HDR_LEN, (uint32_t)(rn - EXI_V2GTP_HDR_LEN));
+    exi_decode_header(&bs, &broot);
+    exi_din_decode_doc_start(&bs, &bch, bsid, &bsid_len);
+    CHECK(bch == DIN_REQ_PRECHARGE, "PreChargeReq body choice 0x15");
+    CHECK(exi_read_gate(&bs, EXI_ERR_GATE) == EXI_OK, "PreChargeReq gate A (before DC_EVStatus)");
+    CHECK(rd_dc_ev_status(&bs, &rdy, &soc) == EXI_OK && rdy == 1 && soc == 70,
+          "PreChargeReq DC_EVStatus ready=1 soc=70");
+    CHECK(exi_read_gate(&bs, EXI_ERR_GATE) == EXI_OK,
+          "PreChargeReq gate B (DC_EVStatus->targetI, analyze106 added)");
+    CHECK(exi_read_pvt(&bs, &bp) == EXI_OK && bp.value == 150 && bp.mult == 0 && bp.unit == 1,
+          "PreChargeReq EVTargetCurrent 150 A mult0 unit A");
+    CHECK(exi_read_gate(&bs, EXI_ERR_GATE) == EXI_OK, "PreChargeReq gate C (targetI->targetV)");
+    CHECK(exi_read_pvt(&bs, &bp) == EXI_OK && bp.value == 420 && bp.mult == 0 && bp.unit == 3,
+          "PreChargeReq EVTargetVoltage 420 V mult0 unit V");
+    CHECK(exi_read_gate(&bs, EXI_ERR_GATE) == EXI_OK, "PreChargeReq gate D (EE)");
+
+    /* --- analyze106: CPDReq prologue body walk — gate gate ETM(3)=DC gate AC/DC-choice(2)=1 gate
+     * ev13 DC_EVStatus + maxCurrent PVT + gate + maxPower-absent choice + maxVoltage PVT + gate. --- */
+    mm->evse_max_current = 200; mm->evse_max_current_f = 3;
+    mm->evse_max_voltage = 500; mm->evse_max_voltage_f = 3;
+    rn = din_cpd_req_encode(rb, sizeof rb, sid1, 1, mm, 1, 70);
+    CHECK(rn > (int)EXI_V2GTP_HDR_LEN, "CPDReq encode len>0");
+    exi_decode_init(&bs, rb + EXI_V2GTP_HDR_LEN, (uint32_t)(rn - EXI_V2GTP_HDR_LEN));
+    exi_decode_header(&bs, &broot);
+    exi_din_decode_doc_start(&bs, &bch, bsid, &bsid_len);
+    CHECK(bch == DIN_REQ_CPD, "CPDReq body choice 0x07");
+    CHECK(exi_read_gate(&bs, EXI_ERR_GATE) == EXI_OK, "CPDReq gate A");
+    CHECK(exi_read_gate(&bs, EXI_ERR_GATE) == EXI_OK, "CPDReq gate B");
+    CHECK(exi_read_bits(&bs, 3, &bv) == EXI_OK && bv == 3, "CPDReq EnergyTransferMode = DC (3)");
+    CHECK(exi_read_gate(&bs, EXI_ERR_GATE) == EXI_OK, "CPDReq gate C (before AC/DC choice)");
+    CHECK(exi_read_bits(&bs, 2, &bv) == EXI_OK && bv == 1,
+          "CPDReq AC/DC choice 1 = DC_EVChargeParameter ev13");
+    CHECK(exi_read_gate(&bs, EXI_ERR_GATE) == EXI_OK, "CPDReq ev13 state 0x41 gate");
+    CHECK(rd_dc_ev_status(&bs, &rdy, &soc) == EXI_OK && rdy == 1 && soc == 70,
+          "CPDReq ev13 DC_EVStatus ready=1 soc=70");
+    CHECK(exi_read_pvt(&bs, &bp) == EXI_OK && bp.value == 200 && bp.unit == 1,
+          "CPDReq EVMaximumCurrentLimit 200 A");
+    CHECK(exi_read_gate(&bs, EXI_ERR_GATE) == EXI_OK, "CPDReq gate (maxCurrent->maxPower choice)");
+    CHECK(exi_read_bits(&bs, 2, &bv) == EXI_OK && bv == 1, "CPDReq EVMaximumPowerLimit absent (choice 1)");
+    CHECK(exi_read_pvt(&bs, &bp) == EXI_OK && bp.value == 500 && bp.unit == 3,
+          "CPDReq EVMaximumVoltageLimit 500 V");
+    CHECK(exi_read_gate(&bs, EXI_ERR_GATE) == EXI_OK, "CPDReq trailing gate (EE)");
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
