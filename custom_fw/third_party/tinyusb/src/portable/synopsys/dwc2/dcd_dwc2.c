@@ -114,6 +114,10 @@ TU_ATTR_ALWAYS_INLINE static inline uint8_t dwc2_ep_count(const dwc2_regs_t* dwc
   return DWC2_EP_MAX;
   #else
   const dwc2_ghwcfg2_t ghwcfg2 = {.value = dwc2->ghwcfg2};
+  // Orientrise clone OTG_FS: GHWCFG2 reads 0 (unimplemented, like GD32VF103) -> num_dev_ep+1 would be
+  // 1 and the ISR/reset loops would service only EP0, dropping the CDC data EPs. Fall back to the
+  // compile-time EP max; over-counting unimplemented EPs is harmless (their regs read 0 / no IRQ bit).
+  if (ghwcfg2.value == 0) return DWC2_EP_MAX;
   return ghwcfg2.num_dev_ep + 1;
   #endif
 }
@@ -656,7 +660,7 @@ bool dcd_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
 
   dcd_disconnect(rhport);
 
-  // Force device mode
+  // Force device mode (read-modify-write preserves GUSBCFG.PHYSEL set by phy_fs_init).
   dwc2->gusbcfg = (dwc2->gusbcfg & ~GUSBCFG_FHMOD) | GUSBCFG_FDMOD;
 
   // OTG Ctrl

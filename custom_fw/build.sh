@@ -27,7 +27,7 @@ CFLAGS=(-mcpu=cortex-m4 -mthumb -ffreestanding -nostdlib -fno-builtin
 # Recovered glue + safe-bootstrap app modules (nd6.c retired -> lwIP nd6; tcp/tls/crypto/ecc/x509
 # retired -> lwIP TCP + mbedTLS). v2g_stack/hw_rng/libc_shim are the new library-integration layer.
 APP=(startup.s main.c
-  src/rcc.c src/gpio.c src/tick.c src/can.c src/chademo.c src/spi4.c src/nv_cal.c src/adc.c
+  src/rcc.c src/gpio.c src/uart_dbg.c src/tick.c src/can.c src/chademo.c src/spi4.c src/nv_cal.c src/adc.c
   src/hv.c src/charge_stm.c src/current_ctrl.c src/current_ramp.c src/qca7005.c src/v2gtp.c src/slac.c src/cp.c
   src/cp_capture.c src/cp_adc.c src/sdp.c src/din70121.c src/exi.c src/din_session.c
   src/v2g_net.c src/v2g_stack.c src/hw_rng.c src/libc_shim.c src/ca_store.c src/ccs2.c

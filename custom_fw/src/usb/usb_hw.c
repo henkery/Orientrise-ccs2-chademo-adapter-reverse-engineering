@@ -6,12 +6,20 @@
  * PA11/PA12 (OTG_FS_DM/DP) AF10 pins, then tud_init(0). No VBUS-sense pin (PA9/PA10 = USART1): the dwc2
  * driver forces B-valid + NOVBUSSENS (CFG_TUD_VBUS_DETECT_HW=0). The OTG_FS global IRQ (67) is enabled
  * by the stack (dwc2_int_set -> NVIC_EnableIRQ) and serviced here via tud_int_handler.
+ *
+ * Clone-core note: this board's OTG_FS leaves GSNPSID + GHWCFG1..4 unimplemented (read 0), like the
+ * GD32VF103. Three minimal vendored-TinyUSB patches tolerate that and make the FS PHY decode packets:
+ *   - check_dwc2 accepts a zero Synopsys ID (dwc2_common.c);
+ *   - dwc2_ep_count falls back to DWC2_EP_MAX when GHWCFG2==0 (dcd_dwc2.c);
+ *   - dwc2_stm32_gccfg_cfg powers VBUSASEN/VBUSBSEN/SOFOUTEN for the clone (dwc2_stm32.h). Without the
+ *     last one the PHY detects reset SE0 + enum-done but receives no packets (RXFLVL/SOF stay 0);
+ *     stock PHY init sets GCCFG=0x3D0000 and the clone needs those VBUS-sense comparators powered.
  */
 #include "usb_hw.h"
 #include "tusb.h"
 
 #define RCC_AHB1ENR (*(volatile uint32_t *)0x40023830u)
-#define RCC_AHB2ENR (*(volatile uint32_t *)0x40023838u)
+#define RCC_AHB2ENR (*(volatile uint32_t *)0x40023834u)   /* AHB2ENR=0x34 (0x38 is AHB3ENR!); bit7=OTGFSEN */
 #define GPIOA_BASE  0x40020000u
 #define REG(b, o)   (*(volatile uint32_t *)((b) + (o)))
 #define GPIOA_MODER   REG(GPIOA_BASE, 0x00u)

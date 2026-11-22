@@ -10,12 +10,16 @@
  */
 #include "qca7005.h"
 #include "tick.h"
+#include "uart_dbg.h"   /* TEMP debug: stage markers to localize the bring-up stall */
 
 #define IWDG_KR       (*(volatile uint32_t *)0x40003000u)
 /* Bring-up delay: feed the IWDG (harmless if disabled) so the blocking modem poll cannot trip
  * the watchdog when the boot left it running; the stock RTOS feeds it in the idle task. Needs
- * tick_init() + interrupts enabled first (tick_delay_ms waits on the SysTick ISR counter). */
-static void bu_delay(uint32_t ms) { IWDG_KR = 0x0000AAAAu; tick_delay_ms(ms); }
+ * tick_init() + interrupts enabled first (tick_delay_ms waits on the SysTick ISR counter).
+ * The idle hook (set by main to usb_cdc_task) keeps the USB CDC revert console enumerating during
+ * the potentially long modem bring-up, so CDC is available even if the modem is slow/absent. */
+static void (*idle_hook)(void);
+static void bu_delay(uint32_t ms) { IWDG_KR = 0x0000AAAAu; uart_dbg_poll_reset(); if (idle_hook) idle_hook(); tick_delay_ms(ms); }
 
 #define RCC_AHB1ENR   (*(volatile uint32_t *)0x40023830u)
 #define RCC_APB2ENR   (*(volatile uint32_t *)0x40023844u)
@@ -263,14 +267,17 @@ static int qca_mac_read(void)
 /* ---- CPU-ready poll (0x080895A8): sig 400×10 ms, bit6 1000×10 ms, reg-init, MAC-read ×3 ---- */
 static int qca_cpu_ready(void)
 {
+    uart_dbg_puts("QSIG\r\n");                 /* TEMP debug: entering sig poll */
     int sig_ok = 0;
     for (int i = 0; i < 400; i++) {
         (void)qca7005_reg_read(QCA_REG_CPU_READY);  /* first read discarded */
         if (qca7005_reg_read(QCA_REG_CPU_READY) == QCA_CPU_READY_SIG) { sig_ok = 1; break; }
         bu_delay(10);
     }
+    uart_dbg_puts(sig_ok ? "QSOK\r\n" : "QSTO\r\n");  /* TEMP debug: sig poll done */
     if (!sig_ok) return 1;
 
+    uart_dbg_puts("QBIT\r\n");                 /* TEMP debug: entering bit6 poll */
     int ready = 0;
     for (int i = 0; i < 1000; i++) {
         if (qca7005_reg_read(QCA_REG_INT_STATUS) & QCA_INT_CPU_READY) { ready = 1; break; }
@@ -278,9 +285,11 @@ static int qca_cpu_ready(void)
     }
     if (!ready) return 2;
 
+    uart_dbg_puts("QINI\r\n");                 /* TEMP debug: reg-init */
     int rc = qca_reg_init();
     if (rc != 0) return rc;
 
+    uart_dbg_puts("QMAC\r\n");                 /* TEMP debug: MAC-read */
     for (int i = 0; i < 3; i++) {                   /* MAC-read ×3 retries */
         if (qca_mac_read() == 0) return 0;
     }
@@ -325,16 +334,25 @@ int qca7005_init(void)
     rx_poll_cnt = 0;
     rx_cb = 0;
     qca_spi_init();
+    uart_dbg_puts("QSPI\r\n");                 /* TEMP debug: SPI1 configured */
 
     /* PC5 reset pulse: low 2 ms → high 2 ms (stock 0x08089624), then CPU-ready bring-up. */
     RESET_LOW();
-    bu_delay(2);
+    IWDG_KR = 0x0000AAAAu;
+    uart_dbg_puts("R1\r\n");                   /* TEMP debug: before idle_hook */
+    if (idle_hook) idle_hook();
+    uart_dbg_puts("R2\r\n");                   /* TEMP debug: after idle_hook, before tick_delay */
+    tick_delay_ms(2);
+    uart_dbg_puts("R3\r\n");                   /* TEMP debug: after tick_delay */
     RESET_HIGH();
     bu_delay(2);
+    uart_dbg_puts("QRST\r\n");                 /* TEMP debug: reset pulse delays returned */
     return qca_cpu_ready();
 }
 
 void qca7005_set_rx_cb(qca7005_rx_cb cb) { rx_cb = cb; }
+
+void qca7005_set_idle_hook(void (*fn)(void)) { idle_hook = fn; }
 
 int qca7005_frame_send(const uint8_t *frame, uint16_t len)
 {

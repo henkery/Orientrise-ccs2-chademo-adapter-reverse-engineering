@@ -75,6 +75,10 @@ typedef void (*qca7005_rx_cb)(const uint8_t *frame, uint16_t len);
  * timeouts: CPU-ready sig 400×10 ms, bit6 1000×10 ms, MAC-read 20×10 ms ×3). */
 int  qca7005_init(void);
 void qca7005_set_rx_cb(qca7005_rx_cb cb);
+/* Idle hook invoked inside the blocking bring-up delays (bu_delay) so another subsystem (the USB
+ * CDC revert console) can be serviced while the modem CPU-ready/MAC polls run. NULL = no-op. Set
+ * before qca7005_init; the hook must be safe to call from the bring-up context (interrupts on). */
+void qca7005_set_idle_hook(void (*fn)(void));
 /* Send an Ethernet frame (mutex-free buf-WRITE). Returns 0 ok, 1 if no TX space. */
 int  qca7005_frame_send(const uint8_t *frame, uint16_t len);
 /* Drain the RX ring, parse packets, invoke the RX callback per frame. Returns bytes read. */

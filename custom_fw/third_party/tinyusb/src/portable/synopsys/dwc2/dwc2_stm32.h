@@ -319,7 +319,17 @@ static inline void dwc2_stm32_gccfg_cfg(dwc2_regs_t* dwc2, bool vbus_sensing, bo
         gccfg |= STM32_GCCFG_VBUSBSEN;
       } else {
         gccfg |= STM32_GCCFG_NOVBUSSENS;
-        gccfg &= ~(STM32_GCCFG_VBUSBSEN | STM32_GCCFG_VBUSASEN);
+        // Orientrise KM-CCS2CHAdeMO-1 clone (GSNPSID==0, like GD32VF103): the FS PHY decodes NO
+        // packets (reset SE0 + enum-done detected, but RXFLVL/SOF never fire) unless the VBUS-sense
+        // comparators and SOF output are powered. Stock PHY init (firmware.bin f+0x039426) sets
+        // PWRDWN|VBUSASEN|VBUSBSEN then NOVBUSSENS then SOFOUTEN(bit20) => GCCFG=0x3D0000. Genuine
+        // STM32F4 clears VBUSASEN/VBUSBSEN in no-sensing mode; the clone needs them set. Match stock
+        // for the clone only (gsnpsid==0); genuine parts keep the upstream clear behavior.
+        if (dwc2->gsnpsid == 0) {
+          gccfg |= STM32_GCCFG_VBUSBSEN | STM32_GCCFG_VBUSASEN | (1u << 20);
+        } else {
+          gccfg &= ~(STM32_GCCFG_VBUSBSEN | STM32_GCCFG_VBUSASEN);
+        }
       }
     }
   } else if (dwc2->guid < 0x5000) {

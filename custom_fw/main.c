@@ -40,6 +40,7 @@
 #include <stdint.h>
 #include "rcc.h"
 #include "gpio.h"
+#include "uart_dbg.h"
 #include "can.h"
 #include "chademo.h"
 #include "tick.h"
@@ -159,52 +160,92 @@ static void ccs2_rx_dispatch(const uint8_t *frame, uint16_t len)
     ccs2_rx(frame, len);   /* EtherType dispatch: MME 0x88E1 -> SLAC; IPv6 0x86DD -> live transport */
 }
 
-static void enable_irq(void)
+static void __attribute__((noinline)) enable_irq(void)
 {
+    /* The boot jumps with interrupts masked via BASEPRI=0xF0 + PRIMASK=1 (not just PRIMASK).
+     * cpsie i alone leaves BASEPRI set, which keeps SysTick (and any nonzero-priority IRQ) masked
+     * -> tick_delay_ms hangs. Clear PRIMASK + BASEPRI + FAULTMASK. MUST stay noinline so the clear
+     * runs in a real call frame rather than being folded into main's prologue. */
     __asm__ volatile ("cpsie i" ::: "memory");
+    __asm__ volatile ("msr basepri, %0" :: "r"(0u) : "memory");
+    __asm__ volatile ("cpsie f" ::: "memory");
+}
+
+/* TEMP debug: catch a CPU fault instead of silently hanging in Default_Handler. Print HF and
+ * stay alive (feed IWDG) so the trace shows a fault rather than a watchdog reset loop. */
+void HardFault_Handler(void)
+{
+    uart_dbg_puts("HF\r\n");
+    for (;;) { IWDG_KR = IWDG_FEED; }
 }
 
 void main(void)
 {
+    IWDG_KR = IWDG_FEED;
+    uart_dbg_init_early(); uart_dbg_puts("START\r\n");   /* HSI 16 MHz, before rcc_init */
     rcc_init();          /* HSE 8 MHz -> PLL 168 MHz; APB1 42 / APB2 84 MHz */
+    uart_dbg_init(); uart_dbg_puts("RCC\r\n");           /* re-time USART1 for 84 MHz APB2 */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("GPIO\r\n");
     gpio_safe_init();    /* all power pins -> SAFE/de-asserted (contactors open, no HV) */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("HV\r\n");
     hv_cal_ok = (hv_init() == 0);  /* SPI4 + factory cal + ADC1/2/DMA2/TIM8 front-end (§5.21) */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("CA\r\n");
     ca_store_init();     /* PnC CA cert store: read ext-SPI master + populate Root-cert ptr array
                           * (Agent N / §5.9). SPI4 is up (hv_init); the Root count gates SDP TLS.
                           * Communication only — no power drive. */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("CPCAP\r\n");
     cp_capture_init();   /* CP PWM TIM4 input-capture front-end (PD12 AF2, measurement only, §5.9) */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("CPADC\r\n");
     cp_adc_init();       /* CP/PP ADC3 analog front-end (PA0/1/2+PC2, DMA2 Stream1, shares TIM8, §5.9) */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("CAN\r\n");
     can_init();          /* CAN1 500k + acceptance filter + RX0 interrupt (NVIC)     */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("CHADEMO\r\n");
     chademo_init();      /* zero the vehicle-data struct + watchdog timestamps       */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("STM\r\n");
     charge_stm_init();   /* inert CHAdeMO charge state machine (shadow, §5.17)       */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("CC\r\n");
     current_ctrl_init(); /* inert H102 output-current control law (shadow, §5.21 E)  */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("RAMP\r\n");
     current_ramp_init(); /* inert G11 periodic EVMaximumCurrentLimit ramp (shadow, §5.17) */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("TICK\r\n");
     tick_init();         /* 100 Hz SysTick OS tick + 100 kHz TIM2 timebase   */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("IRQ\r\n");
     enable_irq();        /* boot jumped with interrupts masked (cpsid i)     */
-
-    /* CCS2 EVSE-side subsystem — QCA7005 PLC transport bring-up (§5.9). Blocking (IWDG-fed
-     * delays), so it runs after tick_init + enable_irq. Communication only — drives no power
-     * pin. If no modem is present it times out (~4 s) and reports failure; the app continues.
-     * The SLAC/SDP/DIN session layers above it are built next. */
-    ccs2_qca_ok = (qca7005_init() == 0);
-    qca7005_set_rx_cb(ccs2_rx_dispatch);
-    hw_rng_init();                          /* STM32 HW-RNG (0x50060800) -> mbedTLS f_rng */
-    v2g_stack_set_rng(hw_rng_f_rng, NULL);  /* recovered RNG source (NOT ctr_drbg) */
-    ccs2_init();         /* SLAC + CP + SDP + DIN70121 + EVCC controller + transport (comm only) */
-    /* Derive the adapter link-local IPv6 + Ethernet src MAC from the QCA7005 PIB MAC
-     * (netif_create_ip6_linklocal_address 0x08090D68 / ethernetif_init from_mac=1). */
-    if (qca7005_mac()) v2g_net_set_local_mac(qca7005_mac());
 
     /* USB device-CDC revert console (§5.15c): OTG_FS device mode + TinyUSB CDC. Communication only —
      * drives no power pin. Receives a stock SERVICE.UPG, streams it to the SPI update pool + writes
      * the boot xPAI command so a reset reverts to stock (brick-safe). The port also charges the
-     * internal battery (device/sink VBUS role); no VBUS-sense pin (PA9/PA10 = USART1). */
+     * internal battery (device/sink VBUS role); no VBUS-sense pin (PA9/PA10 = USART1).
+     * Brought up BEFORE the blocking QCA7005 bring-up below so the revert console enumerates even if
+     * the modem is slow/absent (qca7005_init can block ~14 s on a bare bench). The CDC stack is kept
+     * serviced during that bring-up by the qca7005 idle hook (bu_delay -> usb_cdc_task). */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("USBHW\r\n");
     usb_hw_init();
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("USBCDC\r\n");
     usb_cdc_init();
+    qca7005_set_idle_hook(usb_cdc_task);    /* service CDC during the blocking modem bring-up */
+
+    /* CCS2 EVSE-side subsystem — QCA7005 PLC transport bring-up (§5.9). Blocking (IWDG-fed
+     * delays), so it runs after tick_init + enable_irq. Communication only — drives no power
+     * pin. If no modem is present it times out and reports failure; the app continues.
+     * The SLAC/SDP/DIN session layers above it are built next. */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("QCA\r\n");
+    ccs2_qca_ok = (qca7005_init() == 0);
+    qca7005_set_rx_cb(ccs2_rx_dispatch);
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("RNG\r\n");
+    hw_rng_init();                          /* STM32 HW-RNG (0x50060800) -> mbedTLS f_rng */
+    v2g_stack_set_rng(hw_rng_f_rng, NULL);  /* recovered RNG source (NOT ctr_drbg) */
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("CCS2\r\n");
+    ccs2_init();         /* SLAC + CP + SDP + DIN70121 + EVCC controller + transport (comm only) */
+    /* Derive the adapter link-local IPv6 + Ethernet src MAC from the QCA7005 PIB MAC
+     * (netif_create_ip6_linklocal_address 0x08090D68 / ethernetif_init from_mac=1). */
+    if (qca7005_mac()) v2g_net_set_local_mac(qca7005_mac());
+    IWDG_KR = IWDG_FEED; uart_dbg_puts("LOOP\r\n");
 
     uint32_t next = tick_get();
     for (;;) {
         IWDG_KR = IWDG_FEED;   /* keep watchdog happy; no-op if disabled */
+        uart_dbg_poll_reset(); /* TEMP bench: RX "RST" -> reset into boot (hands-free reflash) */
         heartbeat++;           /* 100 Hz proof-of-life counter           */
         usb_cdc_task();        /* TinyUSB device stack + CDC revert console (§5.15c) */
 

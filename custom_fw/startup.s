@@ -48,7 +48,11 @@ _vectors:
   .word Default_Handler
   .endr
   .word TIM4_IRQHandler        @ IRQ30 (CP PWM input capture, cp_capture.c)
-  .rept 25                     @ IRQ31..55
+  .rept 6                      @ IRQ31..36
+  .word Default_Handler
+  .endr
+  .word USART1_IRQHandler      @ IRQ37 (uart_dbg RX reset-command ring buffer)
+  .rept 18                     @ IRQ38..55
   .word Default_Handler
   .endr
   .word DMA2_Stream0_IRQHandler @ IRQ56 (HV ADC DMA accumulation, adc.c)
@@ -148,6 +152,8 @@ Default_Handler:
   .thumb_set CAN1_SCE_IRQHandler, Default_Handler
   .weak TIM4_IRQHandler
   .thumb_set TIM4_IRQHandler, Default_Handler
+  .weak USART1_IRQHandler
+  .thumb_set USART1_IRQHandler, Default_Handler
   .weak DMA2_Stream0_IRQHandler
   .thumb_set DMA2_Stream0_IRQHandler, Default_Handler
   .weak DMA2_Stream1_IRQHandler

@@ -155,7 +155,11 @@ static bool check_dwc2(dwc2_regs_t* dwc2) {
 #if !TU_CHECK_MCU(OPT_MCU_GD32VF103)
   enum { GSNPSID_ID_MASK = TU_GENMASK(31, 16) };
   const uint32_t gsnpsid = dwc2->gsnpsid & GSNPSID_ID_MASK;
-  TU_ASSERT(gsnpsid == DWC2_OTG_ID || gsnpsid == DWC2_FS_IOT_ID || gsnpsid == DWC2_HS_IOT_ID);
+  // Orientrise KM-CCS2CHAdeMO-1 clone: the OTG_FS core leaves GSNPSID + GHWCFG1..4 unimplemented
+  // (read 0, write ignored), exactly like GD32VF103. The core is otherwise functional (GUID reads
+  // 0x1000, host USB reset is detected, core soft-reset completes), so tolerate a zero Synopsys ID
+  // instead of aborting tud_init. Genuine STM32F4 still reports 0x4F54xxxx and passes unchanged.
+  TU_ASSERT(gsnpsid == 0 || gsnpsid == DWC2_OTG_ID || gsnpsid == DWC2_FS_IOT_ID || gsnpsid == DWC2_HS_IOT_ID);
 #endif
 
   return true;

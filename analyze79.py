@@ -122,6 +122,31 @@ if cfgr is not None:
 if acr is not None:
     print(f"  FLASH_ACR=0x{acr:03X}: latency={acr&7} WS (correct for 168 MHz @ 3.3 V)")
 
+# USB/48 MHz clock routing: DCKCFGR(0x8C) CK48MISEL bit27 (0=PLLQ,1=PLLSAI), PLLSAICFGR(0x88),
+# PLLI2SCFGR(0x84). The stock app runs USB (usbdisk) so its 48 MHz source is proven.
+for off, nm in ((0x84, 'PLLI2SCFGR'), (0x88, 'PLLSAICFGR'), (0x8C, 'DCKCFGR'), (0x90, 'CKGATENR')):
+    v = regs.get((0x40023800, off))
+    if v is not None:
+        extra = ''
+        if off == 0x8C:
+            extra = f"  CK48MISEL(bit27)={'PLLSAI' if (v>>27)&1 else 'PLLQ'}"
+        print(f"  {nm}(0x{off:02X})=0x{v:08X}{extra}")
+    else:
+        print(f"  {nm}(0x{off:02X})=<not written in clock-config fn>")
+
+# USB peripheral clock enable: AHB1ENR(0x30) bit29=OTGHSLEN/bit30=OTGHSULPIEN; AHB2ENR(0x34) bit7=OTGFSEN.
+for off, nm in ((0x30, 'AHB1ENR'), (0x34, 'AHB2ENR')):
+    v = regs.get((0x40023800, off))
+    if v is not None:
+        extra = ''
+        if off == 0x30:
+            extra = f"  OTGHSLEN(29)={(v>>29)&1} OTGHSULPIEN(30)={(v>>30)&1}"
+        if off == 0x34:
+            extra = f"  OTGFSEN(7)={(v>>7)&1}"
+        print(f"  {nm}(0x{off:02X})=0x{v:08X}{extra}")
+    else:
+        print(f"  {nm}(0x{off:02X})=<not written in clock-config fn>")
+
 print("\n== 2. CAN handle-table bases + load-site counts; generic-open filter skip ==")
 CAN = {0x40006400:'CAN1', 0x40006800:'CAN2'}
 sites = {k:[] for k in CAN.values()}

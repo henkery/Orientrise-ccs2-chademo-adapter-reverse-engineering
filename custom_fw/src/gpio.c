@@ -9,6 +9,13 @@
  *   active-HIGH pins -> LOW  : PE7, PE8 (CHAdeMO d1/d2), PD8 (BatteryPower), PB10/PB11 (PreCharge)
  *   active-LOW  pins -> HIGH : PC9 (BatteryCharge), PD3 + PE4 (e-lock motor)
  *
+ * Board power-hold / status (NOT power-stage): PB14 + PE15 are driven HIGH at boot exactly as the
+ * stock GPIO init does (analyze74: PB14 OUT lvl1, PE15 OUT PU lvl1). The stock firmware asserts these
+ * to latch the board power rail on (power-hold) and drive the status LED; leaving them floating (the
+ * prior custom init) let the power IC drop the rail ~1 s after boot, so the app never stayed up long
+ * enough to enumerate USB. Matching the stock HIGH state is safe — neither pin gates a contactor,
+ * precharge, or charge path.
+ *
  * OTYPER/OSPEEDR/PUPDR are left at reset defaults (push-pull / low-speed / no-pull), which is
  * correct for relay/contactor drive. Runs with interrupts masked (before enable_irq in main).
  */
@@ -37,17 +44,17 @@ void gpio_safe_init(void)
     (void)RCC_AHB1ENR;   /* short delay after clock enable before register access */
 
     /* 1) Pre-load safe output latches (pins still reset-state inputs). */
-    BSRR(GPIOB_BASE) = RESET(10) | RESET(11);                 /* PB10/PB11 LOW (precharge open) */
+    BSRR(GPIOB_BASE) = RESET(10) | RESET(11) | SET(14);       /* PB10/PB11 LOW (precharge open); PB14 HIGH (power-hold/LED, stock) */
     BSRR(GPIOC_BASE) = SET(9);                                /* PC9 HIGH (charge off, active-low) */
     BSRR(GPIOD_BASE) = SET(3) | RESET(8);                     /* PD3 HIGH (e-lock off), PD8 LOW (contactor open) */
-    BSRR(GPIOE_BASE) = SET(4) | RESET(7) | RESET(8);          /* PE4 HIGH (e-lock off), PE7/PE8 LOW (CHAdeMO disabled) */
+    BSRR(GPIOE_BASE) = SET(4) | RESET(7) | RESET(8) | SET(15);/* PE4 HIGH (e-lock off), PE7/PE8 LOW (CHAdeMO off); PE15 HIGH (power-hold/LED, stock) */
 
     /* 2) Switch each power pin to general-purpose output; it now drives the safe latch. */
-    MODER(GPIOB_BASE) = (MODER(GPIOB_BASE) & ~(OUT_MASK(10) | OUT_MASK(11)))
-                        | OUT_VAL(10) | OUT_VAL(11);
+    MODER(GPIOB_BASE) = (MODER(GPIOB_BASE) & ~(OUT_MASK(10) | OUT_MASK(11) | OUT_MASK(14)))
+                        | OUT_VAL(10) | OUT_VAL(11) | OUT_VAL(14);
     MODER(GPIOC_BASE) = (MODER(GPIOC_BASE) & ~OUT_MASK(9)) | OUT_VAL(9);
     MODER(GPIOD_BASE) = (MODER(GPIOD_BASE) & ~(OUT_MASK(3) | OUT_MASK(8)))
                         | OUT_VAL(3) | OUT_VAL(8);
-    MODER(GPIOE_BASE) = (MODER(GPIOE_BASE) & ~(OUT_MASK(4) | OUT_MASK(7) | OUT_MASK(8)))
-                        | OUT_VAL(4) | OUT_VAL(7) | OUT_VAL(8);
+    MODER(GPIOE_BASE) = (MODER(GPIOE_BASE) & ~(OUT_MASK(4) | OUT_MASK(7) | OUT_MASK(8) | OUT_MASK(15)))
+                        | OUT_VAL(4) | OUT_VAL(7) | OUT_VAL(8) | OUT_VAL(15);
 }

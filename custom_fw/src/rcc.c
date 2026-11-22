@@ -18,11 +18,16 @@
 #define FLASH_ACR    (*(volatile uint32_t *)0x40023C00u)
 #define PWR_CR       (*(volatile uint32_t *)0x40007000u)
 
+#define RCC_CR_HSION   (1u << 0)
+#define RCC_CR_HSIRDY  (1u << 1)
 #define RCC_CR_HSEON   (1u << 16)
 #define RCC_CR_HSERDY  (1u << 17)
 #define RCC_CR_PLLON   (1u << 24)
 #define RCC_CR_PLLRDY  (1u << 25)
+#define RCC_CFGR_SW_MASK  (3u << 0)
+#define RCC_CFGR_SW_HSI   (0u << 0)
 #define RCC_CFGR_SW_PLL   (2u << 0)
+#define RCC_CFGR_SWS_HSI  (0u << 2)
 #define RCC_CFGR_SWS_PLL  (2u << 2)
 #define RCC_CFGR_SWS_MASK (3u << 2)
 #define RCC_APB1ENR_PWREN (1u << 28)
@@ -35,9 +40,23 @@ void rcc_init(void)
     (void)RCC_APB1ENR;
     PWR_CR |= PWR_CR_VOS;
 
+    /* Ensure HSI is running (safe SYSCLK source while we reprogram the PLL). */
+    RCC_CR |= RCC_CR_HSION;
+    while (!(RCC_CR & RCC_CR_HSIRDY)) { }
+
     /* Start HSE (8 MHz crystal) and wait ready. */
     RCC_CR |= RCC_CR_HSEON;
     while (!(RCC_CR & RCC_CR_HSERDY)) { }
+
+    /* The boot leaves the PLL running as SYSCLK (it does NOT deinit clocks before the jump).
+     * PLLCFGR is write-protected while PLLON=1, so programming it directly is silently ignored
+     * and SYSCLK would stay at the boot's PLL frequency (wrong APB2 -> garbled UART baud, wrong
+     * PLLQ -> no 48 MHz USB clock -> CDC fails, wrong SysTick -> init stalls -> IWDG reset loop).
+     * Switch SYSCLK to HSI, disable the PLL, wait it unlock, THEN reprogram. */
+    RCC_CFGR = (RCC_CFGR & ~RCC_CFGR_SW_MASK) | RCC_CFGR_SW_HSI;
+    while ((RCC_CFGR & RCC_CFGR_SWS_MASK) != RCC_CFGR_SWS_HSI) { }
+    RCC_CR &= ~RCC_CR_PLLON;
+    while (RCC_CR & RCC_CR_PLLRDY) { }
 
     /* Flash latency for 168 MHz @ 3.3 V: 5 WS + I/D cache + prefetch. */
     FLASH_ACR = 0x705u;
