@@ -188,6 +188,11 @@ int main(void)
     r = feed_line("qca");
     CHECK(r.event == CDC_PROTO_QCA, "lowercase qca -> QCA");
     CHECK(cdc_proto_in_upload() == 0, "QCA stays CMD (no upload)");
+    r = feed_line("QCAMAC");
+    CHECK(r.event == CDC_PROTO_QCAMAC, "QCAMAC -> QCAMAC event");
+    r = feed_line("qcamac");
+    CHECK(r.event == CDC_PROTO_QCAMAC, "lowercase qcamac -> QCAMAC");
+    CHECK(cdc_proto_in_upload() == 0, "QCAMAC stays CMD (no upload)");
 
     /* --- FDUMP parse (ext-flash hex dump) --- */
     r = feed_line("FDUMP 1000 100");

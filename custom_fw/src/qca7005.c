@@ -368,6 +368,51 @@ const uint8_t *qca7005_mac(void) { return mac_valid ? mac_addr : 0; }
  * 3 MAC-read failed / 4 reg-init sig mismatch / -1 init not run. */
 int qca7005_init_rc(void) { return init_rc; }
 
+/* ---- bench MAC-read probe: re-send the REQ with a 1 s poll, capture the raw CNF (valid or not) ----
+ * Distinguishes boot-timing (modem answers once fully up) from a silent/misaddressed modem. The
+ * passive QCA read can show RXAVAIL 0 simply because qca7005_service() drains delayed frames into
+ * the v2g callback; this probe re-installs a capture callback and reports the first frame verbatim. */
+static uint8_t  probe_resp[64];
+static uint16_t probe_len;
+static void probe_cb(const uint8_t *frame, uint16_t len)
+{
+    if (!probe_len) {
+        probe_len = (len < sizeof(probe_resp)) ? len : (uint16_t)sizeof(probe_resp);
+        for (uint16_t i = 0; i < probe_len; i++)
+            probe_resp[i] = frame[i];
+    }
+    if (qca7005_mac_cnf_valid(frame, len)) {
+        for (uint16_t i = 0; i < QCA_MAC_LEN; i++)
+            mac_addr[i] = frame[QCA_ETH_SRC + i];
+        mac_valid = 1;
+    }
+}
+/* Returns -1 no TX space / 0 silent (no frame in 1 s) / 1 a frame came back (see probe_resp). */
+int qca7005_mac_probe(void)
+{
+    uint8_t req[QCA_MAC_READ_LEN];
+    qca7005_build_mac_req(req);
+    probe_len = 0;
+    for (uint16_t i = 0; i < sizeof(probe_resp); i++)
+        probe_resp[i] = 0;
+    qca7005_rx_cb save = rx_cb;
+    rx_cb = probe_cb;
+    int sent = qca7005_frame_send(req, QCA_MAC_READ_LEN);
+    int got = 0;
+    for (int i = 0; i < 100 && sent == 0; i++) {   /* 100 × 10 ms = 1 s */
+        bu_delay(10);
+        (void)qca7005_rx_dispatch();
+        if (probe_len) { got = 1; break; }
+    }
+    rx_cb = save;
+    return (sent != 0) ? -1 : got;
+}
+const uint8_t *qca7005_mac_probe_resp(uint16_t *len)
+{
+    if (len) *len = probe_len;
+    return probe_resp;
+}
+
 /* ---- RX ring dispatch (0x0808938A): read ring, parse packets, invoke callback ---- */
 int qca7005_rx_dispatch(void)
 {

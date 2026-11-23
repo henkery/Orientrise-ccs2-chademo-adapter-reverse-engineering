@@ -188,14 +188,15 @@ def do_readback(ser, command):
     return line
 
 
-def do_multiline(ser, cmd):
-    """Send a command whose response spans several lines; read until a quiet gap."""
+def do_multiline(ser, cmd, first_timeout=0.5):
+    """Send a command whose response spans several lines; read until a quiet gap. first_timeout
+    covers a slow first line (e.g. QCAMAC polls the modem up to 1 s before printing)."""
     ser.reset_input_buffer()
     ser.write((cmd + "\n").encode())
     ser.flush()
     lines = []
     while True:
-        line = read_line(ser, 0.5)
+        line = read_line(ser, first_timeout if not lines else 0.5)
         if line is None:
             break
         lines.append(line)
@@ -275,7 +276,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["ping", "status", "help", "revert", "abort",
                                         "meas", "can", "net", "stm", "caldump", "calscan",
-                                        "calfind", "fdump", "plc", "qca", "injc", "inje"])
+                                        "calfind", "fdump", "plc", "qca", "qcamac", "injc", "inje"])
     ap.add_argument("file", nargs="?", help="UPG file for 'revert' / raw frame file for 'inje'")
     ap.add_argument("tokens", nargs="*", help="injc: <id> <dlc> [b0..bN] (hex)")
     ap.add_argument("--hex", help="inje: raw frame as a hex string (instead of a file)")
@@ -307,6 +308,8 @@ def main():
             do_multiline(ser, "PLC")
         elif args.command == "qca":
             do_multiline(ser, "QCA")
+        elif args.command == "qcamac":
+            do_multiline(ser, "QCAMAC", first_timeout=2.0)
         elif args.command == "fdump":
             do_fdump(ser, ([args.file] if args.file else []) + args.tokens)
         elif args.command == "injc":

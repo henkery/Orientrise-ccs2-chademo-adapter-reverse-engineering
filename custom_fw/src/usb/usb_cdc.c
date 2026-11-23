@@ -488,6 +488,31 @@ static void do_qca(void)
     p = fmt_s(b, p, "\r\n"); b[p] = '\0'; cdc_send(b);
 }
 
+/* Active MAC-read probe: re-send the REQ, poll 1 s, dump the raw CNF (valid or not). RC -1 = no TX
+ * space / 0 = modem silent / 1 = a frame came back. RAW shows the first frame so a misaddressed or
+ * error-status CNF is visible even when MAC stays NONE. INERT (local MME only, no power drive). */
+static void do_qcamac(void)
+{
+    char b[160];
+    uint32_t p, i;
+    uint16_t rlen = 0;
+    int rc = qca7005_mac_probe();
+    const uint8_t *resp = qca7005_mac_probe_resp(&rlen);
+    const uint8_t *mac = qca7005_mac();
+
+    p = fmt_s(b, 0, "QCAMAC RC "); p = fmt_i32(b, p, rc);
+    p = fmt_s(b, p, " LEN ");      p = fmt_u32(b, p, rlen);
+    p = fmt_s(b, p, " MAC ");
+    if (mac) { for (i = 0; i < 6u; i++) p = fmt_hex8(b, p, mac[i]); }
+    else     { p = fmt_s(b, p, "NONE"); }
+    p = fmt_s(b, p, "\r\n"); b[p] = '\0'; cdc_send(b);
+
+    p = fmt_s(b, 0, "QCAMAC RAW");
+    for (i = 0; i < rlen && i < 32u; i++) { p = fmt_s(b, p, " "); p = fmt_hex8(b, p, resp[i]); }
+    if (rlen == 0) p = fmt_s(b, p, " NONE");
+    p = fmt_s(b, p, "\r\n"); b[p] = '\0'; cdc_send(b);
+}
+
 static void do_injc(const cdc_proto_result_t *r)
 {
     can_frame_t f;
@@ -646,6 +671,10 @@ void usb_cdc_task(void)
                 do_qca();
                 break;
 
+            case CDC_PROTO_QCAMAC:
+                do_qcamac();
+                break;
+
             case CDC_PROTO_PING:
                 cdc_send("PONG\r\n");
                 break;
@@ -656,7 +685,7 @@ void usb_cdc_task(void)
 
             case CDC_PROTO_HELP:
                 cdc_send("CMDS: PING STATUS HELP ABORT REVERT <n> MEAS CAN NET STM CALDUMP CALSCAN "
-                         "CALFIND FDUMP <addr> <len> PLC QCA INJC <id> <dlc> <bytes> INJE <n>\r\n");
+                         "CALFIND FDUMP <addr> <len> PLC QCA QCAMAC INJC <id> <dlc> <bytes> INJE <n>\r\n");
                 break;
 
             case CDC_PROTO_ABORT:

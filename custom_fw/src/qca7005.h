@@ -90,6 +90,11 @@ const uint8_t *qca7005_mac(void);
 /* Last bring-up result (bench QCA diag): 0 ok / 1 sig timeout / 2 bit6 timeout / 3 MAC-read fail /
  * 4 reg-init sig mismatch / -1 not run. */
 int qca7005_init_rc(void);
+/* Bench MAC-read probe: re-send the MAC-read REQ, poll 1 s, capture the first raw CNF frame.
+ * Returns -1 no TX space / 0 silent / 1 frame received. Sets mac_valid if the CNF validates. */
+int qca7005_mac_probe(void);
+/* Raw frame captured by the last qca7005_mac_probe (up to 64 B); *len = bytes captured (0 if none). */
+const uint8_t *qca7005_mac_probe_resp(uint16_t *len);
 /* Direct SPI register access (for upper-layer diagnostics / SLAC). */
 uint16_t qca7005_reg_read(uint16_t addr);
 void     qca7005_reg_write(uint16_t addr, uint16_t val);
