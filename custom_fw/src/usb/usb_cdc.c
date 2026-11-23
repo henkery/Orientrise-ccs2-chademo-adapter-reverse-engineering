@@ -22,6 +22,7 @@
 #include "cp_capture.h"
 #include "cp_adc.h"
 #include "hv.h"
+#include "adc.h"
 #include "chademo.h"
 #include "v2g_net.h"
 #include "charge_stm.h"
@@ -106,6 +107,8 @@ static void do_meas(void)
     p = fmt_i32(b, p, hv_get_raw());
     b[p++] = ' ';
     p = fmt_u32(b, p, (uint32_t)(hv_cal_valid() ? 1 : 0));
+    p = fmt_s(b, p, " HVRAW ");
+    p = fmt_i32(b, p, adc_get_live_raw());   /* live ADC counts — observable even without cal */
     p = fmt_s(b, p, " CP ");
     p = fmt_u32(b, p, cp_capture_duty());
     b[p++] = ' ';

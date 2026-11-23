@@ -60,6 +60,24 @@ def func_size(name):
     return 0
 
 
+def bl_called_names(func):
+    """Symbol-aware set of BL target names within `func`, via objdump -d.
+
+    objdump honors the ARM $t/$d mapping symbols, so inline literal pools are emitted as data and
+    skipped. A raw Capstone linear sweep disassembles those pool words as instructions and desyncs
+    partway through a large function (e.g. main's loop body), yielding false-negative 'main calls X'
+    results whenever the linker layout shifts. Symbol-aware disassembly is layout-stable.
+    """
+    out = subprocess.check_output(
+        ["arm-none-eabi-objdump", "-d", "--disassemble=" + func, "app.elf"], text=True)
+    names = set()
+    for line in out.splitlines():
+        m = re.search(r"\bbl(?:\.w)?\s+[0-9a-f]+\s+<([^>]+)>", line)
+        if m:
+            names.add(m.group(1).split("+")[0])
+    return names
+
+
 def main():
     with open("app.bin", "rb") as f:
         fw = f.read()
@@ -237,18 +255,11 @@ def main():
     for name, vs in safety_fail:
         print("   peripheral ref in %s: %s" % (name, ", ".join(vs)))
 
-    # --- integration: main bl targets ---
+    # --- integration: main bl targets (symbol-aware; see bl_called_names re: linear-sweep desync) ---
     main_addr = syms.get("main")
     check(main_addr is not None, "main symbol present")
     if main_addr:
-        size = func_size("main")
-        code = fw[off(main_addr):off(main_addr) + size]
-        bl_targets = set()
-        for ins in md.disasm(code, main_addr):
-            if ins.mnemonic.split(".")[0] == "bl" and ins.operands and ins.operands[0].type == 2:
-                bl_targets.add(ins.operands[0].imm)
-        addr_to_name = {a: n for n, a in syms.items()}
-        called = {addr_to_name.get(t, "") for t in bl_targets}
+        called = bl_called_names("main")
         for want in ("ccs2_init", "ccs2_step", "ccs2_fill_current_ctrl", "cp_step",
                      "din_session_get", "v2g_net_get", "v2g_net_tcp_send", "v2g_net_set_local_mac",
                      "cp_capture_init", "cp_capture_duty", "cp_capture_period",
