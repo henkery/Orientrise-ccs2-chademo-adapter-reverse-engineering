@@ -118,17 +118,41 @@ static uint8_t spi4_rdsr(void)
 
 static void spi4_wait_busy(void)
 {
+    /* The first RDSR after CS↑ can race the WIP assertion at 42 MHz: polling only for WIP=0
+     * exits before the erase/program has even started, so the NEXT command is issued while the
+     * flash is busy and gets ignored (incomplete erase / dropped program). Wait for WIP to
+     * ASSERT (guarded, in case the op was instant or never started) then DEASSERT. */
+    uint32_t guard = 1000000u;
+    while (!(spi4_rdsr() & 1u)) {
+        if (--guard == 0)
+            break;
+    }
     while (spi4_rdsr() & 1u) { }
+    IWDG_KR = IWDG_FEED;
+}
+
+/* Wait for WEL (SR bit1) to latch after WREN before issuing PP/SE. The clone needs a clean CS-high
+ * gap between WREN and the following command: issuing PP/SE immediately after WREN races the latch
+ * when USB IRQs are live (the command is silently ignored -> the page reads back all-FF). Polling
+ * RDSR both confirms WEL=1 and inserts the gap. Guarded so a missing flash cannot hang the app. */
+static void spi4_wait_wel(void)
+{
+    uint32_t guard = 100000u;
+    while (!(spi4_rdsr() & 2u)) {
+        if (--guard == 0)
+            break;
+    }
 }
 
 /* f+0x1bb2: page program. Requires (addr&0xFF)+len <= 0x100 (within one 256-byte page).
- * WREN -> CS↓ + 0x02 + addr[23:16/15:8/7:0] + data + CS↑ -> poll busy. */
+ * WREN -> wait WEL -> CS↓ + 0x02 + addr[23:16/15:8/7:0] + data + CS↑ -> poll busy. */
 static int spi4_page_program(uint32_t addr, const uint8_t *src, uint32_t len)
 {
     if (addr >= SPI_FLASH_SIZE || (addr & 0xFFu) + len > 0x100u)
         return -1;
 
     spi4_cmd(0x06u);                        /* WREN */
+    spi4_wait_wel();
     CS_ASSERT();
     (void)spi4_xfer(0x02u);                 /* PAGE PROGRAM */
     (void)spi4_xfer((uint8_t)(addr >> 16));
@@ -150,6 +174,7 @@ static int spi4_sector_erase(uint32_t addr)
         return -1;
 
     spi4_cmd(0x06u);                        /* WREN */
+    spi4_wait_wel();
     CS_ASSERT();
     (void)spi4_xfer(0x20u);                 /* SECTOR ERASE (4 KB) */
     (void)spi4_xfer((uint8_t)(base >> 16));
