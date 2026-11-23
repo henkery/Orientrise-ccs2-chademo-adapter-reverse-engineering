@@ -69,6 +69,7 @@ static uint16_t rx_offset;              /* ring write offset (stock ctx+4)      
 static uint8_t  rx_poll_cnt;            /* stock ctx+1                                     */
 static qca7005_rx_cb rx_cb;
 static uint8_t  mac_cnf_seen;           /* internal validator done flag                    */
+static int      init_rc = -1;           /* last qca7005_init result (bench diag: -1 unrun) */
 
 /* ---- SPI1 byte exchange (full-duplex, 8-bit, Mode 3) ---- */
 static uint8_t spi1_xfer(uint8_t b)
@@ -347,7 +348,8 @@ int qca7005_init(void)
     RESET_HIGH();
     bu_delay(2);
     uart_dbg_puts("QRST\r\n");                 /* TEMP debug: reset pulse delays returned */
-    return qca_cpu_ready();
+    init_rc = qca_cpu_ready();
+    return init_rc;
 }
 
 void qca7005_set_rx_cb(qca7005_rx_cb cb) { rx_cb = cb; }
@@ -361,6 +363,10 @@ int qca7005_frame_send(const uint8_t *frame, uint16_t len)
 }
 
 const uint8_t *qca7005_mac(void) { return mac_valid ? mac_addr : 0; }
+
+/* Last bring-up result for the bench QCA diagnostic: 0 ok / 1 sig-poll timeout / 2 bit6 timeout /
+ * 3 MAC-read failed / 4 reg-init sig mismatch / -1 init not run. */
+int qca7005_init_rc(void) { return init_rc; }
 
 /* ---- RX ring dispatch (0x0808938A): read ring, parse packets, invoke callback ---- */
 int qca7005_rx_dispatch(void)

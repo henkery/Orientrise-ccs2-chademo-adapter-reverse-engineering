@@ -112,6 +112,8 @@ static void parse_line(cdc_proto_result_t *r)
         r->event = CDC_PROTO_CALFIND;
     } else if (streq(line, "PLC")) {
         r->event = CDC_PROTO_PLC;
+    } else if (streq(line, "QCA")) {
+        r->event = CDC_PROTO_QCA;
     } else if (line_len > 6 &&
                line[0]=='F' && line[1]=='D' && line[2]=='U' && line[3]=='M' &&
                line[4]=='P' && line[5]==' ') {

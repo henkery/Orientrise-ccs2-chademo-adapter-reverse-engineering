@@ -183,6 +183,11 @@ int main(void)
     r = feed_line("plc");
     CHECK(r.event == CDC_PROTO_PLC, "lowercase plc -> PLC");
     CHECK(cdc_proto_in_upload() == 0, "PLC stays CMD (no upload)");
+    r = feed_line("QCA");
+    CHECK(r.event == CDC_PROTO_QCA, "QCA -> QCA event");
+    r = feed_line("qca");
+    CHECK(r.event == CDC_PROTO_QCA, "lowercase qca -> QCA");
+    CHECK(cdc_proto_in_upload() == 0, "QCA stays CMD (no upload)");
 
     /* --- FDUMP parse (ext-flash hex dump) --- */
     r = feed_line("FDUMP 1000 100");

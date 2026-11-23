@@ -42,7 +42,8 @@ typedef enum {
     CDC_PROTO_CALSCAN,       /* "CALSCAN": scan ext-flash for cal magic + region fill  */
     CDC_PROTO_CALFIND,       /* "CALFIND": map ext factory data + scan int-flash magic */
     CDC_PROTO_FDUMP,         /* "FDUMP <addr> <len>": hex ext-flash (inj_id=addr,size=len)*/
-    CDC_PROTO_PLC            /* "PLC": live-PLC chain readback (QCA/SLAC/SDP/transport)*/
+    CDC_PROTO_PLC,           /* "PLC": live-PLC chain readback (QCA/SLAC/SDP/transport)*/
+    CDC_PROTO_QCA            /* "QCA": QCA7005 bring-up result + live SPI register probe */
 } cdc_proto_event_t;
 
 /* Upload sink: where the glue routes UPLOAD_BYTE data. REVERT = SPI staging; ETH = RX injection. */

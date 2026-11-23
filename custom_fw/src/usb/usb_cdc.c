@@ -460,6 +460,34 @@ static void do_plc(void)
     p = fmt_s(b, p, "\r\n"); b[p] = '\0'; cdc_send(b);
 }
 
+/* QCA — QCA7005 bring-up result + live SPI register probe (Stage-2 modem diagnosis). Reads the
+ * CPU-ready signature / INT status / SPI config / TX-free / RX-avail registers. SIG FFFF/0000 =>
+ * no modem responding on SPI1 (absent / unpowered rail); SIG AA55 => modem CPU ready. INERT. */
+static void do_qca(void)
+{
+    char b[128];
+    uint32_t p, i;
+    uint16_t sig  = qca7005_reg_read(QCA_REG_CPU_READY);
+    uint16_t ints = qca7005_reg_read(QCA_REG_INT_STATUS);
+    uint16_t cfg  = qca7005_reg_read(QCA_REG_SPI_CFG);
+    uint16_t txf  = qca7005_reg_read(QCA_REG_TX_FREE);
+    uint16_t rxa  = qca7005_reg_read(QCA_REG_RX_AVAIL);
+    const uint8_t *mac = qca7005_mac();
+
+    p = fmt_s(b, 0, "QCA RC "); p = fmt_i32(b, p, qca7005_init_rc());
+    p = fmt_s(b, p, " SIG ");  p = fmt_hex16(b, p, sig);
+    p = fmt_s(b, p, " INT ");  p = fmt_hex16(b, p, ints);
+    p = fmt_s(b, p, " CFG ");  p = fmt_hex16(b, p, cfg);
+    p = fmt_s(b, p, "\r\n"); b[p] = '\0'; cdc_send(b);
+
+    p = fmt_s(b, 0, "QCA TXFREE "); p = fmt_hex16(b, p, txf);
+    p = fmt_s(b, p, " RXAVAIL ");   p = fmt_hex16(b, p, rxa);
+    p = fmt_s(b, p, " MAC ");
+    if (mac) { for (i = 0; i < 6u; i++) p = fmt_hex8(b, p, mac[i]); }
+    else     { p = fmt_s(b, p, "NONE"); }
+    p = fmt_s(b, p, "\r\n"); b[p] = '\0'; cdc_send(b);
+}
+
 static void do_injc(const cdc_proto_result_t *r)
 {
     can_frame_t f;
@@ -614,6 +642,10 @@ void usb_cdc_task(void)
                 do_plc();
                 break;
 
+            case CDC_PROTO_QCA:
+                do_qca();
+                break;
+
             case CDC_PROTO_PING:
                 cdc_send("PONG\r\n");
                 break;
@@ -624,7 +656,7 @@ void usb_cdc_task(void)
 
             case CDC_PROTO_HELP:
                 cdc_send("CMDS: PING STATUS HELP ABORT REVERT <n> MEAS CAN NET STM CALDUMP CALSCAN "
-                         "CALFIND FDUMP <addr> <len> PLC INJC <id> <dlc> <bytes> INJE <n>\r\n");
+                         "CALFIND FDUMP <addr> <len> PLC QCA INJC <id> <dlc> <bytes> INJE <n>\r\n");
                 break;
 
             case CDC_PROTO_ABORT:

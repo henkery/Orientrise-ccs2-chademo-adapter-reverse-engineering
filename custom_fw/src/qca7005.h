@@ -87,6 +87,9 @@ int  qca7005_rx_dispatch(void);
 void qca7005_service(void);
 /* 6-byte PIB MAC read from the modem (NULL if MAC-read failed). */
 const uint8_t *qca7005_mac(void);
+/* Last bring-up result (bench QCA diag): 0 ok / 1 sig timeout / 2 bit6 timeout / 3 MAC-read fail /
+ * 4 reg-init sig mismatch / -1 not run. */
+int qca7005_init_rc(void);
 /* Direct SPI register access (for upper-layer diagnostics / SLAC). */
 uint16_t qca7005_reg_read(uint16_t addr);
 void     qca7005_reg_write(uint16_t addr, uint16_t val);
