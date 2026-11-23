@@ -21,5 +21,9 @@ void can_init(void);                 /* GPIO + CAN1 init + filters + NVIC RX0; c
 int  can_send(const can_frame_t *f); /* queue into an empty TX mailbox; 0 ok, -1 no mailbox free */
 int  can_recv(can_frame_t *f);       /* pop one RX frame from the ring; 1 ok, 0 empty */
 void can_service(void);              /* periodic bus-off recovery / error check (call from 100 Hz loop) */
+/* Bench RX injection: push a frame into the RX ring exactly as the ISR would (no bus traffic needed).
+ * Masks the RX0 IRQ around the push so it cannot race the ISR's rx_head write. Returns 1 ok, 0 ring
+ * full. INERT: feeds the CHAdeMO parse path only — no power-stage drive. Stage-1 fidelity bench. */
+int  can_inject(const can_frame_t *f);
 
 #endif /* CAN_H */

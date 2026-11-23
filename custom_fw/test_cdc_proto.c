@@ -155,6 +155,80 @@ int main(void)
         CHECK(r.event == CDC_PROTO_PING, "parser recovers after overflow");
     }
 
+    /* --- Stage-1 readback commands --- */
+    cdc_proto_init();
+    r = feed_line("MEAS");
+    CHECK(r.event == CDC_PROTO_MEAS, "MEAS -> MEAS event");
+    r = feed_line("can");
+    CHECK(r.event == CDC_PROTO_CAN, "lowercase can -> CAN");
+    r = feed_line("NET");
+    CHECK(r.event == CDC_PROTO_NET, "NET -> NET event");
+    r = feed_line("stm");
+    CHECK(r.event == CDC_PROTO_STM, "lowercase stm -> STM");
+
+    /* --- upload sink selection (REVERT vs ETH) --- */
+    cdc_proto_init();
+    CHECK(cdc_proto_upload_sink() == CDC_SINK_REVERT, "init sink REVERT");
+    feed_line("REVERT 10");
+    CHECK(cdc_proto_upload_sink() == CDC_SINK_REVERT, "REVERT sink REVERT");
+    cdc_proto_init();
+    feed_line("INJE 10");
+    CHECK(cdc_proto_upload_sink() == CDC_SINK_ETH, "INJE sink ETH");
+    cdc_proto_init();
+    CHECK(cdc_proto_upload_sink() == CDC_SINK_REVERT, "init resets sink REVERT");
+
+    /* --- INJE -> UPLOAD mode + byte counting --- */
+    cdc_proto_init();
+    r = feed_line("INJE 64");
+    CHECK(r.event == CDC_PROTO_INJE && r.filesize == 64, "INJE 64 -> INJE 64");
+    CHECK(cdc_proto_in_upload() == 1, "INJE enters UPLOAD");
+    CHECK(cdc_proto_upload_sink() == CDC_SINK_ETH, "INJE upload sink ETH");
+    CHECK(cdc_proto_remaining() == 64, "INJE remaining 64");
+    {
+        uint32_t count = 0;
+        int last_seen = 0;
+        for (uint32_t i = 0; i < 64u; i++) {
+            cdc_proto_feed((uint8_t)(i & 0xFFu), &r);
+            CHECK(r.event == CDC_PROTO_UPLOAD_BYTE, "INJE upload byte event");
+            CHECK(r.byte == (uint8_t)(i & 0xFFu), "INJE byte passthrough");
+            if (r.last) { last_seen = 1; count = i + 1; }
+        }
+        CHECK(last_seen == 1 && count == 64, "INJE last flag on 64th byte");
+        CHECK(cdc_proto_in_upload() == 0, "INJE returns to CMD");
+    }
+    r = feed_line("INJE 0");
+    CHECK(r.event == CDC_PROTO_UNKNOWN, "INJE 0 -> UNKNOWN");
+    r = feed_line("INJE abc");
+    CHECK(r.event == CDC_PROTO_UNKNOWN, "INJE non-numeric -> UNKNOWN");
+
+    /* --- INJC parse (CAN frame inject) --- */
+    cdc_proto_init();
+    r = feed_line("INJC 102 8 01 F4 01 14 00 00 00 00");
+    CHECK(r.event == CDC_PROTO_INJC, "INJC valid -> INJC");
+    CHECK(r.inj_id == 0x102u, "INJC id 0x102");
+    CHECK(r.inj_dlc == 8u, "INJC dlc 8");
+    CHECK(r.inj_data[0] == 0x01u && r.inj_data[1] == 0xF4u && r.inj_data[2] == 0x01u &&
+          r.inj_data[3] == 0x14u && r.inj_data[4] == 0u && r.inj_data[7] == 0u,
+          "INJC data bytes");
+    CHECK(cdc_proto_in_upload() == 0, "INJC stays CMD (no upload)");
+    r = feed_line("injc 101 4 aa bb cc dd");
+    CHECK(r.event == CDC_PROTO_INJC && r.inj_id == 0x101u && r.inj_dlc == 4u &&
+          r.inj_data[0] == 0xAAu && r.inj_data[3] == 0xDDu, "INJC lowercase hex");
+    r = feed_line("INJC 100 0");
+    CHECK(r.event == CDC_PROTO_INJC && r.inj_id == 0x100u && r.inj_dlc == 0u, "INJC dlc 0");
+    r = feed_line("INJC 102 8 01 F4");
+    CHECK(r.event == CDC_PROTO_UNKNOWN, "INJC too few data bytes -> UNKNOWN");
+    r = feed_line("INJC 102 2 01 02 03");
+    CHECK(r.event == CDC_PROTO_UNKNOWN, "INJC trailing junk -> UNKNOWN");
+    r = feed_line("INJC 102 9 01 02 03 04 05 06 07 08 09");
+    CHECK(r.event == CDC_PROTO_UNKNOWN, "INJC dlc 9 -> UNKNOWN");
+    r = feed_line("INJC 800 1 00");
+    CHECK(r.event == CDC_PROTO_UNKNOWN, "INJC id > 0x7FF -> UNKNOWN");
+    r = feed_line("INJC 102 1 GG");
+    CHECK(r.event == CDC_PROTO_UNKNOWN, "INJC non-hex byte -> UNKNOWN");
+    r = feed_line("INJC");
+    CHECK(r.event == CDC_PROTO_UNKNOWN, "INJC no args -> UNKNOWN");
+
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

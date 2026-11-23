@@ -176,15 +176,73 @@ def do_revert(ser, path):
           "stock app resumes (USB host stick export returns).")
 
 
+def do_readback(ser, command):
+    """Stage-1 read-only measurement readback (MEAS/CAN/NET/STM). Prints the device's single line."""
+    ser.reset_input_buffer()
+    ser.write((command + "\n").encode())
+    ser.flush()
+    line = read_line(ser, 3)
+    if line is None:
+        sys.exit(f"[cdc] TIMEOUT waiting for {command} readback")
+    print(f"[cdc] <- {line}")
+    return line
+
+
+def do_injc(ser, tokens):
+    """Inject a CAN frame: tokens = [id, dlc, b0..bN] (hex). Device pushes it into the RX ring."""
+    if len(tokens) < 2:
+        sys.exit("[cdc] injc needs <id> <dlc> [bytes...] (hex)")
+    line = "INJC " + " ".join(tokens)
+    ser.reset_input_buffer()
+    ser.write((line + "\n").encode())
+    ser.flush()
+    resp = read_line(ser, 3)
+    print(f"[cdc] <- {resp}")
+    if resp != "OK INJC":
+        sys.exit(f"[cdc] CAN inject failed (got {resp!r})")
+    print("[cdc] CAN frame injected — send 'can' to read the parsed CHAdeMO fields")
+
+
+def do_inje(ser, data):
+    """Inject a raw Ethernet frame: stream len(data) bytes -> v2g_net_rx_ethernet on the device."""
+    n = len(data)
+    if n == 0:
+        sys.exit("[cdc] inje: empty frame")
+    if n > 1536:
+        sys.exit(f"[cdc] inje: frame too large ({n} B > 1536 B device buffer)")
+    print(f"[cdc] injecting Ethernet frame ({n} B)")
+    ser.reset_input_buffer()
+    ser.write(f"INJE {n}\n".encode())
+    ser.flush()
+    expect(ser, "READY", timeout=5)
+    sent = 0
+    while sent < n:
+        chunk = data[sent:sent + CHUNK]
+        ser.write(chunk)
+        ser.flush()
+        sent += len(chunk)
+        time.sleep(INTER_CHUNK_DELAY)
+    resp = read_line(ser, 5)
+    print(f"[cdc] <- {resp}")
+    if resp != "OK INJE":
+        sys.exit(f"[cdc] Ethernet inject failed (got {resp!r})")
+    print("[cdc] Ethernet frame fed to v2g_net_rx_ethernet — send 'net' to read transport state")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["ping", "status", "help", "revert", "abort"])
-    ap.add_argument("file", nargs="?", help="UPG file for 'revert' (e.g. SERVICE.UPG)")
+    ap.add_argument("command", choices=["ping", "status", "help", "revert", "abort",
+                                        "meas", "can", "net", "stm", "injc", "inje"])
+    ap.add_argument("file", nargs="?", help="UPG file for 'revert' / raw frame file for 'inje'")
+    ap.add_argument("tokens", nargs="*", help="injc: <id> <dlc> [b0..bN] (hex)")
+    ap.add_argument("--hex", help="inje: raw frame as a hex string (instead of a file)")
     ap.add_argument("--port", help="serial port (default: auto-detect cafe:4004)")
     args = ap.parse_args()
     if args.command == "revert" and not args.file:
         ap.error("revert requires a UPG file (e.g. SERVICE.UPG)")
+    if args.command == "inje" and not (args.file or args.hex):
+        ap.error("inje requires a frame file or --hex <hexstring>")
     ser = open_port(args.port)
     try:
         if args.command == "ping":
@@ -197,6 +255,15 @@ def main():
             cmd_line(ser, "ABORT", "ABORTED")
         elif args.command == "revert":
             do_revert(ser, args.file)
+        elif args.command in ("meas", "can", "net", "stm"):
+            do_readback(ser, args.command.upper())
+        elif args.command == "injc":
+            # argparse fills the optional 'file' positional first; reassemble the full token list.
+            toks = ([args.file] if args.file else []) + args.tokens
+            do_injc(ser, toks)
+        elif args.command == "inje":
+            data = bytes.fromhex(args.hex) if args.hex else open(args.file, "rb").read()
+            do_inje(ser, data)
     finally:
         ser.close()
 

@@ -54,6 +54,7 @@
 #define GPIOD_PUPDR  (*(volatile uint32_t *)(GPIOD_BASE + 0x0Cu))
 #define GPIOD_AFRL   (*(volatile uint32_t *)(GPIOD_BASE + 0x20u))
 #define NVIC_ISER0   (*(volatile uint32_t *)0xE000E100u)
+#define NVIC_ICER0   (*(volatile uint32_t *)0xE000E180u)
 #define CAN1_RX0_IRQn 20u
 
 /* RX ring buffer (ISR produces, main consumes). Power-of-two depth for cheap wrap. */
@@ -159,6 +160,26 @@ int can_recv(can_frame_t *f)
     *f = rx_ring[rx_tail];
     rx_tail = (rx_tail + 1u) & RX_RING_MASK;
     return 1;
+}
+
+int can_inject(const can_frame_t *f)
+{
+    /* Bench inject runs in main context; mask RX0 so the ISR cannot race our rx_head write. */
+    NVIC_ICER0 = (1u << CAN1_RX0_IRQn);
+    uint32_t next = (rx_head + 1u) & RX_RING_MASK;
+    int ok = 0;
+    if (next != rx_tail) {                           /* drop if ring full (same policy as ISR) */
+        can_frame_t *dst = &rx_ring[rx_head];
+        dst->id  = f->id;
+        dst->ide = f->ide;
+        dst->dlc = f->dlc > 8u ? 8u : f->dlc;
+        for (uint32_t i = 0; i < 8u; i++)
+            dst->data[i] = f->data[i];
+        rx_head = next;
+        ok = 1;
+    }
+    NVIC_ISER0 = (1u << CAN1_RX0_IRQn);
+    return ok;
 }
 
 void can_service(void)
