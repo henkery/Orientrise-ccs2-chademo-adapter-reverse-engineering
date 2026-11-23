@@ -11,8 +11,11 @@
 #include <string.h>
 #include "qca7005.h"
 
-/* host stub: the pure helpers never call the delay (hardware paths only). */
+/* host stubs: the pure helpers never call these (hardware/bench-debug paths only). qca7005.c's
+ * bring-up debug markers reference uart_dbg_puts/uart_dbg_poll_reset; stub them so it links here. */
 void tick_delay_ms(uint32_t ms) { (void)ms; }
+void uart_dbg_puts(const char *s) { (void)s; }
+void uart_dbg_poll_reset(void) { }
 
 static int checks = 0, failures = 0;
 #define CK(cond) do { checks++; if (!(cond)) { failures++; \
