@@ -13,9 +13,11 @@
  * PresentVoltage (meas+0x3D18/1A scaled, 0x0804AADA-0x0804AAEE), NOT the H102 TargetBatteryVoltage
  * (p+0x1da) — the dual log 0x0804AB40 prints them as separate values. EVSE-side handshake
  * inputs (isolation / precharge_flag / plug_in / cablecheck_fin / chgparam_ok / ev_contactor /
- * precharge_relay) come from the CCS2 PLC/DIN subsystem that is NOT built yet — main feeds safe
- * stubs (0) so the machine holds in the early/wait states. The guard itself is a pure function and
- * is host-unit-tested (custom_fw/test_charge_stm.c).
+ * precharge_relay) come from the CCS2 PLC/DIN subsystem, which is BUILT + integrated (ccs2_evse ->
+ * din_session, REPORT §5.9 / CCS2_GAPS.md); main wires them, not stubs. With no live SECC peer on the
+ * bench the DIN-derived flags hold 0 until a Res is decoded (or a bench flag-setter is used), so the
+ * machine holds in the early/wait states. The guard itself is a pure function and is host-unit-tested
+ * (custom_fw/test_charge_stm.c).
  */
 #ifndef CHARGE_STM_H
 #define CHARGE_STM_H
@@ -78,8 +80,10 @@
 #define STM_ACT_ALL_OFF        6u  /* de-assert every power pin (safe) */
 
 /* EVSE-side + handshake + interlock inputs. The EVSE-side fields come from the CCS2 PLC/DIN
- * subsystem (not yet built) — main feeds safe stubs (0) until that layer exists. The vehicle
- * request fields (ress_vol/current_request/faults) + CAN freshness are read from chademo_vehicle_t. */
+ * subsystem (BUILT + integrated; main wires ccs2_evse(), REPORT §5.9 / CCS2_GAPS.md). They hold 0 on
+ * the bench until a live DIN session decodes the corresponding Res (or a bench flag-setter is used).
+ * The vehicle request fields (ress_vol/current_request/faults) + CAN freshness are read from
+ * chademo_vehicle_t. */
 typedef struct {
     uint16_t outvol;          /* EVSE output voltage V = get_hv()/10 (measurement layer) */
     uint16_t evse_present_voltage; /* EVSE PresentVoltage V = din_scale(meas+0x3D18,+0x3D1A) — the
@@ -92,11 +96,11 @@ typedef struct {
     uint16_t phase_status;    /* EVSE charge-phase meas+0x3D1E (engage==4) — analyze103 */
     uint16_t chademo_isolation_level; /* CHAdeMO hw isolation level (CurrentDemand==3) */
     uint8_t  precharge_flag;  /* EVSE precharge-ready flag meas+0x23F (engage==1) */
-    uint8_t  plug_in;         /* GET_AD_CPD connector plug-in — stub */
-    uint8_t  cablecheck_fin;  /* EVSE CableCheck finished OK — stub */
-    uint8_t  chgparam_ok;     /* EVSE ChargeParameterDiscovery OK + VehicleChargingEnabled — stub */
-    uint8_t  ev_contactor;    /* H102.VehicleStatus: EV contactor closed — stub */
-    uint8_t  precharge_relay; /* get_precharge_relay feedback (1=closed) — stub */
+    uint8_t  plug_in;         /* connector plug-in = cp_plug_in() (measured PP hysteresis) */
+    uint8_t  cablecheck_fin;  /* EVSE CableCheck finished OK — DIN session / bench setter */
+    uint8_t  chgparam_ok;     /* EVSE ChargeParameterDiscovery OK + VehicleChargingEnabled — session/bench */
+    uint8_t  ev_contactor;    /* H102.VehicleStatus bit3: EV contactor closed — session/bench (G10) */
+    uint8_t  precharge_relay; /* get_precharge_relay PB10 feedback (1=closed) — bench; drive gated */
     uint8_t  emergency;       /* emergency_flag (stop by charger) */
     uint8_t  bms_error;       /* bms_error_stop / data_tmout */
     uint8_t  hw_fault;        /* get_evcc_hw_fault */

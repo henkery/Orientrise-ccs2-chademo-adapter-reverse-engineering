@@ -24,9 +24,11 @@
  * INERT / SHADOW: this computes the setpoint the power stage WOULD be commanded to, but drives
  * NO GPIO / DAC / PWM. The asserted power-stage drive is a later GATED layer (compile-time safety
  * flag). The EVSE-side measurements (max/avail current + factors, voltage limit) come from the
- * CCS2 PLC/DIN subsystem that is NOT built yet — main feeds safe stubs (0), so avail==0 and the
- * min(request,0)==0 zero-skip holds the setpoint at 0: no current is ever commanded. Pure helpers
- * (converter/scale) + the step law are host-unit-tested (custom_fw/test_current_ctrl.c).
+ * CCS2 PLC/DIN subsystem, which is BUILT + integrated (main wires ccs2_fill_current_ctrl() from the
+ * DIN meas struct, REPORT §5.9 / CCS2_GAPS.md). With no live SECC peer on the bench those fields hold
+ * 0 until a CurrentDemandRes is decoded, so avail==0 and the min(request,0)==0 zero-skip holds the
+ * setpoint at 0: no current is ever commanded. Pure helpers (converter/scale) + the step law are
+ * host-unit-tested (custom_fw/test_current_ctrl.c).
  */
 #ifndef CURRENT_CTRL_H
 #define CURRENT_CTRL_H
@@ -42,7 +44,8 @@ typedef struct {
 } current_ctrl_t;
 
 /* Inputs: CHAdeMO H102 (vehicle) side + EVSE (CCS2 PLC) side measurements. The EVSE-side fields
- * are stubbed 0 by main until the CCS2 subsystem exists. */
+ * are filled by ccs2_fill_current_ctrl() from the DIN meas struct (BUILT); they hold 0 on the bench
+ * until a live CurrentDemandRes is decoded. */
 typedef struct {
     uint8_t  current_request;    /* H102 byte3 ChargingCurrentRequest p[+0x1dc] (A) */
     uint16_t target_voltage;     /* H102 byte1-2 TargetBatteryVoltage p[+0x1da] (V) */

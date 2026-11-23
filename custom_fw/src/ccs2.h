@@ -102,10 +102,12 @@ void ccs2_fill_current_ctrl(current_ctrl_inputs_t *ci);
  * image is produced but the live TCP/TLS send is gated. */
 uint16_t ccs2_demand(uint16_t current, uint16_t voltage, uint8_t *exi_out);
 
-/* ---- DIN session flag setters (driven by decoded DIN responses / bench injection) ----
+/* ---- DIN session flag setters (bench injection path) ----
  * The full EXI response decoders for CableCheck/ChargeParameterDiscovery/PreCharge/PowerDelivery
- * are gated (grammar not recovered); these expose the confirmed handshake-flag effects so the
- * session can be driven explicitly. CurrentDemandRes uses the confirmed din_cd_res_decode. */
+ * (and CurrentDemandRes) are RECOVERED + integrated (analyze102 / B2 017577d) and run via
+ * ccs2_rx_exi -> din_session_rx in the autonomous session. These setters expose the same
+ * handshake-flag effects so the session can ALSO be driven explicitly on the bench with no live
+ * SECC peer. CurrentDemandRes uses din_cd_res_decode. */
 void ccs2_session_start(void);                 /* SDP done -> begin DIN SessionSetup        */
 void ccs2_cablecheck_done(uint16_t din_isolation); /* CableCheckRes finished: din_isolation + phase_status=3 */
 void ccs2_chgparam_done(void);                 /* ChargeParameterDiscoveryRes OK            */

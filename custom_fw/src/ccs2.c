@@ -135,8 +135,9 @@ void ccs2_step(uint32_t tick)
  * root 0x4D + DIN header + 6-bit subev + body) -> the autonomous session RX transition engine. The
  * DIN document framing (analyze101/102) is stripped here: exi_decode_header recovers the single
  * root 0x4D, exi_din_decode_doc_start consumes the DIN header (SessionID) + the 6-bit message
- * subev, leaving the body for din_session_rx. The live UDP/TCP/IPv6+TLS reassembly that produces
- * these frames is NOT recovered (gated); this is the bench-injection / future-transport hook.
+ * subev, leaving the body for din_session_rx. The UDP/TCP/IPv6 reassembly that produces these frames
+ * is BUILT (v2g_net_rx_ethernet: UDP->SDP / TCP->deframe->here); the live lwIP TCP-connect + mbedTLS
+ * handshake hooks stay gated, so on the bench this entry is also driven by explicit injection.
  * Returns the din_session_rx result (EXI_OK / negative error). */
 int ccs2_rx_exi(const uint8_t *frame, uint16_t len, uint32_t now_ms)
 {
@@ -196,7 +197,8 @@ uint16_t ccs2_demand(uint16_t current, uint16_t voltage, uint8_t *exi_out)
     return DIN_CDQ_TX_LEN;
 }
 
-/* ---- DIN session flag setters (decoded-response effects; EXI decoders gated) ---- */
+/* ---- DIN session flag setters (bench injection path; the EXI Res decoders are built + run via
+ * ccs2_rx_exi -> din_session_rx in the autonomous session — these mirror their flag effects) ---- */
 void ccs2_session_start(void)
 {
     if (state == CCS2_SDP || state == CCS2_IDLE) {
