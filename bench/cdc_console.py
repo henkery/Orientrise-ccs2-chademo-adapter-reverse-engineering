@@ -275,7 +275,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["ping", "status", "help", "revert", "abort",
                                         "meas", "can", "net", "stm", "caldump", "calscan",
-                                        "calfind", "fdump", "injc", "inje"])
+                                        "calfind", "fdump", "plc", "injc", "inje"])
     ap.add_argument("file", nargs="?", help="UPG file for 'revert' / raw frame file for 'inje'")
     ap.add_argument("tokens", nargs="*", help="injc: <id> <dlc> [b0..bN] (hex)")
     ap.add_argument("--hex", help="inje: raw frame as a hex string (instead of a file)")
@@ -303,6 +303,8 @@ def main():
             do_caldump(ser)
         elif args.command == "calfind":
             do_multiline(ser, "CALFIND")
+        elif args.command == "plc":
+            do_multiline(ser, "PLC")
         elif args.command == "fdump":
             do_fdump(ser, ([args.file] if args.file else []) + args.tokens)
         elif args.command == "injc":

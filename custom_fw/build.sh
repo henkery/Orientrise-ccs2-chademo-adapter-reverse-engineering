@@ -32,7 +32,7 @@ APP=(startup.s main.c
   src/cp_capture.c src/cp_adc.c src/sdp.c src/din70121.c src/exi.c src/din_session.c
   src/v2g_net.c src/v2g_stack.c src/hw_rng.c src/libc_shim.c src/ca_store.c src/ccs2.c
   src/revert.c src/revert_stage.c
-  src/usb/cdc_proto.c src/usb/usb_hw.c src/usb/usb_cdc.c src/usb/usb_descriptors.c)
+  src/usb/cdc_proto.c src/usb/usb_hw.c src/usb/usb_descriptors.c)
 
 # TinyUSB (vendored MIT subset, master 490eb4e): device CDC on the Synopsys dwc2 OTG_FS port. Config
 # in src/usb/tusb_config.h; freestanding CMSIS shim src/usb/stm32f4xx.h. --gc-sections drops unused.
@@ -74,7 +74,10 @@ compile() {                       # $1 = -O level; rest = sources
   done
 }
 compile -O2 "${APP[@]}"
-compile -Os "${TUSB[@]}" "${LWIP[@]}" third_party/mbedtls/library/*.c
+# usb_cdc.c (bench readbacks + fmt helpers + CDC upload glue) at -Os for the sector-5 size budget.
+# verify_ccs2 asserts constant codegen only for cp_capture/cp_adc/din70121 — not usb_cdc — so -Os
+# here is safe and recovers the space the CALDUMP/CALSCAN/CALFIND/FDUMP/PLC diagnostics add.
+compile -Os src/usb/usb_cdc.c "${TUSB[@]}" "${LWIP[@]}" third_party/mbedtls/library/*.c
 
 arm-none-eabi-gcc "${CFLAGS[@]}" -T linker.ld "${OBJS[@]}" -o app.elf -lgcc \
   -Wl,-Map=app.map -Wl,--gc-sections -Wl,--build-id=none

@@ -178,6 +178,11 @@ int main(void)
     CHECK(r.event == CDC_PROTO_CALFIND, "CALFIND -> CALFIND event");
     r = feed_line("calfind");
     CHECK(r.event == CDC_PROTO_CALFIND, "lowercase calfind -> CALFIND");
+    r = feed_line("PLC");
+    CHECK(r.event == CDC_PROTO_PLC, "PLC -> PLC event");
+    r = feed_line("plc");
+    CHECK(r.event == CDC_PROTO_PLC, "lowercase plc -> PLC");
+    CHECK(cdc_proto_in_upload() == 0, "PLC stays CMD (no upload)");
 
     /* --- FDUMP parse (ext-flash hex dump) --- */
     r = feed_line("FDUMP 1000 100");

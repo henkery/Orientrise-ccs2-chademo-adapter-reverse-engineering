@@ -27,6 +27,10 @@
 #include "spi4.h"
 #include "chademo.h"
 #include "v2g_net.h"
+#include "ccs2.h"
+#include "slac.h"
+#include "sdp.h"
+#include "qca7005.h"
 #include "charge_stm.h"
 #include "tick.h"
 
@@ -414,6 +418,48 @@ static void do_fdump(const cdc_proto_result_t *r)
     }
 }
 
+/* PLC — live-PLC chain readback for the Stage-2 bench (QCA7005 modem -> SLAC -> SDP -> TCP/TLS).
+ * Pure getters, INERT (no power drive). Four lines: modem+controller, SLAC credentials, SDP
+ * resolution, transport carriage. MAC NONE => the QCA7005 bring-up / PIB MAC-read failed. */
+static void do_plc(void)
+{
+    char b[160];
+    uint32_t p, i;
+    const uint8_t *mac = qca7005_mac();
+    const ccs2_evse_t *ev = ccs2_evse();
+    const slac_t *sl = slac_get();
+    const sdp_t *sd = sdp_get();
+    const v2g_net_t *vn = v2g_net_get();
+
+    p = fmt_s(b, 0, "PLC MAC ");
+    if (mac) { for (i = 0; i < 6u; i++) p = fmt_hex8(b, p, mac[i]); }
+    else     { p = fmt_s(b, p, "NONE"); }
+    p = fmt_s(b, p, " CCS2 ");  p = fmt_u32(b, p, ccs2_state());
+    p = fmt_s(b, p, " LINK ");  p = fmt_u32(b, p, ev->link_up);
+    p = fmt_s(b, p, " SECC ");  p = fmt_u32(b, p, ev->secc_found);
+    p = fmt_s(b, p, " PROTO "); p = fmt_u32(b, p, ev->protocol);
+    p = fmt_s(b, p, "\r\n"); b[p] = '\0'; cdc_send(b);
+
+    p = fmt_s(b, 0, "SLAC "); p = fmt_u32(b, p, sl->state);
+    p = fmt_s(b, p, " NID "); for (i = 0; i < 7u; i++)  p = fmt_hex8(b, p, sl->nid[i]);
+    p = fmt_s(b, p, " NMK "); for (i = 0; i < 16u; i++) p = fmt_hex8(b, p, sl->nmk[i]);
+    p = fmt_s(b, p, "\r\n"); b[p] = '\0'; cdc_send(b);
+
+    p = fmt_s(b, 0, "SDP "); p = fmt_u32(b, p, sd->state);
+    p = fmt_s(b, p, " REQSEC ");  p = fmt_hex8(b, p, sd->req_security);
+    p = fmt_s(b, p, " SECCSEC "); p = fmt_hex8(b, p, sd->secc_security);
+    p = fmt_s(b, p, " TLS ");     p = fmt_u32(b, p, sd->use_tls);
+    p = fmt_s(b, p, " PORT ");    p = fmt_u32(b, p, sd->secc_port);
+    p = fmt_s(b, p, " IP "); for (i = 0; i < 16u; i++) p = fmt_hex8(b, p, sd->secc_ip[i]);
+    p = fmt_s(b, p, "\r\n"); b[p] = '\0'; cdc_send(b);
+
+    p = fmt_s(b, 0, "NET "); p = fmt_u32(b, p, vn->state);
+    p = fmt_s(b, p, " MODE "); p = fmt_u32(b, p, vn->mode);
+    p = fmt_s(b, p, " RX "); p = fmt_u32(b, p, vn->rx_frames);
+    p = fmt_s(b, p, " TX "); p = fmt_u32(b, p, vn->tx_frames);
+    p = fmt_s(b, p, "\r\n"); b[p] = '\0'; cdc_send(b);
+}
+
 static void do_injc(const cdc_proto_result_t *r)
 {
     can_frame_t f;
@@ -564,6 +610,10 @@ void usb_cdc_task(void)
                 do_fdump(&r);
                 break;
 
+            case CDC_PROTO_PLC:
+                do_plc();
+                break;
+
             case CDC_PROTO_PING:
                 cdc_send("PONG\r\n");
                 break;
@@ -574,7 +624,7 @@ void usb_cdc_task(void)
 
             case CDC_PROTO_HELP:
                 cdc_send("CMDS: PING STATUS HELP ABORT REVERT <n> MEAS CAN NET STM CALDUMP CALSCAN "
-                         "CALFIND FDUMP <addr> <len> INJC <id> <dlc> <bytes> INJE <n>\r\n");
+                         "CALFIND FDUMP <addr> <len> PLC INJC <id> <dlc> <bytes> INJE <n>\r\n");
                 break;
 
             case CDC_PROTO_ABORT:
