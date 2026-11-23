@@ -102,6 +102,15 @@ cdc_console.py meas   # -> PP <mV> ... PLUG 0  (>=2296mV -> unplugged)
 2146/2296 mV hysteresis. CPD (PA0, raw×3300/32760) and BAT (PC2, raw×6600/32760) likewise: inject a
 known voltage, compare MEAS mV to the multimeter. The PP raw is 16×sum(ch2); BAT/CPD 8×sum.
 
+**VALIDATED 2026-11-23 — bench-PSU route (preferred over the Mega PWM+divider).** A DC bench PSU set
+to ≤3.3 V, through a series resistor (~220 Ω–1 k) with the PSU current limit ~20 mA, drives PA2
+cleanly: its low output impedance overrides the adapter PP bias (the Mega divider's ~1.5 k Thevenin
+could not). PP 1435 mV → `PLUG 1`; PP 2396 mV → `PLUG 0`; MEAS mV matched the multimeter at the pin on
+both sides. **Pin-identification lesson:** the first connector pin tried idled at 2.6 V while PA2 idles
+at ~2.39 V — a *different node*, so driving it never moved MEAS. Identify the real PP pin by its idle
+voltage matching MEAS `PP mV` (~2.4 V), or drive a candidate at 2.0 V (current-limited) and watch MEAS
+PP drop. **Never** put the PSU on the DC+ / DC− power pins (HV, gated). CPD/BAT use the same PSU method.
+
 ### B3. HV divider → ADC1/2 (needs front-end probing)
 The HV sense is a differential amp (ADC1 PB0 ch8 − ADC2 PB1 ch9) behind a high-voltage divider; the
 exact low-voltage injection node depends on the front-end circuit (not fully mapped). **First step:**
@@ -114,8 +123,8 @@ scaling (`HV outvol`) needs a valid two-point cal — absent on this clone; a be
 - [x] Readback MEAS/CAN/NET/STM live on silicon (CDC, no SWD).
 - [x] CAN H100/H101/H102 inject → byte-exact parse; engagement guard stays closed.
 - [x] Ethernet INJE → v2g_net_rx_ethernet hook (frame accepted, no crash).
-- [ ] CP PWM inject → duty/period/state match (B1).
-- [ ] PP/CPD/BAT analog inject → mV match multimeter; PLUG hysteresis (B2).
+- [ ] CP PWM inject → duty/period/state match (B1 — DEFERRED: traced CP node smooths PWM to DC; PD12 unreachable).
+- [x] PP analog inject → mV match multimeter + PLUG hysteresis 0↔1 (B2 core, bench-PSU route). CPD/BAT same method, pending.
 - [ ] HV low-V inject → HVRAW proportional (B3, front-end node TBD).
 
 Next: Stage 2 (real EVSE, live QCA7005 PLC / SLAC / SDP / TCP / TLS), then Stage 3 (real car, power
