@@ -188,10 +188,10 @@ def do_readback(ser, command):
     return line
 
 
-def do_caldump(ser):
-    """CALDUMP is a 3-line response (summary / validation fields / 17 raw words). Read them all."""
+def do_multiline(ser, cmd):
+    """Send a command whose response spans several lines; read until a quiet gap."""
     ser.reset_input_buffer()
-    ser.write(b"CALDUMP\n")
+    ser.write((cmd + "\n").encode())
     ser.flush()
     lines = []
     while True:
@@ -201,8 +201,13 @@ def do_caldump(ser):
         lines.append(line)
         print(f"[cdc] <- {line}")
     if not lines:
-        sys.exit("[cdc] TIMEOUT waiting for CALDUMP readback")
+        sys.exit(f"[cdc] TIMEOUT waiting for {cmd} readback")
     return lines
+
+
+def do_caldump(ser):
+    """CALDUMP is a 3-line response (summary / validation fields / 17 raw words). Read them all."""
+    return do_multiline(ser, "CALDUMP")
 
 
 def do_fdump(ser, tokens):
@@ -292,10 +297,12 @@ def main():
             cmd_line(ser, "ABORT", "ABORTED")
         elif args.command == "revert":
             do_revert(ser, args.file)
-        elif args.command in ("meas", "can", "net", "stm", "calscan", "calfind"):
+        elif args.command in ("meas", "can", "net", "stm", "calscan"):
             do_readback(ser, args.command.upper())
         elif args.command == "caldump":
             do_caldump(ser)
+        elif args.command == "calfind":
+            do_multiline(ser, "CALFIND")
         elif args.command == "fdump":
             do_fdump(ser, ([args.file] if args.file else []) + args.tokens)
         elif args.command == "injc":

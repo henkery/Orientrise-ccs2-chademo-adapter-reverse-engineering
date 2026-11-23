@@ -356,12 +356,6 @@ static void do_calfind(void)
 
     p = fmt_s(b, p, "CALFIND ext_blocks=");
     p = fmt_u32(b, p, nblk);
-    for (uint32_t i = 0; i < nblk && i < 6u; i++) {
-        b[p++] = ' ';
-        p = fmt_hex32(b, p, blk_start[i]);
-        b[p++] = '-';
-        p = fmt_hex32(b, p, blk_end[i]);
-    }
     p = fmt_s(b, p, " int_cal=");
     p = fmt_u32(b, p, ni);
     for (uint32_t i = 0; i < ni; i++) {
@@ -371,6 +365,20 @@ static void do_calfind(void)
     p = fmt_s(b, p, "\r\n");
     b[p] = '\0';
     cdc_send(b);
+    /* Full block map, 3 ranges per line (multi-line response). */
+    for (uint32_t i = 0; i < nblk; i += 3u) {
+        p = 0;
+        for (uint32_t j = i; j < i + 3u && j < nblk; j++) {
+            if (j > i)
+                b[p++] = ' ';
+            p = fmt_hex32(b, p, blk_start[j]);
+            b[p++] = '-';
+            p = fmt_hex32(b, p, blk_end[j]);
+        }
+        p = fmt_s(b, p, "\r\n");
+        b[p] = '\0';
+        cdc_send(b);
+    }
 }
 
 /* FDUMP <addr> <len> — hex dump of external SPI flash (read-only), 8 words per line. Used to inspect
