@@ -236,7 +236,9 @@ because it looked for the product name, not the internal symbol.
 - **The QCA7005 firmware is NOT in this update** (§8.6): the version string
   `MAC-QCA7005-1.1.0.727-02-20130826-FINAL` is only a reference/log string inside the SLAC debug
   table; there is **no firmware blob and no host-download routine** ⇒ the modem boots from its **own
-  external SPI flash**. The MCU is purely a SLAC/PLC *host*.
+  external SPI flash**. The MCU is purely a SLAC/PLC *host*. The **actual** modem firmware
+  (bench-confirmed from the device's USB log banner) is **`1.2.1.2025-00-20151013-CS`** — the
+  `1.1.0.727` string is a hardcoded template, not the running version (§5.22c).
 - **SLAC** (ISO 15118-3): `CM_SLAC_PARA_REQ/CNF`, `CM_START_ATTEN_CHAR_IND`, `CM_ATTEN_CHAR_RSP`,
   `CM_SLAC_MATCH_CNF`, `SET_KEY_REQ/CNF`, `VS_HST_ACTION_IND`, **BCB toggle**, D_LINK/AVLN manage.
 - **SDP** (SECC Discovery Protocol, UDP), **TCP**, **TLS**.
@@ -671,7 +673,8 @@ and EXI-encoded. Those 6 bytes are the **same MAC** used in SLAC and printed by 
 
 **MAC source — call chain + MAC-read MMTYPE RESOLVED [C] (`analyze75`):** the value is **runtime, not a
 fixed constant** — held in the global EVCC/SLAC struct (SRAM `0x200003D0`) and populated from the
-**QCA7005 modem** PIB MAC (fw `1.1.0.727-02-20130826`, banner `MAC-QCA7005-…` f+`0x2596`). No hardcoded
+**QCA7005 modem** PIB MAC (MCU-image fw *template* `1.1.0.727-02-20130826`; **actual** modem fw
+`1.2.1.2025-00-20151013-CS`, bench-confirmed §5.22c; banner `MAC-QCA7005-…` f+`0x2596`). No hardcoded
 OUI and no STM32-UID-derived MAC (`0x1FFF7A10` unreferenced). MAC-init chain (`analyze72`): the SLAC
 state machine logs the banner, then `0x0802156C` → `0x08088C10` (SPI mutex `0x20000A00` + **PC5** reset
 pulse, BSRR `0x200000`→`0x20`) → `0x08088B94` (poll QCA7005 SPI reg `0x1A00` for CPU-ready signature
@@ -2445,7 +2448,9 @@ The complete acquisition chain is now byte-derived, and it corrects three points
   (CPOL=0/CPHA=0 mode 0, master, BR=/2 → 42 MHz, 8-bit, MSB-first, SSM+SSI, SPE), `CR2 = 0`;
   SCK=PE12 / MISO=PE13 / MOSI=PE14 (AF5). App flashing writes only internal sectors 5–9, so this
   external NV region is **preserved** — a custom app reads the stock factory cal directly (no bench
-  calibration required).
+  calibration required). **Bench correction (§5.22b): on this clone the cal record is ABSENT —
+  all-`0xFF` @`0xFE000`, no cal magic `0x41444A67` in the lower-1 MB; the clone shipped uncalibrated,
+  so HV cal must be derived from a known HV reference, not read from flash.**
 - **Checksum is over 16 WORDS (0x40 bytes), not 0x10 bytes.** The checksum fn `0x0805236A` loops
   `r1 = 0x10` times with `ldm r2!,{r3}` (a **word** per step) ⇒ additive sum of `words[0..15]`
   (offsets `0x00..0x3F`) compared to `word[+0x40]`. Validation (lazy-init `0x0805231E`):
@@ -2573,6 +2578,69 @@ setpoint/output path (the power GPIO are contactors/relays, §5.5c):
 asserted "current drive" is realized by the **CCS2 `CurrentDemandReq` PLC message** (EVSE-side subsystem)
 plus **contactor GPIO sequencing** (§5.5c), *not* a local PWM/DAC register. Re-derived from C013 bytes by
 `analyze90.py`.
+
+### 5.22 Bench characterization — clone hardware quirks & QCA modem bring-up  [bench-confirmed]
+
+Mechanism-level findings from running the custom replica and stock C013 on the bare USB bench (no
+EVSE/car, HV disconnected). Session-specific values are deliberately omitted (log-stick method in
+§5.10/§5.11); these are durable properties of the clone hardware and the bring-up.
+
+**(a) Clone boot/USB quirks the custom app must handle (five root causes).** The stock boot hands off
+to the app in a state that differs from a clean reset, and the clone's OTG_FS is not a genuine ST core:
+1. **Boot leaves the PLL running as SYSCLK** (no clock deinit before the app jump). `RCC_PLLCFGR` is
+   write-protected while `PLLON=1`, so a direct write is silently ignored — the app must switch SYSCLK
+   to HSI, clear `PLLON`, wait `PLLRDY=0`, then reprogram (`rcc.c`).
+2. **Boot leaves `BASEPRI=0xF0` + `PRIMASK=1`.** `cpsie i` alone leaves BASEPRI set ⇒ SysTick (and any
+   nonzero-priority IRQ) stays masked ⇒ `tick_delay_ms` hangs ⇒ IWDG reset loop. The app clears
+   PRIMASK + BASEPRI + FAULTMASK (`enable_irq`, must be `noinline`).
+3. **`RCC_AHB2ENR` is `0x40023834`, not `0x40023838`** (`0x38` = AHB3ENR). OTG_FS clock enable is
+   AHB2ENR bit7; the wrong address leaves OTG_FS unclocked.
+4. **Clone OTG_FS `GSNPSID`(0x040) + `GHWCFG1..4` read 0** (GD32VF103-like; GUID `0x1000`), on both
+   OTG_FS and OTG_HS. A stock TinyUSB `check_dwc2`/ep-count probe rejects this — two vendored patches
+   tolerate `gsnpsid==0` and fall back to `DWC2_EP_MAX` when `ghwcfg2==0`. Corroborates the clone
+   narrowing (§3.2/§8.1).
+5. **Clone FS PHY decodes no packets unless the `GCCFG` VBUS-sense comparators are powered**
+   (`NOVBUSSENS` alone is insufficient on this clone); device-mode CDC needs the comparators enabled
+   even with no VBUS-sense pin wired (PA9/PA10 = USART1).
+
+**(b) HV factory cal is ABSENT on this clone.** The external-SPI cal record @`0xFE000` (§5.21) reads
+**all-`0xFF`** on this unit, and no cal magic `0x41444A67` exists anywhere in the lower-1 MB of the
+external flash (the ~213 KB there is event/reset/SLAC log data, not cal). The SPI read path itself is
+proven good (the revert header reads back correctly). ⇒ the clone shipped **uncalibrated**; the
+`get_hv` two-point interpolation has no factory points, so HV accuracy must be established from a known
+HV reference (Stage-2/3) before the gated engagement/power layer. This **corrects** the §5.21
+D-addendum assumption that the stock cal is always present.
+
+**(c) QCA7005 modem brings up on USB power alone; actual firmware version.** The modem reaches
+CPU-ready (SPI reg `0x1A00` = `0xAA55`) and the SPI register link is functional (config writes read
+back exact) on the bare USB bench — no HV rail / connector needed. The device's own USB log banner
+reads **`MAC-QCA7005-1.2.1.2025-00-20151013-CS`**: that is the **actual modem firmware**, confirming
+the `1.1.0.727-02-20130826-FINAL` string in the MCU image (§5.3) is a hardcoded template, not the
+running version.
+
+**(d) Stock C013 completes the MAC-read on the bare bench; the custom replica does not — an
+execution-context difference, not driver bytes.** Stock C013 logs the modem banner (MAC-read CNF
+received) even in bench sessions where SLAC matching fails for lack of an EVSE peer. The custom
+replica on the same bench reaches `0xAA55` + functional SPI but the MAC-read MME returns no CNF
+(`RXAVAIL 0`), and an active re-send probe is also silent (not a boot-timing issue). Static comparison
+shows the replica is **byte-faithful** (register values, MME framing, reset pulse, poll counts), the
+**clock tree is identical** (C013 `PLLCFGR 0x07402A04`, `CFGR 0x80209400` ⇒ PPRE2=/2, APB2=84 MHz ⇒
+SPI1 10.5 MHz, `FLASH_ACR 0x705`), GPIO matches, and the CCS2-init wrapper (`0x0802156C`) adds no step
+beyond resetting the RX poll counter and calling MAC-init. The one structural difference: C013's
+CCS2-init/SPI-open are **isolated RTOS task entries** (no direct BL callers) with USB in *host* mode,
+whereas the custom app brings the modem up in the **bare-metal main loop** with the **USB device-CDC
+stack active** and a **re-entrant idle hook** (`usb_cdc_task` invoked inside every bring-up delay). The
+idle hook does not drain the QCA RX ring (no CNF steal). Leading suspect: USB device-mode activity /
+idle-hook re-entrancy disturbing the bring-up; the decisive isolation test (QCA bring-up before USB
+device init, idle hook NULL) is pending. ⇒ the Stage-2 PLC blocker is a custom-firmware
+execution-context bug, **not** erased modem firmware, an unpowered PLC rail, or a driver-replica error.
+
+**(e) Mornsun modules are power supplies, not the HV sense.** The big Mornsun (terminals DC+/DC−/
+vo+/vo−, part sanded off) is a PV-series-style **HV-input isolated DC-DC** that leeches self-power from
+the DC link; the **IB0505S-W75R3** is a 0.75 W **5 V→5 V isolated DC-DC** (SIP-4, 1.5 kV isolation),
+likely the QCA7005 PLC/isolated rail. Neither is the HV measurement: the actual HV sense is a
+**separate resistor divider feeding the ADC1(PB0)−ADC2(PB1) differential** (§5.5b/§5.21), to be located
+near the big DC-DC's DC input.
 
 ---
 
@@ -3355,7 +3423,7 @@ re-implement the protocol gateway with the open blocks above. The vendor image i
    board** (CAN2 has no AF9 pins, no service task, and an unreferenced stop thunk — it is unwired).
    **Remaining:** LED drive pins (the `led_process` label is the e-lock tick, not a separate LED block).
 5. **CAN IDs & timing** — **LARGELY RESOLVED (§5.8).** Extracted: GB/T J1939 RX/TX/TP ID tables (SA `0x56`/`0xF4`), CHAdeMO H100–H112 + CBMS set, baud table {125,250,500} k @ APB1=42 MHz (SYSCLK 168 MHz **[C] — confirmed from RCC PLLCFGR/CFGR/FLASH_ACR, `analyze79`**), CAN init/filter config + driver mailbox-FIFO layer (§5.8.2), and protocol timeouts (1/4/5/6/8 s). **CAN1/CAN2→CHAdeMO/GB/T assignment RESOLVED (`analyze79`, §5.8.2): CAN1-only board** — CAN1 (PD0/PD1) carries both protocols via the single `CAN1_REC` task + IDE-split frame dispatch `0x080524FE`; CAN2 unwired. **RTOS tick = 100 Hz / 10 ms RESOLVED** (§5.1/§5.8.5). **TIM2 prescaler + tick constants RESOLVED (`analyze84`, §5.20):** TIM1 PSC=1679 (168 MHz/1680), TIM2/TIM3 PSC=839 (84 MHz/840) → all 100 kHz free-running (10 µs/tick, `ARR=0xFFFF`); TIM2 base is COMPUTED (TIM1 `0x40010000`<<14), not LDR-literal — resolving the zero-load mystery; the second-valued timeouts are 10 ms-unit stm constants (engagement 250, state-17 wait 424, CurrentDemand adjust 125, whole-bus watchdog 1525). **Remaining:** confirm the runtime-built GB/T IDs (CHM/CTS/CRO/CST/CEM/BRM/BCP/BCS).
-6. **QCA7005 firmware** — **RESOLVED: not in this update.** Modem boots from external SPI flash; the MCU is only a SLAC/PLC host (§5.3). For open firmware, use the redistributable Qualcomm blob (open-plc-utils / `qca_spi` ecosystem).
+6. **QCA7005 firmware** — **RESOLVED: not in this update.** Modem boots from external SPI flash; the MCU is only a SLAC/PLC host (§5.3). For open firmware, use the redistributable Qualcomm blob (open-plc-utils / `qca_spi` ecosystem). **Actual modem fw (bench-confirmed) = `1.2.1.2025-00-20151013-CS`** (the `1.1.0.727` MCU-image string is a template). The modem brings up on USB power alone; the custom MAC-read failure is an **execution-context** bug (stock isolated RTOS task vs custom bare-metal loop + USB device-CDC + re-entrant idle hook), **not** a modem/firmware fault — driver bytes, clock tree and GPIO verified identical (§5.22c/d).
 7. **RTOS identity — RESOLVED (§5.1, `analyze73`): uC/OS-II (Micrium), customized.** Identified by the
    internal-symbol debug string `OSRdyTbl` (uC/OS-II ready table). Tick = **100 Hz / 10 ms** (stat dump
    `÷100`); customized TCB accessors + `OSTaskCreateExt`-style wrapper @`0x08088D76`; named tasks
