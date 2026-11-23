@@ -110,6 +110,26 @@ static void parse_line(cdc_proto_result_t *r)
         r->event = CDC_PROTO_CALSCAN;
     } else if (streq(line, "CALFIND")) {
         r->event = CDC_PROTO_CALFIND;
+    } else if (line_len > 6 &&
+               line[0]=='F' && line[1]=='D' && line[2]=='U' && line[3]=='M' &&
+               line[4]=='P' && line[5]==' ') {
+        /* FDUMP <addr> <len> — both hex; len 1..256, within the 2 MB flash. */
+        const char *p = line + 6;
+        uint32_t addr = 0, len = 0;
+        int ok = (parse_hex_tok(&p, &addr) == 0) && (parse_hex_tok(&p, &len) == 0);
+        if (ok) {
+            while (*p == ' ')
+                p++;
+            if (*p != '\0')
+                ok = 0;
+        }
+        if (ok && len > 0 && len <= 256u && addr < 0x200000u && addr + len <= 0x200000u) {
+            r->event    = CDC_PROTO_FDUMP;
+            r->inj_id   = addr;
+            r->filesize = len;
+        } else {
+            r->event = CDC_PROTO_UNKNOWN;
+        }
     } else if (line_len > 7 &&
                line[0]=='R' && line[1]=='E' && line[2]=='V' && line[3]=='E' &&
                line[4]=='R' && line[5]=='T' && line[6]==' ') {

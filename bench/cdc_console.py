@@ -205,6 +205,25 @@ def do_caldump(ser):
     return lines
 
 
+def do_fdump(ser, tokens):
+    """FDUMP <addr> <len> (hex): multi-line hex dump of external flash. Read all lines."""
+    if len(tokens) < 2:
+        sys.exit("[cdc] fdump needs <addr> <len> (hex, len<=256)")
+    ser.reset_input_buffer()
+    ser.write(("FDUMP " + " ".join(tokens) + "\n").encode())
+    ser.flush()
+    lines = []
+    while True:
+        line = read_line(ser, 0.5)
+        if line is None:
+            break
+        lines.append(line)
+        print(f"[cdc] <- {line}")
+    if not lines:
+        sys.exit("[cdc] TIMEOUT waiting for FDUMP")
+    return lines
+
+
 def do_injc(ser, tokens):
     """Inject a CAN frame: tokens = [id, dlc, b0..bN] (hex). Device pushes it into the RX ring."""
     if len(tokens) < 2:
@@ -251,7 +270,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["ping", "status", "help", "revert", "abort",
                                         "meas", "can", "net", "stm", "caldump", "calscan",
-                                        "calfind", "injc", "inje"])
+                                        "calfind", "fdump", "injc", "inje"])
     ap.add_argument("file", nargs="?", help="UPG file for 'revert' / raw frame file for 'inje'")
     ap.add_argument("tokens", nargs="*", help="injc: <id> <dlc> [b0..bN] (hex)")
     ap.add_argument("--hex", help="inje: raw frame as a hex string (instead of a file)")
@@ -277,6 +296,8 @@ def main():
             do_readback(ser, args.command.upper())
         elif args.command == "caldump":
             do_caldump(ser)
+        elif args.command == "fdump":
+            do_fdump(ser, ([args.file] if args.file else []) + args.tokens)
         elif args.command == "injc":
             # argparse fills the optional 'file' positional first; reassemble the full token list.
             toks = ([args.file] if args.file else []) + args.tokens

@@ -179,6 +179,25 @@ int main(void)
     r = feed_line("calfind");
     CHECK(r.event == CDC_PROTO_CALFIND, "lowercase calfind -> CALFIND");
 
+    /* --- FDUMP parse (ext-flash hex dump) --- */
+    r = feed_line("FDUMP 1000 100");
+    CHECK(r.event == CDC_PROTO_FDUMP, "FDUMP valid -> FDUMP");
+    CHECK(r.inj_id == 0x1000u && r.filesize == 0x100u, "FDUMP addr/len");
+    CHECK(cdc_proto_in_upload() == 0, "FDUMP stays CMD (no upload)");
+    r = feed_line("fdump fe000 44");
+    CHECK(r.event == CDC_PROTO_FDUMP && r.inj_id == 0xFE000u && r.filesize == 0x44u,
+          "FDUMP lowercase cal region");
+    r = feed_line("FDUMP 1000");
+    CHECK(r.event == CDC_PROTO_UNKNOWN, "FDUMP no len -> UNKNOWN");
+    r = feed_line("FDUMP 1000 0");
+    CHECK(r.event == CDC_PROTO_UNKNOWN, "FDUMP len 0 -> UNKNOWN");
+    r = feed_line("FDUMP 1000 101");
+    CHECK(r.event == CDC_PROTO_UNKNOWN, "FDUMP len > 256 -> UNKNOWN");
+    r = feed_line("FDUMP 200000 10");
+    CHECK(r.event == CDC_PROTO_UNKNOWN, "FDUMP addr out of flash -> UNKNOWN");
+    r = feed_line("FDUMP 1000 10 xyz");
+    CHECK(r.event == CDC_PROTO_UNKNOWN, "FDUMP trailing junk -> UNKNOWN");
+
     /* --- upload sink selection (REVERT vs ETH) --- */
     cdc_proto_init();
     CHECK(cdc_proto_upload_sink() == CDC_SINK_REVERT, "init sink REVERT");

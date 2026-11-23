@@ -373,6 +373,39 @@ static void do_calfind(void)
     cdc_send(b);
 }
 
+/* FDUMP <addr> <len> — hex dump of external SPI flash (read-only), 8 words per line. Used to inspect
+ * the low-address factory blocks CALFIND maps, hunting the HV cal record the clone stores elsewhere. */
+static void do_fdump(const cdc_proto_result_t *r)
+{
+    uint32_t addr = r->inj_id;
+    uint32_t len = r->filesize;
+    uint32_t buf[64];                     /* up to 256 B */
+    if (len > 256u)
+        len = 256u;
+    if (spi4_read(addr, (uint8_t *)buf, len) != 0) {
+        cdc_send("ERR FDUMP range\r\n");
+        return;
+    }
+    char b[96];
+    uint32_t p = fmt_s(b, 0, "FDUMP ");
+    p = fmt_hex32(b, p, addr);
+    p = fmt_s(b, p, "\r\n");
+    b[p] = '\0';
+    cdc_send(b);
+    uint32_t nw = (len + 3u) / 4u;
+    for (uint32_t i = 0; i < nw; i += 8u) {
+        p = 0;
+        for (uint32_t j = i; j < i + 8u && j < nw; j++) {
+            if (j > i)
+                b[p++] = ' ';
+            p = fmt_hex32(b, p, buf[j]);
+        }
+        p = fmt_s(b, p, "\r\n");
+        b[p] = '\0';
+        cdc_send(b);
+    }
+}
+
 static void do_injc(const cdc_proto_result_t *r)
 {
     can_frame_t f;
@@ -519,6 +552,10 @@ void usb_cdc_task(void)
                 do_calfind();
                 break;
 
+            case CDC_PROTO_FDUMP:
+                do_fdump(&r);
+                break;
+
             case CDC_PROTO_PING:
                 cdc_send("PONG\r\n");
                 break;
@@ -529,7 +566,7 @@ void usb_cdc_task(void)
 
             case CDC_PROTO_HELP:
                 cdc_send("CMDS: PING STATUS HELP ABORT REVERT <n> MEAS CAN NET STM CALDUMP CALSCAN "
-                         "CALFIND INJC <id> <dlc> <bytes> INJE <n>\r\n");
+                         "CALFIND FDUMP <addr> <len> INJC <id> <dlc> <bytes> INJE <n>\r\n");
                 break;
 
             case CDC_PROTO_ABORT:
