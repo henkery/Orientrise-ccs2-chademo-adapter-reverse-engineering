@@ -165,6 +165,19 @@ int main(void)
     CHECK(r.event == CDC_PROTO_NET, "NET -> NET event");
     r = feed_line("stm");
     CHECK(r.event == CDC_PROTO_STM, "lowercase stm -> STM");
+    r = feed_line("CALDUMP");
+    CHECK(r.event == CDC_PROTO_CALDUMP, "CALDUMP -> CALDUMP event");
+    r = feed_line("caldump");
+    CHECK(r.event == CDC_PROTO_CALDUMP, "lowercase caldump -> CALDUMP");
+    CHECK(cdc_proto_in_upload() == 0, "CALDUMP stays CMD (no upload)");
+    r = feed_line("CALSCAN");
+    CHECK(r.event == CDC_PROTO_CALSCAN, "CALSCAN -> CALSCAN event");
+    r = feed_line("calscan");
+    CHECK(r.event == CDC_PROTO_CALSCAN, "lowercase calscan -> CALSCAN");
+    r = feed_line("CALFIND");
+    CHECK(r.event == CDC_PROTO_CALFIND, "CALFIND -> CALFIND event");
+    r = feed_line("calfind");
+    CHECK(r.event == CDC_PROTO_CALFIND, "lowercase calfind -> CALFIND");
 
     /* --- upload sink selection (REVERT vs ETH) --- */
     cdc_proto_init();

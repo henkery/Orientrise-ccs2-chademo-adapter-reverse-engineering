@@ -104,6 +104,12 @@ static void parse_line(cdc_proto_result_t *r)
         r->event = CDC_PROTO_NET;
     } else if (streq(line, "STM")) {
         r->event = CDC_PROTO_STM;
+    } else if (streq(line, "CALDUMP")) {
+        r->event = CDC_PROTO_CALDUMP;
+    } else if (streq(line, "CALSCAN")) {
+        r->event = CDC_PROTO_CALSCAN;
+    } else if (streq(line, "CALFIND")) {
+        r->event = CDC_PROTO_CALFIND;
     } else if (line_len > 7 &&
                line[0]=='R' && line[1]=='E' && line[2]=='V' && line[3]=='E' &&
                line[4]=='R' && line[5]=='T' && line[6]==' ') {

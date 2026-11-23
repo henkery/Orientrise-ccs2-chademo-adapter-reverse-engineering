@@ -188,6 +188,23 @@ def do_readback(ser, command):
     return line
 
 
+def do_caldump(ser):
+    """CALDUMP is a 3-line response (summary / validation fields / 17 raw words). Read them all."""
+    ser.reset_input_buffer()
+    ser.write(b"CALDUMP\n")
+    ser.flush()
+    lines = []
+    while True:
+        line = read_line(ser, 0.5)
+        if line is None:
+            break
+        lines.append(line)
+        print(f"[cdc] <- {line}")
+    if not lines:
+        sys.exit("[cdc] TIMEOUT waiting for CALDUMP readback")
+    return lines
+
+
 def do_injc(ser, tokens):
     """Inject a CAN frame: tokens = [id, dlc, b0..bN] (hex). Device pushes it into the RX ring."""
     if len(tokens) < 2:
@@ -233,7 +250,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["ping", "status", "help", "revert", "abort",
-                                        "meas", "can", "net", "stm", "injc", "inje"])
+                                        "meas", "can", "net", "stm", "caldump", "calscan",
+                                        "calfind", "injc", "inje"])
     ap.add_argument("file", nargs="?", help="UPG file for 'revert' / raw frame file for 'inje'")
     ap.add_argument("tokens", nargs="*", help="injc: <id> <dlc> [b0..bN] (hex)")
     ap.add_argument("--hex", help="inje: raw frame as a hex string (instead of a file)")
@@ -255,8 +273,10 @@ def main():
             cmd_line(ser, "ABORT", "ABORTED")
         elif args.command == "revert":
             do_revert(ser, args.file)
-        elif args.command in ("meas", "can", "net", "stm"):
+        elif args.command in ("meas", "can", "net", "stm", "calscan", "calfind"):
             do_readback(ser, args.command.upper())
+        elif args.command == "caldump":
+            do_caldump(ser)
         elif args.command == "injc":
             # argparse fills the optional 'file' positional first; reassemble the full token list.
             toks = ([args.file] if args.file else []) + args.tokens

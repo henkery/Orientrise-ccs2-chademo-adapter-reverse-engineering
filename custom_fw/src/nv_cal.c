@@ -53,3 +53,27 @@ const hv_cal_t *nv_cal_get(void)
 {
     return cal_valid ? &cal : (const hv_cal_t *)0;
 }
+
+/* ---- bench diagnostic (CALDUMP): expose the staged record + recompute the failing step.
+ * Reads the same nv_words buffer nv_cal_init() filled; does not touch the stock replica. */
+const uint32_t *nv_cal_diag_words(void)
+{
+    return nv_words;
+}
+
+uint32_t nv_cal_diag_sum(void)
+{
+    uint32_t sum = 0;
+    for (uint32_t i = 0; i < 16u; i++)
+        sum += nv_words[i];
+    return sum;
+}
+
+int nv_cal_diag_step(void)
+{
+    if (nv_words[15] != NV_CAL_MAGIC)          return 2;   /* +0x3C magic */
+    if (nv_words[14] == 0u)                    return 3;   /* +0x38 != 0 */
+    if (nv_cal_diag_sum() != nv_words[16])     return 4;   /* +0x40 checksum */
+    if (nv_words[3] == nv_words[4])            return 5;   /* raw_hi == raw_lo divisor guard */
+    return 0;
+}

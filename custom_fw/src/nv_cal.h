@@ -20,4 +20,10 @@ int nv_cal_init(void);
 /* Validated cal, or NULL if nv_cal_init() failed. */
 const hv_cal_t *nv_cal_get(void);
 
+/* Bench diagnostic (CALDUMP) — expose the raw record nv_cal_init() staged and recompute which
+ * validation step it fails. Read-only; does not alter the stock replica or re-read the flash. */
+const uint32_t *nv_cal_diag_words(void);  /* 17-word staging buffer (word[i] = SPI offset i*4) */
+uint32_t nv_cal_diag_sum(void);           /* additive sum of words[0..15] (must equal word[16]) */
+int nv_cal_diag_step(void);               /* 0 valid; 2 magic; 3 word14==0; 4 checksum; 5 divisor */
+
 #endif /* NV_CAL_H */

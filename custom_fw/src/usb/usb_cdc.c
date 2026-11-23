@@ -23,6 +23,8 @@
 #include "cp_adc.h"
 #include "hv.h"
 #include "adc.h"
+#include "nv_cal.h"
+#include "spi4.h"
 #include "chademo.h"
 #include "v2g_net.h"
 #include "charge_stm.h"
@@ -91,6 +93,11 @@ static uint32_t fmt_hex16(char *b, uint32_t p, uint16_t v)
 {
     p = fmt_hex8(b, p, (uint8_t)(v >> 8));
     return fmt_hex8(b, p, (uint8_t)v);
+}
+static uint32_t fmt_hex32(char *b, uint32_t p, uint32_t v)
+{
+    p = fmt_hex16(b, p, (uint16_t)(v >> 16));
+    return fmt_hex16(b, p, (uint16_t)v);
 }
 
 /* ---- read-only measurement readback (pure getters; no side effects) ---- */
@@ -218,6 +225,149 @@ static void do_stm(void)
     p = fmt_u32(b, p, charge_stm_action());
     p = fmt_s(b, p, " CNT ");
     p = fmt_u32(b, p, charge_stm_phase_cnt());
+    p = fmt_s(b, p, "\r\n");
+    b[p] = '\0';
+    cdc_send(b);
+}
+
+/* CALDUMP — ground-truth dump of the factory HV cal record the app actually staged from SPI4
+ * 0xFE000, which validation step fails, and the live ADC raw / interpolated result. Distinguishes
+ * "cal present but mis-validated" (step 2..5 with a sane magic) from "cal absent/garbage" (all-FF /
+ * all-00 words). Read-only; the record is never written. */
+static void do_caldump(void)
+{
+    char b[400];
+    uint32_t p = 0;
+    const uint32_t *w = nv_cal_diag_words();
+    p = fmt_s(b, p, "CALDUMP step=");
+    p = fmt_u32(b, p, (uint32_t)nv_cal_diag_step());
+    p = fmt_s(b, p, " valid=");
+    p = fmt_u32(b, p, (uint32_t)(hv_cal_valid() ? 1 : 0));
+    p = fmt_s(b, p, " HVRAW=");
+    p = fmt_i32(b, p, adc_get_live_raw());
+    p = fmt_s(b, p, " HV=");
+    p = fmt_i32(b, p, hv_get_raw());
+    p = fmt_s(b, p, " OUT=");
+    p = fmt_i32(b, p, hv_get_outvol());
+    p = fmt_s(b, p, "\r\nMAGIC=");
+    p = fmt_hex32(b, p, w[15]);
+    p = fmt_s(b, p, " W14=");
+    p = fmt_hex32(b, p, w[14]);
+    p = fmt_s(b, p, " SUM=");
+    p = fmt_hex32(b, p, nv_cal_diag_sum());
+    p = fmt_s(b, p, " W16=");
+    p = fmt_hex32(b, p, w[16]);
+    p = fmt_s(b, p, " RH=");
+    p = fmt_i32(b, p, (int32_t)w[3]);
+    p = fmt_s(b, p, " RL=");
+    p = fmt_i32(b, p, (int32_t)w[4]);
+    p = fmt_s(b, p, " EH=");
+    p = fmt_i32(b, p, (int32_t)w[5]);
+    p = fmt_s(b, p, " EL=");
+    p = fmt_i32(b, p, (int32_t)w[6]);
+    p = fmt_s(b, p, "\r\nW");
+    for (uint32_t i = 0; i < 17u; i++) {
+        b[p++] = ' ';
+        p = fmt_hex32(b, p, w[i]);
+    }
+    p = fmt_s(b, p, "\r\n");
+    b[p] = '\0';
+    cdc_send(b);
+}
+
+#define IWDG_KR (*(volatile uint32_t *)0x40003000u)
+
+/* CALSCAN — locate the factory cal in the external flash. Scans the lower-1 MB factory NV region
+ * [0,0x100000) for the cal magic 0x41444A67 (word-aligned, as the 17-word record is), counts
+ * non-erased words (LO; 262144 total), and reads the CA-cert master header @0x1F8000 (upper factory
+ * region, magic 0xCEA155E1) as a known-good reference that the read path returns real factory data.
+ * Distinguishes "cal at a different address" (cal>0) from "factory NV region unprogrammed" (LO~0).
+ * Read-only; feeds USB + IWDG every 64 KB so the ~0.5 s scan cannot starve the stack or watchdog. */
+static void do_calscan(void)
+{
+    char b[192];
+    uint32_t p = 0;
+    uint32_t buf[64];                     /* 256 B read chunk */
+    uint32_t cal_hits[8];
+    uint32_t ncal = 0, lo_nonff = 0;
+    for (uint32_t addr = 0; addr < 0x100000u; addr += 256u) {
+        spi4_read(addr, (uint8_t *)buf, 256u);
+        for (uint32_t i = 0; i < 64u; i++) {
+            uint32_t w = buf[i];
+            if (w != 0xFFFFFFFFu)
+                lo_nonff++;
+            if (w == 0x41444A67u && ncal < 8u)   /* NV_CAL_MAGIC */
+                cal_hits[ncal++] = addr + i * 4u;
+        }
+        if ((addr & 0xFFFFu) == 0) {
+            tud_task();
+            IWDG_KR = 0x0000AAAAu;
+        }
+    }
+    uint32_t ca_hdr[4];
+    spi4_read(0x1F8000u, (uint8_t *)ca_hdr, 16u);
+    p = fmt_s(b, p, "CALSCAN cal=");
+    p = fmt_u32(b, p, ncal);
+    for (uint32_t i = 0; i < ncal; i++) {
+        b[p++] = ' ';
+        p = fmt_hex32(b, p, cal_hits[i]);
+    }
+    p = fmt_s(b, p, " LO=");
+    p = fmt_u32(b, p, lo_nonff);
+    p = fmt_s(b, p, "/262144 CAHDR=");
+    p = fmt_hex32(b, p, ca_hdr[0]);
+    p = fmt_s(b, p, "\r\n");
+    b[p] = '\0';
+    cdc_send(b);
+}
+
+/* CALFIND — exhaust the non-invasive cal search. (1) Map the external lower-1 MB factory region into
+ * contiguous non-erased 256 B blocks (where the ~213 KB of factory data actually lives). (2) Scan the
+ * STM32 INTERNAL flash [0x08000000,0x08100000) for the cal magic — the running app reads its own flash
+ * freely even under RDP:1 (which only blocks debug read-out), so a clone that stores cal in internal
+ * flash would show up here. Read-only; feeds USB + IWDG through the external scan. */
+static void do_calfind(void)
+{
+    char b[256];
+    uint32_t p = 0;
+    uint32_t buf[64];
+    uint32_t blk_start[12], blk_end[12];
+    uint32_t nblk = 0, cur_start = 0;
+    int inblk = 0;
+    for (uint32_t addr = 0; addr < 0x100000u; addr += 256u) {
+        spi4_read(addr, (uint8_t *)buf, 256u);
+        int has = 0;
+        for (uint32_t i = 0; i < 64u; i++)
+            if (buf[i] != 0xFFFFFFFFu) { has = 1; break; }
+        if (has && !inblk) { cur_start = addr; inblk = 1; }
+        if (!has && inblk) {
+            if (nblk < 12u) { blk_start[nblk] = cur_start; blk_end[nblk] = addr; nblk++; }
+            inblk = 0;
+        }
+        if ((addr & 0xFFFFu) == 0) { tud_task(); IWDG_KR = 0x0000AAAAu; }
+    }
+    if (inblk && nblk < 12u) { blk_start[nblk] = cur_start; blk_end[nblk] = 0x100000u; nblk++; }
+
+    uint32_t ihits[4];
+    uint32_t ni = 0;
+    for (uint32_t a = 0x08000000u; a < 0x08100000u; a += 4u)
+        if (*(volatile uint32_t *)a == 0x41444A67u && ni < 4u)
+            ihits[ni++] = a;
+
+    p = fmt_s(b, p, "CALFIND ext_blocks=");
+    p = fmt_u32(b, p, nblk);
+    for (uint32_t i = 0; i < nblk && i < 6u; i++) {
+        b[p++] = ' ';
+        p = fmt_hex32(b, p, blk_start[i]);
+        b[p++] = '-';
+        p = fmt_hex32(b, p, blk_end[i]);
+    }
+    p = fmt_s(b, p, " int_cal=");
+    p = fmt_u32(b, p, ni);
+    for (uint32_t i = 0; i < ni; i++) {
+        b[p++] = ' ';
+        p = fmt_hex32(b, p, ihits[i]);
+    }
     p = fmt_s(b, p, "\r\n");
     b[p] = '\0';
     cdc_send(b);
@@ -357,6 +507,18 @@ void usb_cdc_task(void)
                 do_stm();
                 break;
 
+            case CDC_PROTO_CALDUMP:
+                do_caldump();
+                break;
+
+            case CDC_PROTO_CALSCAN:
+                do_calscan();
+                break;
+
+            case CDC_PROTO_CALFIND:
+                do_calfind();
+                break;
+
             case CDC_PROTO_PING:
                 cdc_send("PONG\r\n");
                 break;
@@ -366,8 +528,8 @@ void usb_cdc_task(void)
                 break;
 
             case CDC_PROTO_HELP:
-                cdc_send("CMDS: PING STATUS HELP ABORT REVERT <n> MEAS CAN NET STM "
-                         "INJC <id> <dlc> <bytes> INJE <n>\r\n");
+                cdc_send("CMDS: PING STATUS HELP ABORT REVERT <n> MEAS CAN NET STM CALDUMP CALSCAN "
+                         "CALFIND INJC <id> <dlc> <bytes> INJE <n>\r\n");
                 break;
 
             case CDC_PROTO_ABORT:
